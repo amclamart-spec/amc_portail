@@ -1,0 +1,72 @@
+# ============================================
+# Render Blueprint — AMC Portail
+# ============================================
+# Déploiement : https://render.com/docs/blueprint-spec
+#
+# Pour déployer :
+# 1. Connecter votre repo GitHub à Render
+# 2. Créer un "Blueprint" et pointer vers ce fichier
+# 3. Configurer les variables d'environnement
+# ============================================
+
+services:
+  # --- Backend API (Node.js) ---
+  - type: web
+    name: amc-portail-api
+    runtime: node
+    region: frankfurt  # EU pour RGPD
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npx prisma generate
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false  # À configurer manuellement
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: "2h"
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: "7d"
+      - key: FRONTEND_URL
+        value: https://amc-portail.onrender.com
+      - key: CORS_ORIGIN
+        value: https://amc-portail.onrender.com
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: "AMC - École de Langue Arabe"
+      - key: SMTP_FROM_EMAIL
+        value: "noreply@musulmansdeclamart.fr"
+
+  # --- Frontend (Static Site) ---
+  - type: web
+    name: amc-portail
+    runtime: static
+    region: frankfurt
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://amc-portail-api.onrender.com/api
