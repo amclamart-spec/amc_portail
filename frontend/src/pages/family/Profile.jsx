@@ -8,7 +8,7 @@ export default function FamilyProfile() {
   const [family, setFamily] = useState(null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
-    familyName: '', addressLine1: '', addressLine2: '', postalCode: '', city: '', phonePrimary: '', phoneSecondary: '',
+    familyName: '', addressLine1: '', addressLine2: '', postalCode: '', city: '', country: 'France', phonePrimary: '', phoneSecondary: '',
   });
 
   useEffect(() => {
@@ -21,6 +21,7 @@ export default function FamilyProfile() {
           addressLine2: data.family.addressLine2 || '',
           postalCode: data.family.postalCode || '',
           city: data.family.city || '',
+          country: data.family.country || 'France',
           phonePrimary: data.family.phonePrimary || '',
           phoneSecondary: data.family.phoneSecondary || '',
         });
@@ -70,7 +71,7 @@ export default function FamilyProfile() {
             <input className="form-control" placeholder="Appartement, bâtiment..." value={form.addressLine2} onChange={handleChange('addressLine2')} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', gap: 12 }}>
             <div className="form-group">
               <label>Code postal <span className="required">*</span></label>
               <input className="form-control" value={form.postalCode} onChange={handleChange('postalCode')} required />
@@ -78,6 +79,10 @@ export default function FamilyProfile() {
             <div className="form-group">
               <label>Ville <span className="required">*</span></label>
               <input className="form-control" value={form.city} onChange={handleChange('city')} required />
+            </div>
+            <div className="form-group">
+              <label>Pays <span className="required">*</span></label>
+              <input className="form-control" value={form.country} onChange={handleChange('country')} required />
             </div>
           </div>
 

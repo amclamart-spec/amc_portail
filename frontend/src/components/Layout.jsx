@@ -13,34 +13,91 @@ import {
   FiBarChart2,
   FiCreditCard,
   FiShield,
+  FiCalendar,
 } from 'react-icons/fi';
 import { useState } from 'react';
 import { ROLE_LABEL } from '../utils/roles';
 
-const navItems = {
+const navSectionsByRole = {
   SUPER_ADMIN: [
-    { path: '/super-admin', icon: FiShield, label: 'Rôles & admins' },
-    { path: '/admin', icon: FiBarChart2, label: 'Vue Admin' },
+    {
+      title: 'Administration',
+      items: [
+        { path: '/super-admin', icon: FiShield, label: 'Rôles & admins' },
+        { path: '/admin', icon: FiBarChart2, label: 'Vue Admin' },
+        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
+        { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
+      ],
+    },
+    {
+      title: 'Paramètres',
+      items: [
+        { path: '/admin/settings', icon: FiSettings, label: 'Référentiels' },
+        { path: '/admin/salles', icon: FiHome, label: 'Salles' },
+        { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
+        { path: '/admin/niveaux', icon: FiSettings, label: 'Niveaux' },
+      ],
+    },
+    {
+      title: 'Pédagogie',
+      items: [
+        { path: '/admin/classes', icon: FiBookOpen, label: 'Classes' },
+        { path: '/admin/professeurs', icon: FiUser, label: 'Professeurs' },
+      ],
+    },
   ],
   ADMIN: [
-    { path: '/admin', icon: FiBarChart2, label: 'Tableau de bord' },
-    { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
-    { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
-    { path: '/admin/settings', icon: FiSettings, label: 'Paramètres' },
+    {
+      title: 'Administration',
+      items: [
+        { path: '/admin', icon: FiBarChart2, label: 'Tableau de bord' },
+        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
+        { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
+      ],
+    },
+    {
+      title: 'Paramètres',
+      items: [
+        { path: '/admin/settings', icon: FiSettings, label: 'Référentiels' },
+        { path: '/admin/salles', icon: FiHome, label: 'Salles' },
+        { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
+        { path: '/admin/niveaux', icon: FiSettings, label: 'Niveaux' },
+      ],
+    },
+    {
+      title: 'Pédagogie',
+      items: [
+        { path: '/admin/classes', icon: FiBookOpen, label: 'Classes' },
+        { path: '/admin/professeurs', icon: FiUser, label: 'Professeurs' },
+      ],
+    },
   ],
   TRESORIER: [
-    { path: '/tresorier', icon: FiBarChart2, label: 'KPI financiers' },
-    { path: '/tresorier/payments', icon: FiCreditCard, label: 'Paiements' },
+    {
+      title: 'Finance',
+      items: [
+        { path: '/tresorier', icon: FiBarChart2, label: 'KPI financiers' },
+        { path: '/tresorier/payments', icon: FiCreditCard, label: 'Paiements' },
+      ],
+    },
   ],
   PROFESSEUR: [
-    { path: '/professeur', icon: FiHome, label: 'Mes classes' },
+    {
+      title: 'Pédagogie',
+      items: [{ path: '/professeur', icon: FiHome, label: 'Mes classes' }],
+    },
   ],
   FAMILLE: [
-    { path: '/famille', icon: FiHome, label: 'Tableau de bord' },
-    { path: '/famille/enfants', icon: FiUsers, label: 'Mes enfants' },
-    { path: '/famille/inscription', icon: FiBookOpen, label: 'Inscription' },
-    { path: '/famille/paiements', icon: FiCreditCard, label: 'Paiements' },
-    { path: '/famille/profil', icon: FiUser, label: 'Mon profil' },
+    {
+      title: 'Mon espace',
+      items: [
+        { path: '/famille', icon: FiHome, label: 'Tableau de bord' },
+        { path: '/famille/enfants', icon: FiUsers, label: 'Mes enfants' },
+        { path: '/famille/inscription', icon: FiBookOpen, label: 'Inscription' },
+        { path: '/famille/paiements', icon: FiCreditCard, label: 'Paiements' },
+        { path: '/famille/profil', icon: FiUser, label: 'Mon profil' },
+      ],
+    },
   ],
 };
 
@@ -49,7 +106,7 @@ export default function Layout({ children }) {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const items = navItems[user?.role] || [];
+  const sections = navSectionsByRole[user?.role] || [];
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -74,31 +131,48 @@ export default function Layout({ children }) {
           <div style={{ fontSize: 13, opacity: 0.8 }}>Portail d'inscription</div>
         </div>
 
-        <nav style={{ flex: 1, padding: '16px 0' }}>
-          {items.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setSidebarOpen(false)}
+        <nav style={{ flex: 1, padding: '16px 0', overflowY: 'auto' }}>
+          {sections.map((section) => (
+            <div key={section.title} style={{ marginBottom: 12 }}>
+              <div
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '12px 24px',
-                  color: 'var(--amc-white)',
-                  textDecoration: 'none',
-                  background: isActive ? 'rgba(255,255,255,0.15)' : 'transparent',
-                  borderLeft: isActive ? '3px solid #0088CC' : '3px solid transparent',
+                  padding: '4px 24px 8px',
+                  fontSize: 12,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  opacity: 0.75,
+                  fontWeight: 700,
                 }}
               >
-                <Icon size={18} />
-                {item.label}
-              </Link>
-            );
-          })}
+                {section.title}
+              </div>
+
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setSidebarOpen(false)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '12px 24px',
+                      color: 'var(--amc-white)',
+                      textDecoration: 'none',
+                      background: isActive ? 'rgba(255,255,255,0.15)' : 'transparent',
+                      borderLeft: isActive ? '3px solid #0088CC' : '3px solid transparent',
+                    }}
+                  >
+                    <Icon size={18} />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>

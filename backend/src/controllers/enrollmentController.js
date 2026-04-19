@@ -1,5 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
-const { calculateFamilyTotal, calculateInstallments } = require('../services/pricingService');
+const { calculateFamilyTotal, resolvePricingConfig } = require('../services/pricingService');
 const { sendEnrollmentConfirmationEmail } = require('../services/emailService');
 
 const prisma = new PrismaClient();
@@ -153,7 +153,8 @@ async function getEnrollmentSummary(req, res) {
       schedule: `${e.class.dayOfWeek} ${e.class.startTime}-${e.class.endTime}`,
     }));
 
-    const pricing = calculateFamilyTotal(enrollmentData);
+    const pricingConfig = await resolvePricingConfig(prisma);
+    const pricing = calculateFamilyTotal(enrollmentData, pricingConfig);
 
     res.json({
       enrollments: enrollmentData,

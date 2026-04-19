@@ -1,61 +1,98 @@
 /**
- * Service de calcul tarifaire AMC
- * Grille 2024-2025 (paramétrable)
+ * Service de calcul tarifaire AMC (paramétrable via PricingConfig)
  */
 
-// Tarif dégressif Arabe selon nombre d'élèves
-const ARABIC_PRICING = {
-  1: 310,
-  2: 570,
-  3: 750,
-  4: 900,
-  5: 1050,
+const DEFAULT_PRICING = {
+  registrationFee: 10,
+  arabicTiers: {
+    1: 310,
+    2: 570,
+    3: 750,
+    4: 900,
+    5: 1050,
+  },
+  arabicExtraPerStudent: 150,
+  individualPricing: {
+    CORAN_ENFANT: 220,
+    CORAN_ADULTE_HOMME: 300,
+    CORAN_ADULTE_FEMME: 250,
+    SCIENCES_ISLAMIQUES: 300,
+  },
 };
-const ARABIC_EXTRA_PER_STUDENT = 150; // Au-delà de 5
 
-// Tarifs individuels Coran & Sciences
-const INDIVIDUAL_PRICING = {
-  CORAN_ENFANT: 220,
-  CORAN_ADULTE_HOMME: 300,
-  CORAN_ADULTE_FEMME: 250,
-  SCIENCES_ISLAMIQUES: 300,
-};
-
-const REGISTRATION_FEE = 10; // Par famille, par an
-
-function calculateArabicFee(numberOfStudentsInArabic) {
-  if (numberOfStudentsInArabic <= 0) return 0;
-  if (numberOfStudentsInArabic <= 5) {
-    return ARABIC_PRICING[numberOfStudentsInArabic];
-  }
-  return ARABIC_PRICING[5] + (numberOfStudentsInArabic - 5) * ARABIC_EXTRA_PER_STUDENT;
+function toNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function calculateFamilyTotal(enrollments) {
-  // enrollments: array of { levelCode, poleName }
+function normalizePricingConfig(pricingConfig) {
+  if (!pricingConfig) return { ...DEFAULT_PRICING };
+
+  return {
+    registrationFee: toNumber(pricingConfig.registrationFee, DEFAULT_PRICING.registrationFee),
+    arabicTiers: {
+      1: toNumber(pricingConfig.arabicTier1, DEFAULT_PRICING.arabicTiers[1]),
+      2: toNumber(pricingConfig.arabicTier2, DEFAULT_PRICING.arabicTiers[2]),
+      3: toNumber(pricingConfig.arabicTier3, DEFAULT_PRICING.arabicTiers[3]),
+      4: toNumber(pricingConfig.arabicTier4, DEFAULT_PRICING.arabicTiers[4]),
+      5: toNumber(pricingConfig.arabicTier5, DEFAULT_PRICING.arabicTiers[5]),
+    },
+    arabicExtraPerStudent: toNumber(pricingConfig.arabicExtraPerStudent, DEFAULT_PRICING.arabicExtraPerStudent),
+    individualPricing: {
+      CORAN_ENFANT: toNumber(pricingConfig.coranEnfant, DEFAULT_PRICING.individualPricing.CORAN_ENFANT),
+      CORAN_ADULTE_HOMME: toNumber(pricingConfig.coranAdulteHomme, DEFAULT_PRICING.individualPricing.CORAN_ADULTE_HOMME),
+      CORAN_ADULTE_FEMME: toNumber(pricingConfig.coranAdulteFemme, DEFAULT_PRICING.individualPricing.CORAN_ADULTE_FEMME),
+      SCIENCES_ISLAMIQUES: toNumber(pricingConfig.sciencesIslamiques, DEFAULT_PRICING.individualPricing.SCIENCES_ISLAMIQUES),
+    },
+  };
+}
+
+async function resolvePricingConfig(prisma) {
+  const active = await prisma.pricingConfig.findFirst({
+    where: { isActive: true },
+    orderBy: { updatedAt: 'desc' },
+  });
+  return normalizePricingConfig(active);
+}
+
+function calculateArabicFee(numberOfStudentsInArabic, pricing = DEFAULT_PRICING) {
+  if (numberOfStudentsInArabic <= 0) return 0;
+
+  if (numberOfStudentsInArabic <= 5) {
+    return pricing.arabicTiers[numberOfStudentsInArabic] || 0;
+  }
+
+  return pricing.arabicTiers[5] + (numberOfStudentsInArabic - 5) * pricing.arabicExtraPerStudent;
+}
+
+function getIndividualCoursePrice(levelCode, pricing = DEFAULT_PRICING) {
+  return pricing.individualPricing[levelCode] || 0;
+}
+
+function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING) {
   let arabicCount = 0;
   let coranScienceTotal = 0;
 
   for (const enrollment of enrollments) {
-    if (enrollment.poleName === "Cours d'Arabe") {
-      arabicCount++;
-    } else {
-      const code = enrollment.levelCode;
-      if (INDIVIDUAL_PRICING[code]) {
-        coranScienceTotal += INDIVIDUAL_PRICING[code];
-      }
+    const pole = (enrollment.poleName || '').toLowerCase();
+    if (pole.includes('arabe')) {
+      arabicCount += 1;
+      continue;
     }
+
+    coranScienceTotal += getIndividualCoursePrice(enrollment.levelCode, pricing);
   }
 
-  const arabicFee = calculateArabicFee(arabicCount);
-  const total = REGISTRATION_FEE + arabicFee + coranScienceTotal;
+  const arabicFee = calculateArabicFee(arabicCount, pricing);
+  const total = pricing.registrationFee + arabicFee + coranScienceTotal;
 
   return {
-    registrationFee: REGISTRATION_FEE,
+    registrationFee: pricing.registrationFee,
     arabicFee,
     arabicCount,
     coranScienceFee: coranScienceTotal,
     total,
+    appliedPricing: pricing,
   };
 }
 
@@ -63,24 +100,44 @@ function calculateInstallments(totalAmount, numberOfInstallments) {
   if (numberOfInstallments < 1 || numberOfInstallments > 8) {
     throw new Error('Le nombre de mensualités doit être entre 1 et 8');
   }
+
   const baseAmount = Math.floor((totalAmount / numberOfInstallments) * 100) / 100;
   const remainder = Math.round((totalAmount - baseAmount * numberOfInstallments) * 100) / 100;
 
   const installments = [];
-  for (let i = 0; i < numberOfInstallments; i++) {
+  for (let i = 0; i < numberOfInstallments; i += 1) {
     installments.push({
       number: i + 1,
-      amount: i === numberOfInstallments - 1 ? baseAmount + remainder : baseAmount,
+      amount: i === numberOfInstallments - 1 ? Number((baseAmount + remainder).toFixed(2)) : baseAmount,
     });
   }
   return installments;
 }
 
+function buildInstallmentSchedule(totalAmount, numberOfInstallments, options = {}) {
+  const { dayOfMonth = 10, startDate = new Date() } = options;
+  const parts = calculateInstallments(totalAmount, numberOfInstallments);
+
+  return parts.map((p, index) => {
+    const dueDate = new Date(startDate);
+    dueDate.setMonth(dueDate.getMonth() + index);
+    dueDate.setDate(Math.min(dayOfMonth, 28));
+
+    return {
+      installmentNumber: p.number,
+      amount: p.amount,
+      dueDate,
+    };
+  });
+}
+
 module.exports = {
-  REGISTRATION_FEE,
-  ARABIC_PRICING,
-  INDIVIDUAL_PRICING,
+  DEFAULT_PRICING,
+  normalizePricingConfig,
+  resolvePricingConfig,
   calculateArabicFee,
+  getIndividualCoursePrice,
   calculateFamilyTotal,
   calculateInstallments,
+  buildInstallmentSchedule,
 };

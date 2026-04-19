@@ -9,6 +9,7 @@ const paymentRoutes = require('./payments');
 const financeRoutes = require('./finance');
 const superAdminRoutes = require('./superAdmin');
 const teacherRoutes = require('./teacher');
+const familyWizardRoutes = require('./familyWizard');
 
 const router = Router();
 
@@ -20,6 +21,7 @@ router.use('/teacher', teacherRoutes);
 router.use('/students', studentRoutes);
 router.use('/enrollments', enrollmentRoutes);
 router.use('/payments', paymentRoutes);
+router.use('/family-wizard', familyWizardRoutes);
 router.use('/finance', financeRoutes);
 
 router.get('/health', (req, res) => {

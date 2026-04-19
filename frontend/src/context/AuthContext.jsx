@@ -36,6 +36,35 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const completeOAuthLogin = useCallback(async (accessToken, refreshToken) => {
+    setLoading(true);
+    try {
+      localStorage.setItem('amc_access_token', accessToken);
+      localStorage.setItem('amc_refresh_token', refreshToken);
+
+      const { data } = await api.get('/auth/me', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      localStorage.setItem('amc_user', JSON.stringify(data.user));
+      setUser(data.user);
+      toast.success('Connexion Google réussie !');
+      navigate(getHomeForRole(data.user.role), { replace: true });
+      return data.user;
+    } catch (error) {
+      localStorage.removeItem('amc_access_token');
+      localStorage.removeItem('amc_refresh_token');
+      localStorage.removeItem('amc_user');
+      setUser(null);
+
+      const msg = error.response?.data?.error || 'Erreur lors de la connexion Google';
+      toast.error(msg);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, [navigate]);
+
   const register = async (userData) => {
     setLoading(true);
     try {
@@ -54,7 +83,9 @@ export function AuthProvider({ children }) {
   const logout = useCallback(async () => {
     try {
       await api.post('/auth/logout');
-    } catch { /* ignore */ }
+    } catch {
+      // ignore
+    }
     localStorage.removeItem('amc_access_token');
     localStorage.removeItem('amc_refresh_token');
     localStorage.removeItem('amc_user');
@@ -80,7 +111,16 @@ export function AuthProvider({ children }) {
   }, [fetchUser, user]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated, loading, login, register, logout, fetchUser }}>
+    <AuthContext.Provider value={{
+      user,
+      isAuthenticated,
+      loading,
+      login,
+      completeOAuthLogin,
+      register,
+      logout,
+      fetchUser,
+    }}>
       {children}
     </AuthContext.Provider>
   );

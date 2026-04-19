@@ -8,12 +8,12 @@ const prisma = new PrismaClient();
 async function createOrUpdateProfile(req, res) {
   try {
     const userId = req.user.id;
-    const { familyName, addressLine1, addressLine2, postalCode, city, phonePrimary, phoneSecondary } = req.body;
+    const { familyName, addressLine1, addressLine2, postalCode, city, country, phonePrimary, phoneSecondary } = req.body;
 
     const family = await prisma.family.upsert({
       where: { userId },
-      update: { familyName, addressLine1, addressLine2, postalCode, city, phonePrimary, phoneSecondary },
-      create: { userId, familyName, addressLine1, addressLine2, postalCode, city, phonePrimary, phoneSecondary },
+      update: { familyName, addressLine1, addressLine2, postalCode, city, country: country || 'France', phonePrimary, phoneSecondary },
+      create: { userId, familyName, addressLine1, addressLine2, postalCode, city, country: country || 'France', phonePrimary, phoneSecondary },
     });
 
     res.json({ family });

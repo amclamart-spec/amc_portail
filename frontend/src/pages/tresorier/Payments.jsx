@@ -2,14 +2,26 @@ import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 
+const statusOptions = [
+  { value: 'UPCOMING', label: 'À venir' },
+  { value: 'PAID', label: 'Payé' },
+  { value: 'FAILED', label: 'Impayé' },
+  { value: 'CANCELLED', label: 'Annulé' },
+];
+
 export default function TresorierPayments() {
   const [transactions, setTransactions] = useState([]);
+  const [plans, setPlans] = useState([]);
   const [form, setForm] = useState({ paymentId: '', amount: '', method: 'CHEQUE', description: '', transactionRef: '' });
 
   const load = async () => {
     try {
-      const { data } = await api.get('/payments/transactions');
-      setTransactions(data.transactions || []);
+      const [txRes, plansRes] = await Promise.all([
+        api.get('/payments/transactions'),
+        api.get('/payments/cheques/plans'),
+      ]);
+      setTransactions(txRes.data.transactions || []);
+      setPlans(plansRes.data.plans || []);
     } catch {
       toast.error('Impossible de charger les transactions');
     }
@@ -32,6 +44,16 @@ export default function TresorierPayments() {
     }
   };
 
+  const updateInstallmentStatus = async (installmentId, status) => {
+    try {
+      await api.patch(`/payments/cheques/installments/${installmentId}`, { status });
+      toast.success('Échéance mise à jour');
+      load();
+    } catch {
+      toast.error('Erreur de mise à jour');
+    }
+  };
+
   return (
     <div>
       <h2 style={{ color: 'var(--amc-primary)' }}>Gestion des paiements</h2>
@@ -50,6 +72,50 @@ export default function TresorierPayments() {
           <input className="form-control" placeholder="Description" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} style={{ gridColumn: '1 / -1' }} />
           <button className="btn btn-primary" type="submit" style={{ width: 'fit-content' }}>Enregistrer</button>
         </form>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3>Échéanciers chèques</h3>
+        {plans.length === 0 ? <p>Aucun échéancier chèque pour le moment.</p> : (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {plans.map((plan) => (
+              <div key={plan.id} style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <strong>{plan.family?.familyName || 'Famille'}</strong>
+                  <span className="badge badge-info">{Number(plan.totalAmount).toFixed(2)} €</span>
+                </div>
+                <div style={{ fontSize: 13, color: '#64748B', marginBottom: 10 }}>Plan #{plan.id.slice(0, 8)} — {plan.status}</div>
+
+                <div className="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>N°</th>
+                        <th>Montant</th>
+                        <th>Échéance</th>
+                        <th>Statut</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {plan.payment?.installments?.map((inst) => (
+                        <tr key={inst.id}>
+                          <td>{inst.installmentNumber}</td>
+                          <td>{Number(inst.amount).toFixed(2)} €</td>
+                          <td>{new Date(inst.dueDate).toLocaleDateString('fr-FR')}</td>
+                          <td>
+                            <select className="form-control" value={inst.status} onChange={(e) => updateInstallmentStatus(inst.id, e.target.value)}>
+                              {statusOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="card">

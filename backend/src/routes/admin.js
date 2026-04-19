@@ -10,12 +10,45 @@ const {
   getEnrollments,
   getSchoolYears,
   createSchoolYear,
+
   getPoles,
   createPole,
+  updatePole,
+  deletePole,
+
+  getLevels,
   createLevel,
+  updateLevel,
+  deleteLevel,
+
+  getRooms,
+  createRoom,
+  updateRoom,
+  deleteRoom,
+
+  getTimeSlots,
+  createTimeSlot,
+  updateTimeSlot,
+  deleteTimeSlot,
+
   getClasses,
+  getClassDetails,
   createClass,
+  updateClass,
+  deleteClass,
+  removeStudentFromClass,
+  exportClassStudentsExcel,
+  exportClassStudentsPdf,
+  sendMessageToClassFamilies,
+
+  getTeachers,
+  getTeacherById,
+  createTeacher,
+  updateTeacher,
+  resetTeacherPassword,
+  deleteTeacher,
 } = require('../controllers/adminController');
+const { getPricingConfig, updatePricingConfig } = require('../controllers/pricingController');
 
 const router = Router();
 router.use(authenticate);
@@ -31,12 +64,61 @@ router.get('/enrollments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), 
 
 router.get('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getSchoolYears);
 router.post('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createSchoolYear);
+router.get('/pricing', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getPricingConfig);
+router.put('/pricing', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updatePricingConfig);
 
+// Pôles / niveaux
 router.get('/poles', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getPoles);
 router.post('/poles', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createPole);
+router.put('/poles/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updatePole);
+router.delete('/poles/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), deletePole);
+
+router.get('/niveaux', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getLevels);
+router.post('/niveaux', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createLevel);
+router.put('/niveaux/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updateLevel);
+router.delete('/niveaux/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), deleteLevel);
+
+// Alias historique
 router.post('/levels', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createLevel);
 
+// Salles
+router.get('/salles', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getRooms);
+router.post('/salles', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createRoom);
+router.put('/salles/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updateRoom);
+router.delete('/salles/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), deleteRoom);
+
+// Alias historique
+router.get('/rooms', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getRooms);
+
+// Créneaux
+router.get('/creneaux', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTimeSlots);
+router.post('/creneaux', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createTimeSlot);
+router.put('/creneaux/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updateTimeSlot);
+router.delete('/creneaux/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), deleteTimeSlot);
+
+// Alias historique
+router.get('/timeslots', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTimeSlots);
+
+// Classes
 router.get('/classes', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getClasses);
+router.get('/classes/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getClassDetails);
 router.post('/classes', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createClass);
+router.put('/classes/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updateClass);
+router.delete('/classes/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), deleteClass);
+router.delete('/classes/:classId/inscriptions/:enrollmentId', authorizePermission(PERMISSIONS.CLASSES_MANAGE), removeStudentFromClass);
+router.get('/classes/:id/export/excel', authorizePermission(PERMISSIONS.CLASSES_MANAGE), exportClassStudentsExcel);
+router.get('/classes/:id/export/pdf', authorizePermission(PERMISSIONS.CLASSES_MANAGE), exportClassStudentsPdf);
+router.post('/classes/:id/message-familles', authorizePermission(PERMISSIONS.CLASSES_MANAGE), sendMessageToClassFamilies);
+
+// Professeurs
+router.get('/professeurs', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTeachers);
+router.get('/professeurs/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTeacherById);
+router.post('/professeurs', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createTeacher);
+router.put('/professeurs/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updateTeacher);
+router.post('/professeurs/:id/reset-password', authorizePermission(PERMISSIONS.CLASSES_MANAGE), resetTeacherPassword);
+router.delete('/professeurs/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), deleteTeacher);
+
+// Alias historique
+router.get('/teachers', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTeachers);
 
 module.exports = router;

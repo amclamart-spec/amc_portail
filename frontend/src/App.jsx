@@ -7,13 +7,20 @@ import { getHomeForRole } from './utils/roles';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import VerifyEmail from './pages/auth/VerifyEmail';
-
+import GoogleCallback from './pages/auth/GoogleCallback';
+import FamilyRegistrationWizard from './pages/auth/FamilyRegistrationWizard';
 import SuperAdminDashboard from './pages/superAdmin/Dashboard';
 
 import AdminDashboard from './pages/admin/Dashboard';
 import AdminUsers from './pages/admin/Users';
 import AdminEnrollments from './pages/admin/Enrollments';
 import AdminSettings from './pages/admin/Settings';
+import AdminRooms from './pages/admin/Rooms';
+import AdminTimeslots from './pages/admin/Timeslots';
+import AdminLevels from './pages/admin/Levels';
+import AdminClasses from './pages/admin/Classes';
+import AdminClassDetails from './pages/admin/ClassDetails';
+import AdminTeachers from './pages/admin/Teachers';
 
 import TresorierDashboard from './pages/tresorier/Dashboard';
 import TresorierPayments from './pages/tresorier/Payments';
@@ -35,12 +42,26 @@ function App() {
       <Route path="/register" element={!isAuthenticated ? <Register /> : <Navigate to={getHomeForRole(user?.role)} />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
 
+      <Route path="/register/famille-wizard" element={<FamilyRegistrationWizard />} />
+      <Route path="/auth/google/callback" element={<GoogleCallback />} />
       <Route path="/super-admin" element={<PrivateRoute roles={['SUPER_ADMIN']}><Layout><SuperAdminDashboard /></Layout></PrivateRoute>} />
 
       <Route path="/admin" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminDashboard /></Layout></PrivateRoute>} />
       <Route path="/admin/users" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminUsers /></Layout></PrivateRoute>} />
       <Route path="/admin/enrollments" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminEnrollments /></Layout></PrivateRoute>} />
       <Route path="/admin/settings" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminSettings /></Layout></PrivateRoute>} />
+
+      <Route path="/admin/salles" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminRooms /></Layout></PrivateRoute>} />
+      <Route path="/admin/creneaux" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminTimeslots /></Layout></PrivateRoute>} />
+      <Route path="/admin/niveaux" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminLevels /></Layout></PrivateRoute>} />
+      <Route path="/admin/classes" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminClasses /></Layout></PrivateRoute>} />
+      <Route path="/admin/classes/:id" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminClassDetails /></Layout></PrivateRoute>} />
+      <Route path="/admin/professeurs" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminTeachers /></Layout></PrivateRoute>} />
+
+      {/* Alias historiques */}
+      <Route path="/admin/rooms" element={<Navigate to="/admin/salles" replace />} />
+      <Route path="/admin/timeslots" element={<Navigate to="/admin/creneaux" replace />} />
+      <Route path="/admin/teachers" element={<Navigate to="/admin/professeurs" replace />} />
 
       <Route path="/tresorier" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierDashboard /></Layout></PrivateRoute>} />
       <Route path="/tresorier/payments" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments /></Layout></PrivateRoute>} />

@@ -1,14 +1,27 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { FiMail, FiLock, FiUser, FiPhone, FiCheckCircle } from 'react-icons/fi';
+import { FiCheckCircle } from 'react-icons/fi';
+
+const PROFILE_OPTIONS = [
+  { value: 'FAMILLE', label: 'Famille' },
+  { value: 'PROFESSEUR', label: 'Professeur' },
+  { value: 'ADMIN', label: 'Administrateur' },
+  { value: 'TRESORIER', label: 'Trésorier' },
+];
 
 export default function Register() {
   const { register, loading } = useAuth();
   const navigate = useNavigate();
   const [success, setSuccess] = useState(false);
   const [form, setForm] = useState({
-    firstName: '', lastName: '', email: '', phone: '', password: '', confirmPassword: '',
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    password: '',
+    confirmPassword: '',
+    profile: 'FAMILLE',
   });
   const [errors, setErrors] = useState({});
 
@@ -28,6 +41,22 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
+
+    if (form.profile === 'FAMILLE') {
+      navigate('/register/famille-wizard', {
+        state: {
+          prefill: {
+            firstName: form.firstName,
+            lastName: form.lastName,
+            email: form.email,
+            phone: form.phone,
+            password: form.password,
+          },
+        },
+      });
+      return;
+    }
+
     try {
       await register({
         firstName: form.firstName,
@@ -35,9 +64,12 @@ export default function Register() {
         email: form.email,
         phone: form.phone,
         password: form.password,
+        role: form.profile,
       });
       setSuccess(true);
-    } catch { /* handled in context */ }
+    } catch {
+      // géré dans le contexte
+    }
   };
 
   const handleChange = (field) => (e) => {
@@ -67,7 +99,7 @@ export default function Register() {
           }}>
             <strong>⏳ En attente de validation</strong>
             <p style={{ margin: '8px 0 0', fontSize: 14, color: '#92400E' }}>
-              Après vérification de votre email, votre compte devra être validé par l'administration de l'école. Vous recevrez une notification par email.
+              Après vérification de votre email, votre compte devra être validé par l'administration.
             </p>
           </div>
           <Link to="/login" className="btn btn-primary" style={{ marginTop: 8 }}>
@@ -79,10 +111,7 @@ export default function Register() {
   }
 
   return (
-    <div style={{
-      minHeight: '100vh', display: 'flex', flexDirection: 'column',
-      background: 'linear-gradient(135deg, #213B88 0%, #0088CC 100%)',
-    }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'linear-gradient(135deg, #213B88 0%, #0088CC 100%)' }}>
       <div style={{ padding: '20px 40px' }}>
         <img src="/amc_logo.png" alt="AMC" style={{ height: 50 }} />
       </div>
@@ -90,7 +119,7 @@ export default function Register() {
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
         <div style={{
           background: 'var(--amc-white)', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-          width: '100%', maxWidth: 500, padding: '36px',
+          width: '100%', maxWidth: 560, padding: '36px',
         }}>
           <h2 style={{ textAlign: 'center', color: 'var(--amc-primary)', marginBottom: 8 }}>Créer un compte</h2>
           <p style={{ textAlign: 'center', color: '#6B7280', marginBottom: 24, fontSize: 14 }}>
@@ -98,6 +127,13 @@ export default function Register() {
           </p>
 
           <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label>Profil *</label>
+              <select className="form-control" value={form.profile} onChange={handleChange('profile')}>
+                {PROFILE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-group">
                 <label>Prénom <span className="required">*</span></label>
@@ -134,8 +170,14 @@ export default function Register() {
               {errors.confirmPassword && <div className="form-error">{errors.confirmPassword}</div>}
             </div>
 
+            {form.profile === 'FAMILLE' && (
+              <div style={{ background: '#EEF2FF', borderRadius: 8, padding: 12, fontSize: 13, color: 'var(--amc-primary)', marginBottom: 8 }}>
+                Le profil <strong>Famille</strong> déclenche l'assistant complet d'inscription en 6 étapes.
+              </div>
+            )}
+
             <button type="submit" className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 8 }} disabled={loading}>
-              {loading ? 'Inscription...' : 'S\'inscrire'}
+              {loading ? 'Traitement...' : form.profile === 'FAMILLE' ? 'Suivant' : "S'inscrire"}
             </button>
           </form>
 

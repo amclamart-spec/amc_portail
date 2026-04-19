@@ -3,39 +3,47 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
+
 const config = require('./config');
 const routes = require('./routes');
+const authRoutes = require('./routes/auth');
+const configurePassport = require('./config/passport');
 
 const app = express();
+const passport = configurePassport();
 
-// Sécurité
 app.use(helmet());
 app.use(cors({
   origin: config.corsOrigin,
   credentials: true,
 }));
 
-// Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requêtes par fenêtre
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: { error: 'Trop de requêtes, veuillez réessayer plus tard' },
 });
 app.use('/api/auth', limiter);
+app.use('/auth', limiter);
 
-// Parsing
+app.use(cookieParser());
+app.use(passport.initialize());
+
+// Webhooks paiement: body brut nécessaire pour vérifier les signatures
+app.use('/api/payments/webhooks/stripe', express.raw({ type: 'application/json' }));
+app.use('/api/payments/webhooks/gocardless', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Logging
 if (config.nodeEnv !== 'test') {
   app.use(morgan('dev'));
 }
 
-// Routes
 app.use('/api', routes);
+// Alias sans /api pour OAuth (compatibilité demandée)
+app.use('/auth', authRoutes);
 
-// Route racine
 app.get('/', (req, res) => {
   res.json({
     name: 'AMC Portail API',
@@ -44,18 +52,15 @@ app.get('/', (req, res) => {
   });
 });
 
-// 404
 app.use((req, res) => {
   res.status(404).json({ error: 'Route non trouvée' });
 });
 
-// Gestion d'erreurs globale
 app.use((err, req, res, _next) => {
   console.error('Erreur non gérée:', err);
   res.status(500).json({ error: 'Erreur interne du serveur' });
 });
 
-// Démarrage du serveur
 const PORT = config.port;
 app.listen(PORT, () => {
   console.log(`

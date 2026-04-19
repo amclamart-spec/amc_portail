@@ -1,11 +1,19 @@
 const { Router } = require('express');
 const { body } = require('express-validator');
-const { register, login, refreshToken, verifyEmail, getMe, logout } = require('../controllers/authController');
+const {
+  register,
+  login,
+  googleAuth,
+  googleCallback,
+  refreshToken,
+  verifyEmail,
+  getMe,
+  logout,
+} = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 
 const router = Router();
 
-// Validation rules
 const registerValidation = [
   body('email').isEmail().withMessage('Email invalide').normalizeEmail(),
   body('password')
@@ -14,6 +22,7 @@ const registerValidation = [
     .matches(/[0-9]/).withMessage('Au moins un chiffre'),
   body('firstName').trim().notEmpty().withMessage('Prénom requis'),
   body('lastName').trim().notEmpty().withMessage('Nom requis'),
+  body('role').optional().isIn(['FAMILLE', 'PROFESSEUR', 'ADMIN', 'TRESORIER']).withMessage('Profil invalide'),
 ];
 
 const loginValidation = [
@@ -21,18 +30,21 @@ const loginValidation = [
   body('password').notEmpty().withMessage('Mot de passe requis'),
 ];
 
-// Middleware de validation
 function validate(req, res, next) {
   const { validationResult } = require('express-validator');
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
-  next();
+  return next();
 }
 
 router.post('/register', registerValidation, validate, register);
 router.post('/login', loginValidation, validate, login);
+
+router.get('/google', googleAuth);
+router.get('/google/callback', googleCallback);
+
 router.post('/refresh', refreshToken);
 router.get('/verify-email/:token', verifyEmail);
 router.get('/me', authenticate, getMe);

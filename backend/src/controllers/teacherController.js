@@ -4,17 +4,23 @@ const prisma = new PrismaClient();
 
 async function getTeacherDashboard(req, res) {
   try {
+    const teacherProfile = await prisma.teacher.findUnique({ where: { userId: req.user.id } });
+    if (!teacherProfile) {
+      return res.json({ classes: [], summary: { totalClasses: 0, totalStudents: 0 } });
+    }
+
     const classes = await prisma.class.findMany({
-      where: { teacherUserId: req.user.id },
+      where: { teacherId: teacherProfile.id },
       include: {
         level: { include: { pole: true } },
         schoolYear: true,
+        roomRef: true,
         enrollments: {
           where: { status: { in: ['PENDING', 'CONFIRMED'] } },
           include: { student: true },
         },
       },
-      orderBy: { dayOfWeek: 'asc' },
+      orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
     });
 
     const totalStudents = classes.reduce((sum, c) => sum + c.enrollments.length, 0);
@@ -34,13 +40,19 @@ async function getTeacherDashboard(req, res) {
 
 async function getTeacherClasses(req, res) {
   try {
+    const teacherProfile = await prisma.teacher.findUnique({ where: { userId: req.user.id } });
+    if (!teacherProfile) {
+      return res.json({ classes: [] });
+    }
+
     const classes = await prisma.class.findMany({
-      where: { teacherUserId: req.user.id },
+      where: { teacherId: teacherProfile.id },
       include: {
         level: { include: { pole: true } },
         schoolYear: true,
+        roomRef: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
     });
 
     res.json({ classes });

@@ -33,8 +33,18 @@ module.exports = {
 
   payments: {
     stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    stripePublicKey: process.env.STRIPE_PUBLIC_KEY,
+    goCardlessAccessToken: process.env.GOCARDLESS_ACCESS_TOKEN,
+    goCardlessWebhookSecret: process.env.GOCARDLESS_WEBHOOK_SECRET,
+    goCardlessEnvironment: process.env.GOCARDLESS_ENVIRONMENT || 'sandbox',
     paypalClientId: process.env.PAYPAL_CLIENT_ID,
     paypalClientSecret: process.env.PAYPAL_CLIENT_SECRET,
     paypalMode: process.env.PAYPAL_MODE || 'sandbox',
+  },
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackUrl: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/auth/google/callback',
   },
 };

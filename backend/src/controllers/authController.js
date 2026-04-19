@@ -1,10 +1,52 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const passport = require('passport');
 const { v4: uuidv4 } = require('uuid');
 const { PrismaClient } = require('@prisma/client');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { sendVerificationEmail } = require('../services/emailService');
+const config = require('../config');
 
 const prisma = new PrismaClient();
+
+const OAUTH_STATE_COOKIE = 'amc_google_oauth_state';
+
+function getCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: config.nodeEnv === 'production',
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000,
+    path: '/',
+  };
+}
+
+function buildFrontendRedirect(pathname = '/login') {
+  return new URL(pathname, config.frontendUrl);
+}
+
+function redirectWithError(res, message) {
+  const url = buildFrontendRedirect('/auth/google/callback');
+  url.searchParams.set('error', message);
+  return res.redirect(url.toString());
+}
+
+async function issueTokensForUser(user) {
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+      refreshToken,
+      lastLogin: new Date(),
+    },
+  });
+
+  return { accessToken, refreshToken };
+}
 
 /**
  * POST /api/auth/register
@@ -13,31 +55,28 @@ async function register(req, res) {
   try {
     const { email, password, firstName, lastName, phone, role } = req.body;
 
-    // Vérifier si l'email existe déjà
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
       return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
     }
 
-    // Hasher le mot de passe
     const passwordHash = await bcrypt.hash(password, 12);
     const emailVerifyToken = uuidv4();
 
-    // Créer l'utilisateur (PENDING par défaut)
     const user = await prisma.user.create({
       data: {
         email,
         passwordHash,
+        provider: 'local',
         firstName,
         lastName,
         phone,
-        role: role === 'PROFESSEUR' ? 'PROFESSEUR' : 'FAMILLE',
+        role: ['FAMILLE', 'PROFESSEUR', 'ADMIN', 'TRESORIER'].includes(role) ? role : 'FAMILLE',
         emailVerifyToken,
         validationStatus: 'PENDING',
       },
     });
 
-    // Envoyer l'email de vérification
     await sendVerificationEmail(user, emailVerifyToken);
 
     res.status(201).json({
@@ -69,7 +108,12 @@ async function login(req, res) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
 
-    // Vérifier le verrouillage
+    if (!user.passwordHash) {
+      return res.status(400).json({
+        error: 'Ce compte est configuré pour la connexion Google. Utilisez "Se connecter avec Google".',
+      });
+    }
+
     if (user.lockedUntil && user.lockedUntil > new Date()) {
       return res.status(423).json({
         error: 'Compte verrouillé suite à trop de tentatives. Réessayez plus tard.',
@@ -77,31 +121,18 @@ async function login(req, res) {
       });
     }
 
-    // Vérifier le mot de passe
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
       const attempts = user.failedLoginAttempts + 1;
       const updateData = { failedLoginAttempts: attempts };
       if (attempts >= 5) {
-        updateData.lockedUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 min
+        updateData.lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
       }
       await prisma.user.update({ where: { id: user.id }, data: updateData });
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
 
-    // Reset tentatives et générer tokens
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        failedLoginAttempts: 0,
-        lockedUntil: null,
-        refreshToken,
-        lastLogin: new Date(),
-      },
-    });
+    const { accessToken, refreshToken } = await issueTokensForUser(user);
 
     res.json({
       accessToken,
@@ -120,6 +151,64 @@ async function login(req, res) {
     console.error('Erreur login:', error);
     res.status(500).json({ error: 'Erreur serveur lors de la connexion' });
   }
+}
+
+/**
+ * GET /api/auth/google
+ */
+function googleAuth(req, res, next) {
+  if (!config.google.clientId || !config.google.clientSecret || !config.google.callbackUrl) {
+    return res.status(503).json({
+      error: 'Authentification Google non configurée sur le serveur',
+      code: 'GOOGLE_OAUTH_NOT_CONFIGURED',
+    });
+  }
+
+  const state = crypto.randomBytes(24).toString('hex');
+  res.cookie(OAUTH_STATE_COOKIE, state, getCookieOptions());
+
+  return passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    session: false,
+    state,
+  })(req, res, next);
+}
+
+/**
+ * GET /api/auth/google/callback
+ */
+function googleCallback(req, res, next) {
+  const expectedState = req.cookies?.[OAUTH_STATE_COOKIE];
+  const receivedState = req.query?.state;
+
+  res.clearCookie(OAUTH_STATE_COOKIE, getCookieOptions());
+
+  if (!expectedState || !receivedState || expectedState !== receivedState) {
+    return redirectWithError(res, 'Échec de vérification de sécurité OAuth. Veuillez réessayer.');
+  }
+
+  return passport.authenticate('google', { session: false }, async (error, user, info) => {
+    if (error) {
+      console.error('Erreur OAuth Google:', error);
+      return redirectWithError(res, 'Erreur lors de l’authentification Google.');
+    }
+
+    if (!user) {
+      const reason = info?.message || 'Connexion Google refusée.';
+      return redirectWithError(res, reason);
+    }
+
+    try {
+      const { accessToken, refreshToken } = await issueTokensForUser(user);
+      const url = buildFrontendRedirect('/auth/google/callback');
+      url.searchParams.set('accessToken', accessToken);
+      url.searchParams.set('refreshToken', refreshToken);
+      return res.redirect(url.toString());
+    } catch (tokenError) {
+      console.error('Erreur génération token OAuth:', tokenError);
+      return redirectWithError(res, 'Impossible de finaliser la connexion Google.');
+    }
+  })(req, res, next);
 }
 
 /**
@@ -197,6 +286,7 @@ async function getMe(req, res) {
         role: true,
         validationStatus: true,
         emailVerified: true,
+        provider: true,
         createdAt: true,
         lastLogin: true,
         family: {
@@ -226,4 +316,13 @@ async function logout(req, res) {
   }
 }
 
-module.exports = { register, login, refreshToken, verifyEmail, getMe, logout };
+module.exports = {
+  register,
+  login,
+  googleAuth,
+  googleCallback,
+  refreshToken,
+  verifyEmail,
+  getMe,
+  logout,
+};

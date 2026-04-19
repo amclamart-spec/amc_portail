@@ -6,14 +6,13 @@ const {
 
 const router = Router();
 
-router.use(authenticate);
-
-// Lecture ouverte aux familles et admin
+// Lecture publique pour le wizard d'inscription famille
 router.get('/poles', getPolesAndLevels);
 router.get('/classes', getAvailableClasses);
-router.get('/summary', authorize('FAMILLE'), getEnrollmentSummary);
 
-// Actions qui nécessitent un compte approuvé
+// Routes authentifiées
+router.use(authenticate);
+router.get('/summary', authorize('FAMILLE'), getEnrollmentSummary);
 router.post('/', authorize('FAMILLE'), requireApproved, createEnrollment);
 router.delete('/:id', authorize('FAMILLE'), requireApproved, cancelEnrollment);
 
