@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-  "build": "npx vite build",
+  "build": "node node_modules/vite/bin/vite.js build",
   "dev": "npx vite",
   "preview": "npx vite preview"
 },
