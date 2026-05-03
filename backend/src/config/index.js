@@ -10,7 +10,7 @@ module.exports = {
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
-  corsOrigin: process.env.CORS_ORIGIN || 'https://amc-front-dev.onrender.com'||'http://localhost:5173',
+  corsOrigin: process.env.CORS_ORIGIN || 'https://amc-front-dev.onrender.com' || 'http://localhost:5173',
 
   email: {
     provider: process.env.EMAIL_PROVIDER || 'ABACUS',
