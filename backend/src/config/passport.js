@@ -87,7 +87,7 @@ function configurePassport() {
               lastName: profile.name?.familyName || fallbackName.lastName,
               emailVerified: true,
               role: 'FAMILLE',
-              validationStatus: 'PENDING',
+              validationStatus: 'APPROVED',
             },
           });
 

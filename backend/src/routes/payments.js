@@ -11,6 +11,10 @@ const {
   requestRefund,
   processRefund,
   getFamilyPaymentHistory,
+  handleStripeConfirm,
+  handleStripeCancel,
+  handleGoCardlessReturn,
+  handleGoCardlessCancel,
   handleStripeWebhook,
   handleGoCardlessWebhook,
 } = require('../controllers/paymentController');
@@ -20,6 +24,12 @@ const router = express.Router();
 // Webhooks publics (sans auth)
 router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
 router.post('/webhooks/gocardless', express.raw({ type: 'application/json' }), handleGoCardlessWebhook);
+
+// Pages de retour publiques
+router.get('/confirm', handleStripeConfirm);
+router.get('/cancel', handleStripeCancel);
+router.get('/gocardless/return', handleGoCardlessReturn);
+router.get('/gocardless/cancel', handleGoCardlessCancel);
 
 router.use(authenticate);
 

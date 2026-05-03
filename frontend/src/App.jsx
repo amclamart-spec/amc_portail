@@ -71,6 +71,7 @@ function App() {
       <Route path="/famille" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyDashboard /></Layout></PrivateRoute>} />
       <Route path="/famille/enfants" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyChildren /></Layout></PrivateRoute>} />
       <Route path="/famille/inscription" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyEnrollment /></Layout></PrivateRoute>} />
+      <Route path="/famille/inscription/nouveau" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyRegistrationWizard existingFamily /></Layout></PrivateRoute>} />
       <Route path="/famille/paiements" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyPayments /></Layout></PrivateRoute>} />
       <Route path="/famille/profil" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyProfile /></Layout></PrivateRoute>} />
 

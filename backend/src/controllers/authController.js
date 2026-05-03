@@ -63,6 +63,7 @@ async function register(req, res) {
     const passwordHash = await bcrypt.hash(password, 12);
     const emailVerifyToken = uuidv4();
 
+    const userRole = ['FAMILLE', 'PROFESSEUR', 'ADMIN', 'TRESORIER'].includes(role) ? role : 'FAMILLE';
     const user = await prisma.user.create({
       data: {
         email,
@@ -71,7 +72,7 @@ async function register(req, res) {
         firstName,
         lastName,
         phone,
-        role: ['FAMILLE', 'PROFESSEUR', 'ADMIN', 'TRESORIER'].includes(role) ? role : 'FAMILLE',
+        role: userRole,
         emailVerifyToken,
         validationStatus: 'PENDING',
       },
@@ -80,7 +81,7 @@ async function register(req, res) {
     await sendVerificationEmail(user, emailVerifyToken);
 
     res.status(201).json({
-      message: 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Votre compte sera ensuite validé par l\'administration.',
+      message: 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes famille sont validés après vérification de l’email.',
       user: {
         id: user.id,
         email: user.email,
@@ -258,9 +259,18 @@ async function verifyEmail(req, res) {
       return res.status(400).json({ error: 'Lien de vérification invalide ou expiré' });
     }
 
+    const updateData = {
+      emailVerified: true,
+      emailVerifyToken: null,
+    };
+
+    if (user.role === 'FAMILLE') {
+      updateData.validationStatus = 'APPROVED';
+    }
+
     await prisma.user.update({
       where: { id: user.id },
-      data: { emailVerified: true, emailVerifyToken: null },
+      data: updateData,
     });
 
     res.json({ message: 'Email vérifié avec succès !' });
@@ -302,6 +312,44 @@ async function getMe(req, res) {
 }
 
 /**
+ * POST /api/auth/change-password
+ */
+async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: 'Tous les champs sont requis' });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'Les mots de passe ne correspondent pas' });
+    }
+
+    if (newPassword.length < 8 || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+      return res.status(400).json({ error: 'Le nouveau mot de passe doit contenir au moins 8 caractères, une majuscule et un chiffre' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user || !user.passwordHash) {
+      return res.status(400).json({ error: 'Impossible de changer le mot de passe pour ce compte' });
+    }
+
+    const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!isValid) {
+      return res.status(400).json({ error: 'Mot de passe actuel incorrect' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+
+    res.json({ message: 'Mot de passe mis à jour avec succès' });
+  } catch (error) {
+    console.error('Erreur changePassword:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
  * POST /api/auth/logout
  */
 async function logout(req, res) {
@@ -324,5 +372,6 @@ module.exports = {
   refreshToken,
   verifyEmail,
   getMe,
+  changePassword,
   logout,
 };

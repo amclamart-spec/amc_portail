@@ -306,6 +306,7 @@ model Enrollment {
   schoolYearId String           @map("school_year_id")
   classId      String           @map("class_id")
   status       EnrollmentStatus @default(PENDING)
+  comment      String?
   enrolledAt   DateTime         @default(now()) @map("enrolled_at")
   confirmedAt  DateTime?        @map("confirmed_at")
   cancelledAt  DateTime?        @map("cancelled_at")
@@ -438,6 +439,7 @@ enum PaymentPlanType {
   STRIPE_CARD
   GO_CARDLESS_SEPA
   CHEQUE
+  ESPECES
 }
 
 enum PaymentPlanStatus {
@@ -477,6 +479,7 @@ model PricingConfig {
   id                   String   @id @default(uuid())
   isActive             Boolean  @default(true) @map("is_active")
   registrationFee      Decimal  @default(10.00) @map("registration_fee") @db.Decimal(10, 2)
+  fraisPrelevement     Decimal  @default(0.00) @map("frais_prelevement") @db.Decimal(10, 2)
   arabicTier1          Decimal  @default(310.00) @map("arabic_tier_1") @db.Decimal(10, 2)
   arabicTier2          Decimal  @default(570.00) @map("arabic_tier_2") @db.Decimal(10, 2)
   arabicTier3          Decimal  @default(750.00) @map("arabic_tier_3") @db.Decimal(10, 2)

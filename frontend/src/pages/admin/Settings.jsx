@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 
 const defaultPricing = {
   registrationFee: 10,
+  fraisPrelevement: 0,
   arabicTier1: 310,
   arabicTier2: 570,
   arabicTier3: 750,
@@ -36,7 +37,8 @@ export default function AdminSettings() {
       const raw = pricingRes.data.raw;
       if (raw) {
         setPricing({
-          registrationFee: Number(raw.registrationFee),
+          registrationFee: Number(raw.registrationFee || 0),
+          fraisPrelevement: Number(raw.fraisPrelevement || 0),
           arabicTier1: Number(raw.arabicTier1),
           arabicTier2: Number(raw.arabicTier2),
           arabicTier3: Number(raw.arabicTier3),
@@ -135,6 +137,7 @@ export default function AdminSettings() {
         <form onSubmit={savePricing}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
             <div className="form-group"><label>Frais inscription</label><input className="form-control" type="number" step="0.01" value={pricing.registrationFee} onChange={(e) => setPricing((p) => ({ ...p, registrationFee: Number(e.target.value) }))} /></div>
+            <div className="form-group"><label>Frais prélèvement</label><input className="form-control" type="number" step="0.01" value={pricing.fraisPrelevement} onChange={(e) => setPricing((p) => ({ ...p, fraisPrelevement: Number(e.target.value) }))} /></div>
             <div className="form-group"><label>Arabe 1 élève</label><input className="form-control" type="number" step="0.01" value={pricing.arabicTier1} onChange={(e) => setPricing((p) => ({ ...p, arabicTier1: Number(e.target.value) }))} /></div>
             <div className="form-group"><label>Arabe 2 élèves</label><input className="form-control" type="number" step="0.01" value={pricing.arabicTier2} onChange={(e) => setPricing((p) => ({ ...p, arabicTier2: Number(e.target.value) }))} /></div>
             <div className="form-group"><label>Arabe 3 élèves</label><input className="form-control" type="number" step="0.01" value={pricing.arabicTier3} onChange={(e) => setPricing((p) => ({ ...p, arabicTier3: Number(e.target.value) }))} /></div>

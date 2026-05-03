@@ -4,6 +4,7 @@
 
 const DEFAULT_PRICING = {
   registrationFee: 10,
+  fraisPrelevement: 0,
   arabicTiers: {
     1: 310,
     2: 570,
@@ -30,6 +31,7 @@ function normalizePricingConfig(pricingConfig) {
 
   return {
     registrationFee: toNumber(pricingConfig.registrationFee, DEFAULT_PRICING.registrationFee),
+    fraisPrelevement: toNumber(pricingConfig.fraisPrelevement, DEFAULT_PRICING.fraisPrelevement),
     arabicTiers: {
       1: toNumber(pricingConfig.arabicTier1, DEFAULT_PRICING.arabicTiers[1]),
       2: toNumber(pricingConfig.arabicTier2, DEFAULT_PRICING.arabicTiers[2]),
@@ -88,6 +90,7 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING) {
 
   return {
     registrationFee: pricing.registrationFee,
+    fraisPrelevement: pricing.fraisPrelevement || 0,
     arabicFee,
     arabicCount,
     coranScienceFee: coranScienceTotal,

@@ -6,6 +6,7 @@ const prisma = new PrismaClient();
 function mapPayloadToDb(payload = {}) {
   return {
     registrationFee: payload.registrationFee,
+    fraisPrelevement: payload.fraisPrelevement,
     arabicTier1: payload.arabicTier1,
     arabicTier2: payload.arabicTier2,
     arabicTier3: payload.arabicTier3,

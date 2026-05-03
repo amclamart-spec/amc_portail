@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 
-const STORAGE_KEY = 'amc_family_wizard_draft_v1';
+const STORAGE_KEY_BASE = 'amc_family_wizard_draft_v1';
 
 const engagementBulletPoints = [
   'Les élèves de moins de 11 ans doivent être accompagnés et récupérés par le responsable légal.',
@@ -51,8 +52,10 @@ function getDefaultState(prefill = {}) {
       email: prefill.email || '',
       phone: prefill.phone || '',
       password: prefill.password || '',
+      confirmPassword: '',
       profile: 'FAMILLE',
     },
+    accountOnly: false,
     address: {
       familyName: prefill.lastName || '',
       addressLine1: '',
@@ -83,12 +86,14 @@ function getDefaultState(prefill = {}) {
   };
 }
 
-export default function FamilyRegistrationWizard() {
+export default function FamilyRegistrationWizard({ existingFamily = false }) {
+  const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const prefill = location.state?.prefill || {};
+  const storageKey = existingFamily ? `${STORAGE_KEY_BASE}_existing_family` : STORAGE_KEY_BASE;
 
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [allClasses, setAllClasses] = useState([]);
@@ -99,7 +104,7 @@ export default function FamilyRegistrationWizard() {
   const [activeHealthMember, setActiveHealthMember] = useState(0);
 
   const [wizard, setWizard] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -111,18 +116,27 @@ export default function FamilyRegistrationWizard() {
     return getDefaultState(prefill);
   });
 
-  const steps = [
-    'Adresse & Téléphones',
-    'Membres famille',
-    'Cours & tarifs',
-    'Fiche sanitaire',
-    'Engagement',
-    'Paiement',
-  ];
+  const steps = existingFamily
+    ? ['Membres famille', 'Cours & tarifs', 'Fiche sanitaire', 'Engagement', 'Paiement']
+    : ['Adresse & Téléphones', 'Membres famille', 'Cours & tarifs', 'Fiche sanitaire', 'Engagement', 'Paiement'];
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(wizard));
-  }, [wizard]);
+    localStorage.setItem(storageKey, JSON.stringify(wizard));
+  }, [wizard, storageKey]);
+
+  useEffect(() => {
+    if (existingFamily && user?.email && user.email !== wizard.account.email) {
+      setWizard((prev) => ({
+        ...prev,
+        account: {
+          ...prev.account,
+          email: user.email,
+          firstName: prev.account.firstName || user.firstName || '',
+          lastName: prev.account.lastName || user.lastName || '',
+        },
+      }));
+    }
+  }, [existingFamily, user, wizard.account.email]);
 
   useEffect(() => {
     api.get('/enrollments/poles').then(({ data }) => setPoles(data.poles || [])).catch(() => {});
@@ -143,10 +157,11 @@ export default function FamilyRegistrationWizard() {
   }, [wizard.courseSelections, wizard.members, allClasses]);
 
   const persistDraft = async (nextStep = step) => {
-    if (!wizard.account.email) return;
+    const email = wizard.account.email || user?.email;
+    if (!email) return;
     try {
       const { data } = await api.post('/family-wizard/draft', {
-        email: wizard.account.email,
+        email,
         draftId: wizard.draftId,
         currentStep: nextStep,
         payload: wizard,
@@ -160,6 +175,8 @@ export default function FamilyRegistrationWizard() {
     }
   };
 
+  const isEmailValid = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
   const updateWizard = (path, value) => {
     setWizard((prev) => ({
       ...prev,
@@ -171,29 +188,46 @@ export default function FamilyRegistrationWizard() {
   };
 
   const validateStep = () => {
-    if (step === 1) {
+    if (!existingFamily && step === 0) {
       const a = wizard.address;
-      if (!a.addressLine1 || !a.postalCode || !a.city || !a.country || !a.phonePrimary) {
+      const account = wizard.account;
+      if (!account.firstName || !account.lastName || !account.email || !account.password) {
+        toast.error('Veuillez compléter les informations de compte (nom, email, mot de passe)');
+        return false;
+      }
+      if (!isEmailValid(account.email)) {
+        toast.error('Veuillez saisir un email valide');
+        return false;
+      }
+      if (account.password.length < 8 || !/[A-Z]/.test(account.password) || !/[0-9]/.test(account.password)) {
+        toast.error('Le mot de passe doit contenir 8 caractères, une majuscule et un chiffre');
+        return false;
+      }
+      if (account.password !== account.confirmPassword) {
+        toast.error('Les mots de passe ne correspondent pas');
+        return false;
+      }
+      if (!wizard.accountOnly && (!a.addressLine1 || !a.postalCode || !a.city || !a.country || !a.phonePrimary)) {
         toast.error('Veuillez compléter adresse, pays et téléphone principal');
         return false;
       }
     }
 
-    if (step === 2) {
+    if ((existingFamily && step === 0) || (!existingFamily && step === 1)) {
       if (wizard.members.length === 0) {
         toast.error('Ajoutez au moins un membre de la famille');
         return false;
       }
     }
 
-    if (step === 3) {
+    if ((existingFamily && step === 1) || (!existingFamily && step === 2)) {
       if (wizard.courseSelections.length === 0) {
         toast.error('Veuillez sélectionner au moins un cours');
         return false;
       }
     }
 
-    if (step === 4) {
+    if ((existingFamily && step === 2) || (!existingFamily && step === 3)) {
       const form = wizard.healthForms[activeHealthMember] || emptyHealthForm;
       if (form.hasChronicDisease && !form.chronicDiseaseDetails.trim()) return toast.error('Détail des maladies chroniques requis'), false;
       if (form.hasMedicalTreatment && !form.medicalTreatmentDetails.trim()) return toast.error('Détail du traitement requis'), false;
@@ -208,7 +242,7 @@ export default function FamilyRegistrationWizard() {
       }
     }
 
-    if (step === 5) {
+    if ((existingFamily && step === 3) || (!existingFamily && step === 4)) {
       const e = wizard.engagement;
       if (!e.readAndApproved || !e.legalMentionAccepted || !e.signedByFullName || !e.citySigned || !e.signedAt) {
         toast.error('Veuillez compléter l’engagement (lu/approuvé, nom, lieu, date)');
@@ -216,7 +250,7 @@ export default function FamilyRegistrationWizard() {
       }
     }
 
-    if (step === 6) {
+    if ((existingFamily && step === 4) || (!existingFamily && step === 5)) {
       const p = wizard.payment;
       if (p.method === 'GO_CARDLESS_SEPA' && ![10, 20, 30].includes(Number(p.scheduleDay))) {
         toast.error('Jour SEPA invalide (10/20/30)');
@@ -233,17 +267,49 @@ export default function FamilyRegistrationWizard() {
 
   const next = async () => {
     if (!validateStep()) return;
-    const target = Math.min(step + 1, 6);
+    const target = Math.min(step + 1, steps.length - 1);
     setStep(target);
     await persistDraft(target);
 
-    if (step === 3) {
+    if ((existingFamily && step === 1) || (!existingFamily && step === 2)) {
       await refreshPricing();
     }
   };
 
+  const createAccountOnly = async () => {
+    if (!wizard.account.firstName || !wizard.account.lastName || !wizard.account.email || !wizard.account.password || !wizard.account.phone) {
+      return toast.error('Veuillez compléter nom, email, téléphone et mot de passe');
+    }
+    if (wizard.account.password.length < 8 || !/[A-Z]/.test(wizard.account.password) || !/[0-9]/.test(wizard.account.password)) {
+      return toast.error('Le mot de passe doit contenir 8 caractères, une majuscule et un chiffre');
+    }
+    if (wizard.account.password !== wizard.account.confirmPassword) {
+      return toast.error('Les mots de passe ne correspondent pas');
+    }
+
+    setSubmitting(true);
+    try {
+      await api.post('/family-wizard/create-account-only', {
+        account: {
+          firstName: wizard.account.firstName,
+          lastName: wizard.account.lastName,
+          email: wizard.account.email,
+          phone: wizard.account.phone,
+          password: wizard.account.password,
+        },
+      });
+      localStorage.removeItem(storageKey);
+      toast.success('Compte créé. Vérifiez votre email pour activer l’accès.');
+      navigate('/login');
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Erreur lors de la création du compte');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const prev = async () => {
-    const target = Math.max(step - 1, 1);
+    const target = Math.max(step - 1, 0);
     setStep(target);
     await persistDraft(target);
   };
@@ -263,24 +329,27 @@ export default function FamilyRegistrationWizard() {
     if (!validateStep()) return;
     setSubmitting(true);
     try {
-      const payload = {
-        ...wizard,
-        account: {
-          ...wizard.account,
-          profile: 'FAMILLE',
-        },
-      };
+      const payload = existingFamily
+        ? { ...wizard }
+        : {
+          ...wizard,
+          account: {
+            ...wizard.account,
+            profile: 'FAMILLE',
+          },
+        };
 
-      const { data } = await api.post('/family-wizard/complete', payload);
-      localStorage.removeItem(STORAGE_KEY);
-      toast.success('Inscription famille finalisée ✅');
+      const endpoint = existingFamily ? '/family-wizard/complete-existing' : '/family-wizard/complete';
+      const { data } = await api.post(endpoint, payload);
+      localStorage.removeItem(storageKey);
+      toast.success(existingFamily ? 'Inscription du membre finalisée ✅' : 'Inscription famille finalisée ✅');
 
       if (data?.payment?.checkout?.checkoutUrl) {
         window.location.href = data.payment.checkout.checkoutUrl;
         return;
       }
 
-      navigate('/login');
+      navigate(existingFamily ? '/famille' : '/login');
     } catch (error) {
       toast.error(error.response?.data?.error || 'Erreur de finalisation');
     } finally {
@@ -384,8 +453,10 @@ export default function FamilyRegistrationWizard() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8FAFC', padding: 20 }}>
       <div className="card" style={{ maxWidth: 1100, margin: '0 auto' }}>
-        <h2 style={{ color: 'var(--amc-primary)', marginBottom: 8 }}>Assistant Inscription Famille</h2>
-        <p style={{ color: '#64748B', marginBottom: 20 }}>Étape {step}/6 — {steps[step - 1]}</p>
+        <h2 style={{ color: 'var(--amc-primary)', marginBottom: 8 }}>
+          {existingFamily ? 'Ajouter un enfant et finaliser son inscription' : 'Assistant Inscription Famille'}
+        </h2>
+        <p style={{ color: '#64748B', marginBottom: 20 }}>Étape {step + 1}/{steps.length} — {steps[step]}</p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 24 }}>
           {steps.map((label, idx) => (
@@ -395,8 +466,8 @@ export default function FamilyRegistrationWizard() {
                 height: 30,
                 margin: '0 auto 6px',
                 borderRadius: '50%',
-                background: idx + 1 <= step ? 'var(--amc-primary)' : '#E2E8F0',
-                color: idx + 1 <= step ? '#fff' : '#64748B',
+                background: idx <= step ? 'var(--amc-primary)' : '#E2E8F0',
+                color: idx <= step ? '#fff' : '#64748B',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -410,31 +481,76 @@ export default function FamilyRegistrationWizard() {
           ))}
         </div>
 
-        {step === 1 && (
+        {step === 0 && !existingFamily && (
           <div>
-            <h3>Adresse et téléphones</h3>
+            <h3>Compte famille</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-group">
-                <label>Nom de famille *</label>
-                <input className="form-control" value={wizard.address.familyName} onChange={(e) => updateWizard('address', { familyName: e.target.value })} />
+                <label>Prénom *</label>
+                <input className="form-control" value={wizard.account.firstName} onChange={(e) => updateWizard('account', { firstName: e.target.value })} />
               </div>
               <div className="form-group">
-                <label>Téléphone principal *</label>
-                <input className="form-control" value={wizard.address.phonePrimary} onChange={(e) => updateWizard('address', { phonePrimary: e.target.value })} />
+                <label>Nom *</label>
+                <input className="form-control" value={wizard.account.lastName} onChange={(e) => updateWizard('account', { lastName: e.target.value })} />
               </div>
             </div>
-            <div className="form-group"><label>Adresse *</label><input className="form-control" value={wizard.address.addressLine1} onChange={(e) => updateWizard('address', { addressLine1: e.target.value })} /></div>
-            <div className="form-group"><label>Complément</label><input className="form-control" value={wizard.address.addressLine2} onChange={(e) => updateWizard('address', { addressLine2: e.target.value })} /></div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', gap: 12 }}>
-              <div className="form-group"><label>Code postal *</label><input className="form-control" value={wizard.address.postalCode} onChange={(e) => updateWizard('address', { postalCode: e.target.value })} /></div>
-              <div className="form-group"><label>Ville *</label><input className="form-control" value={wizard.address.city} onChange={(e) => updateWizard('address', { city: e.target.value })} /></div>
-              <div className="form-group"><label>Pays *</label><input className="form-control" value={wizard.address.country} onChange={(e) => updateWizard('address', { country: e.target.value })} /></div>
+            <div className="form-group">
+              <label>Email *</label>
+              <input type="email" className="form-control" value={wizard.account.email} onChange={(e) => updateWizard('account', { email: e.target.value })} />
             </div>
-            <div className="form-group"><label>Téléphone secondaire</label><input className="form-control" value={wizard.address.phoneSecondary} onChange={(e) => updateWizard('address', { phoneSecondary: e.target.value })} /></div>
+            <div className="form-group">
+              <label>Téléphone *</label>
+              <input type="tel" className="form-control" value={wizard.account.phone} onChange={(e) => updateWizard('account', { phone: e.target.value })} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="form-group">
+                <label>Mot de passe *</label>
+                <input type="password" className="form-control" value={wizard.account.password} onChange={(e) => updateWizard('account', { password: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Confirmez le mot de passe *</label>
+                <input type="password" className="form-control" value={wizard.account.confirmPassword} onChange={(e) => updateWizard('account', { confirmPassword: e.target.value })} />
+              </div>
+            </div>
+
+            <div className="form-group" style={{ marginTop: 16 }}>
+              <label><input type="checkbox" checked={wizard.accountOnly} onChange={(e) => setWizard((prev) => ({ ...prev, accountOnly: e.target.checked }))} /> Créer seulement le compte portail et compléter l’inscription plus tard</label>
+            </div>
+
+            <div style={{ marginTop: 16, padding: 16, background: '#F8FAFC', borderRadius: 8, border: '1px solid #E2E8F0' }}>
+              <strong>Option compte seul</strong>
+              <p style={{ margin: '8px 0 0', color: '#334155' }}>
+                Si vous cochez cette case, vous pouvez créer uniquement votre compte AMC maintenant et revenir plus tard pour compléter l’inscription de vos enfants.
+              </p>
+            </div>
+
+            {!wizard.accountOnly && (
+              <>
+                <h3 style={{ marginTop: 24 }}>Adresse et téléphones</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group">
+                    <label>Nom de famille *</label>
+                    <input className="form-control" value={wizard.address.familyName} onChange={(e) => updateWizard('address', { familyName: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Téléphone principal *</label>
+                    <input className="form-control" value={wizard.address.phonePrimary} onChange={(e) => updateWizard('address', { phonePrimary: e.target.value })} />
+                  </div>
+                </div>
+                <div className="form-group"><label>Adresse *</label><input className="form-control" value={wizard.address.addressLine1} onChange={(e) => updateWizard('address', { addressLine1: e.target.value })} /></div>
+                <div className="form-group"><label>Complément</label><input className="form-control" value={wizard.address.addressLine2} onChange={(e) => updateWizard('address', { addressLine2: e.target.value })} /></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', gap: 12 }}>
+                  <div className="form-group"><label>Code postal *</label><input className="form-control" value={wizard.address.postalCode} onChange={(e) => updateWizard('address', { postalCode: e.target.value })} /></div>
+                  <div className="form-group"><label>Ville *</label><input className="form-control" value={wizard.address.city} onChange={(e) => updateWizard('address', { city: e.target.value })} /></div>
+                  <div className="form-group"><label>Pays *</label><input className="form-control" value={wizard.address.country} onChange={(e) => updateWizard('address', { country: e.target.value })} /></div>
+                </div>
+                <div className="form-group"><label>Téléphone secondaire</label><input className="form-control" value={wizard.address.phoneSecondary} onChange={(e) => updateWizard('address', { phoneSecondary: e.target.value })} /></div>
+              </>
+            )}
           </div>
         )}
 
-        {step === 2 && (
+        {((step === 0 && existingFamily) || (step === 1 && !existingFamily)) && (
           <div>
             <h3>Membres de la famille</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
@@ -459,7 +575,7 @@ export default function FamilyRegistrationWizard() {
           </div>
         )}
 
-        {step === 3 && (
+        {((step === 1 && existingFamily) || (step === 2 && !existingFamily)) && (
           <div>
             <h3>Inscription aux cours</h3>
             {loadingClasses ? <p>Chargement des créneaux...</p> : (
@@ -493,7 +609,12 @@ export default function FamilyRegistrationWizard() {
                     <div>Frais inscription: {Number(pricingPreview.registrationFee).toFixed(2)} €</div>
                     <div>Arabe ({pricingPreview.arabicCount} élève(s)): {Number(pricingPreview.arabicFee).toFixed(2)} €</div>
                     <div>Coran/Sciences: {Number(pricingPreview.coranScienceFee).toFixed(2)} €</div>
-                    <div style={{ marginTop: 8, fontWeight: 700 }}>TOTAL: {Number(pricingPreview.total).toFixed(2)} €</div>
+                    {wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
+                      <div>Frais prélèvement SEPA: {Number(pricingPreview.fraisPrelevement).toFixed(2)} €</div>
+                    )}
+                    <div style={{ marginTop: 8, fontWeight: 700 }}>
+                      TOTAL: {Number(pricingPreview.total + (wizard.payment.method === 'GO_CARDLESS_SEPA' ? pricingPreview.fraisPrelevement : 0)).toFixed(2)} €
+                    </div>
                   </div>
                 )}
               </>
@@ -501,7 +622,7 @@ export default function FamilyRegistrationWizard() {
           </div>
         )}
 
-        {step === 4 && (
+        {((step === 2 && existingFamily) || (step === 3 && !existingFamily)) && (
           <div>
             <h3>Formulaire sanitaire</h3>
             <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -582,7 +703,7 @@ export default function FamilyRegistrationWizard() {
           </div>
         )}
 
-        {step === 5 && (
+        {((step === 3 && existingFamily) || (step === 4 && !existingFamily)) && (
           <div>
             <h3>Décharge & engagement</h3>
             <div className="card" style={{ background: '#FFF7ED', border: '1px solid #FDBA74' }}>
@@ -608,7 +729,7 @@ export default function FamilyRegistrationWizard() {
           </div>
         )}
 
-        {step === 6 && (
+        {((step === 4 && existingFamily) || (step === 5 && !existingFamily)) && (
           <div>
             <h3>Paiement & confirmation</h3>
 
@@ -629,9 +750,19 @@ export default function FamilyRegistrationWizard() {
               <select className="form-control" value={wizard.payment.method} onChange={(e) => updateWizard('payment', { method: e.target.value })}>
                 <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
                 <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
+                <option value="ESPECES">Espèces</option>
                 <option value="CHEQUE">Chèque</option>
               </select>
             </div>
+            {pricingPreview && wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
+              <div className="card" style={{ marginBottom: 14, background: '#FEF3C7' }}>
+                <strong>Frais de prélèvement</strong>
+                <div>Frais prélèvement SEPA: {Number(pricingPreview.fraisPrelevement).toFixed(2)} €</div>
+                <div style={{ marginTop: 8, fontWeight: 700 }}>
+                  Total SEPA: {Number(pricingPreview.total + pricingPreview.fraisPrelevement).toFixed(2)} €
+                </div>
+              </div>
+            )}
 
             {wizard.payment.method === 'STRIPE_CARD' && (
               <div className="form-group">
@@ -681,13 +812,18 @@ export default function FamilyRegistrationWizard() {
           </div>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}>
-          <button className="btn btn-outline" onClick={step === 1 ? () => navigate('/register') : prev}>{step === 1 ? 'Retour inscription' : 'Précédent'}</button>
-          {step < 6 ? (
-            <button className="btn btn-primary" onClick={next}>Suivant</button>
-          ) : (
-            <button className="btn btn-primary" onClick={submitFinal} disabled={submitting}>{submitting ? 'Validation...' : 'Confirmer & payer'}</button>
-          )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24, flexWrap: 'wrap', gap: 10 }}>
+          <button className="btn btn-outline" onClick={step === 0 ? () => navigate(existingFamily ? '/famille' : '/register') : prev}>{step === 0 ? (existingFamily ? 'Retour famille' : 'Retour inscription') : 'Précédent'}</button>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {step === 0 && !existingFamily && wizard.accountOnly && (
+              <button className="btn btn-secondary" onClick={createAccountOnly} disabled={submitting}>{submitting ? 'Création...' : 'Créer le compte seulement'}</button>
+            )}
+            {step < steps.length - 1 ? (
+              <button className="btn btn-primary" onClick={next}>Suivant</button>
+            ) : (
+              <button className="btn btn-primary" onClick={submitFinal} disabled={submitting}>{submitting ? 'Validation...' : 'Confirmer & payer'}</button>
+            )}
+          </div>
         </div>
       </div>
     </div>

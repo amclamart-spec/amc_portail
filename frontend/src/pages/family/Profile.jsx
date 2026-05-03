@@ -10,6 +10,11 @@ export default function FamilyProfile() {
   const [form, setForm] = useState({
     familyName: '', addressLine1: '', addressLine2: '', postalCode: '', city: '', country: 'France', phonePrimary: '', phoneSecondary: '',
   });
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
 
   useEffect(() => {
     api.get('/family/profile').then(({ data }) => {
@@ -44,7 +49,19 @@ export default function FamilyProfile() {
     }
   };
 
+  const handlePasswordSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/auth/change-password', passwordForm);
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      toast.success('Mot de passe mis à jour !');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Erreur lors du changement de mot de passe');
+    }
+  };
+
   const handleChange = (field) => (e) => setForm((p) => ({ ...p, [field]: e.target.value }));
+  const handlePasswordChange = (field) => (e) => setPasswordForm((p) => ({ ...p, [field]: e.target.value }));
 
   if (loading) return <p>Chargement...</p>;
 
@@ -99,6 +116,29 @@ export default function FamilyProfile() {
 
           <button type="submit" className="btn btn-primary mt-2">
             {family ? 'Mettre à jour' : 'Enregistrer le profil'}
+          </button>
+        </form>
+      </div>
+
+      <div className="card" style={{ marginTop: 24 }}>
+        <div className="card-header">
+          <h3>Changer le mot de passe</h3>
+        </div>
+        <form onSubmit={handlePasswordSubmit}>
+          <div className="form-group">
+            <label>Mot de passe actuel <span className="required">*</span></label>
+            <input type="password" className="form-control" value={passwordForm.currentPassword} onChange={handlePasswordChange('currentPassword')} required />
+          </div>
+          <div className="form-group">
+            <label>Nouveau mot de passe <span className="required">*</span></label>
+            <input type="password" className="form-control" value={passwordForm.newPassword} onChange={handlePasswordChange('newPassword')} required />
+          </div>
+          <div className="form-group">
+            <label>Confirmer le nouveau mot de passe <span className="required">*</span></label>
+            <input type="password" className="form-control" value={passwordForm.confirmPassword} onChange={handlePasswordChange('confirmPassword')} required />
+          </div>
+          <button type="submit" className="btn btn-secondary mt-2">
+            Mettre à jour le mot de passe
           </button>
         </form>
       </div>

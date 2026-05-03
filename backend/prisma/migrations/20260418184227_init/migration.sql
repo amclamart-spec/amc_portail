@@ -26,14 +26,6 @@ ALTER TABLE "classes" DROP CONSTRAINT "classes_teacher_user_id_fkey";
 -- AlterTable
 ALTER TABLE "families" ADD COLUMN     "country" TEXT NOT NULL DEFAULT 'France';
 
--- AlterTable
-ALTER TABLE "payment_transactions" DROP COLUMN "processed_at",
-ADD COLUMN     "processedAt" TIMESTAMP(3);
-
--- AlterTable
-ALTER TABLE "refunds" DROP COLUMN "processed_at",
-ADD COLUMN     "processedAt" TIMESTAMP(3);
-
 -- CreateTable
 CREATE TABLE "enrollment_drafts" (
     "id" TEXT NOT NULL,

@@ -244,11 +244,20 @@ async function getEnrollments(req, res) {
     if (schoolYearId) where.schoolYearId = schoolYearId;
     if (status) where.status = status;
 
+    const studentHealthFormsInclude = schoolYearId
+      ? { where: { schoolYearId }, include: { emergencyContacts: true, pickupAuthorizations: true } }
+      : { include: { emergencyContacts: true, pickupAuthorizations: true } };
+
     const [enrollments, total] = await Promise.all([
       prisma.enrollment.findMany({
         where,
         include: {
-          student: { select: { id: true, firstName: true, lastName: true, dateOfBirth: true } },
+          student: {
+            include: {
+              family: true,
+              healthForms: studentHealthFormsInclude,
+            },
+          },
           class: {
             include: {
               level: { include: { pole: true } },
@@ -266,6 +275,233 @@ async function getEnrollments(req, res) {
     res.json({ enrollments, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
   } catch (error) {
     console.error('Erreur getEnrollments:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateEnrollment(req, res) {
+  try {
+    const { id } = req.params;
+    const { status, classId, schoolYearId, student, family, healthForm, comment } = req.body;
+    const allowedStatuses = ['PENDING', 'CONFIRMED', 'CANCELLED', 'ARCHIVED'];
+
+    if (status && !allowedStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Statut d’inscription invalide' });
+    }
+
+    const enrollment = await prisma.enrollment.findUnique({
+      where: { id },
+      include: {
+        class: true,
+        student: { include: { family: true, healthForms: true } },
+      },
+    });
+    if (!enrollment) {
+      return res.status(404).json({ error: 'Inscription introuvable' });
+    }
+
+    const currentStatus = enrollment.status;
+    const targetStatus = status || currentStatus;
+    const classChanged = classId && classId !== enrollment.classId;
+    const enrollmentUpdates = {};
+
+    if (status) {
+      enrollmentUpdates.status = status;
+      if (status === 'CONFIRMED') {
+        enrollmentUpdates.confirmedAt = new Date();
+        enrollmentUpdates.cancelledAt = null;
+      } else if (status === 'CANCELLED') {
+        enrollmentUpdates.cancelledAt = new Date();
+        enrollmentUpdates.confirmedAt = null;
+      } else {
+        enrollmentUpdates.confirmedAt = null;
+        enrollmentUpdates.cancelledAt = null;
+      }
+    }
+
+    if (classChanged) {
+      enrollmentUpdates.classId = classId;
+    }
+    if (schoolYearId && schoolYearId !== enrollment.schoolYearId) {
+      enrollmentUpdates.schoolYearId = schoolYearId;
+    }
+    if (comment !== undefined) {
+      enrollmentUpdates.comment = comment;
+    }
+
+    const studentUpdates = {};
+    if (student) {
+      if (student.firstName !== undefined) studentUpdates.firstName = student.firstName;
+      if (student.lastName !== undefined) studentUpdates.lastName = student.lastName;
+      if (student.dateOfBirth !== undefined) {
+        studentUpdates.dateOfBirth = student.dateOfBirth ? new Date(student.dateOfBirth) : null;
+      }
+      if (student.gender !== undefined) studentUpdates.gender = student.gender;
+      if (student.allergies !== undefined) studentUpdates.allergies = student.allergies;
+      if (student.currentTreatments !== undefined) studentUpdates.currentTreatments = student.currentTreatments;
+    }
+
+    const familyUpdates = {};
+    if (family) {
+      if (family.familyName !== undefined) familyUpdates.familyName = family.familyName;
+      if (family.addressLine1 !== undefined) familyUpdates.addressLine1 = family.addressLine1;
+      if (family.addressLine2 !== undefined) familyUpdates.addressLine2 = family.addressLine2;
+      if (family.postalCode !== undefined) familyUpdates.postalCode = family.postalCode;
+      if (family.city !== undefined) familyUpdates.city = family.city;
+      if (family.country !== undefined) familyUpdates.country = family.country;
+      if (family.phonePrimary !== undefined) familyUpdates.phonePrimary = family.phonePrimary;
+      if (family.phoneSecondary !== undefined) familyUpdates.phoneSecondary = family.phoneSecondary;
+    }
+
+    let newClass = null;
+    if (classChanged) {
+      newClass = await prisma.class.findUnique({ where: { id: classId } });
+      if (!newClass) {
+        return res.status(404).json({ error: 'Classe introuvable' });
+      }
+    }
+
+    const classTransactions = [];
+    const shouldIncrementNewClass = targetStatus === 'CONFIRMED' && (currentStatus !== 'CONFIRMED' || classChanged);
+    const shouldDecrementOldClass = currentStatus === 'CONFIRMED' && (targetStatus !== 'CONFIRMED' || classChanged);
+
+    if (shouldIncrementNewClass) {
+      const targetClass = classChanged ? newClass : enrollment.class;
+      if (targetClass.enrolledCount >= targetClass.capacity) {
+        return res.status(400).json({ error: 'Impossible de confirmer l’inscription : la classe est complète' });
+      }
+      classTransactions.push({
+        where: { id: targetClass.id },
+        data: {
+          enrolledCount: { increment: 1 },
+          status: targetClass.enrolledCount + 1 >= targetClass.capacity ? 'FULL' : 'OPEN',
+        },
+      });
+    }
+
+    if (shouldDecrementOldClass) {
+      classTransactions.push({
+        where: { id: enrollment.classId },
+        data: {
+          enrolledCount: { decrement: 1 },
+          status: 'OPEN',
+        },
+      });
+    }
+
+    const targetSchoolYearId = schoolYearId || enrollment.schoolYearId;
+    const healthFormData = healthForm || null;
+    let healthFormAction = null;
+    let healthFormId = null;
+
+    if (healthFormData) {
+      const existingHealthForm = await prisma.studentHealthForm.findFirst({
+        where: { studentId: enrollment.studentId, schoolYearId: targetSchoolYearId },
+      });
+
+      const healthFormPayload = {
+        studentId: enrollment.studentId,
+        schoolYearId: targetSchoolYearId,
+        hasChronicDisease: Boolean(healthFormData.hasChronicDisease),
+        chronicDiseaseDetails: healthFormData.chronicDiseaseDetails || null,
+        hasMedicalTreatment: Boolean(healthFormData.hasMedicalTreatment),
+        medicalTreatmentDetails: healthFormData.medicalTreatmentDetails || null,
+        hasAllergy: Boolean(healthFormData.hasAllergy),
+        allergyDetails: healthFormData.allergyDetails || null,
+        hasDisability: Boolean(healthFormData.hasDisability),
+        disabilityDetails: healthFormData.disabilityDetails || null,
+        otherUsefulHealthInfo: healthFormData.otherUsefulHealthInfo || null,
+        canLeaveAloneAfterClass: healthFormData.canLeaveAloneAfterClass,
+        legalRepresentativeFullName: healthFormData.legalRepresentativeFullName || null,
+        citySigned: healthFormData.citySigned || null,
+        signedAt: healthFormData.signedAt ? new Date(healthFormData.signedAt) : null,
+        confidentialityAccepted: Boolean(healthFormData.confidentialityAccepted),
+        noMedicationPolicyAccepted: Boolean(healthFormData.noMedicationPolicyAccepted),
+      };
+
+      const emergencyContactsData = Array.isArray(healthFormData.emergencyContacts)
+        ? healthFormData.emergencyContacts.map((contact) => ({
+          firstName: contact.firstName || null,
+          lastName: contact.lastName || null,
+          relationship: contact.relationship || 'Proche',
+          phone: contact.phone || null,
+        }))
+        : [];
+
+      const pickupAuthorizedPersonsData = Array.isArray(healthFormData.pickupAuthorizedPersons)
+        ? healthFormData.pickupAuthorizedPersons.map((person) => ({
+          fullName: person.fullName || null,
+          relationship: person.relationship || 'Proche',
+          phone: person.phone || null,
+        }))
+        : [];
+
+      if (existingHealthForm) {
+        healthFormAction = async () => {
+          await prisma.studentHealthForm.update({
+            where: { id: existingHealthForm.id },
+            data: healthFormPayload,
+          });
+          await prisma.emergencyContact.deleteMany({ where: { healthFormId: existingHealthForm.id } });
+          await prisma.pickupAuthorization.deleteMany({ where: { healthFormId: existingHealthForm.id } });
+          if (emergencyContactsData.length > 0) {
+            await prisma.emergencyContact.createMany({ data: emergencyContactsData.map((contact) => ({ ...contact, healthFormId: existingHealthForm.id })) });
+          }
+          if (pickupAuthorizedPersonsData.length > 0) {
+            await prisma.pickupAuthorization.createMany({ data: pickupAuthorizedPersonsData.map((person) => ({ ...person, healthFormId: existingHealthForm.id })) });
+          }
+        };
+      } else {
+        healthFormAction = async () => {
+          const created = await prisma.studentHealthForm.create({
+            data: healthFormPayload,
+          });
+          if (emergencyContactsData.length > 0) {
+            await prisma.emergencyContact.createMany({ data: emergencyContactsData.map((contact) => ({ ...contact, healthFormId: created.id })) });
+          }
+          if (pickupAuthorizedPersonsData.length > 0) {
+            await prisma.pickupAuthorization.createMany({ data: pickupAuthorizedPersonsData.map((person) => ({ ...person, healthFormId: created.id })) });
+          }
+        };
+      }
+    }
+
+    const actions = [];
+    if (Object.keys(studentUpdates).length > 0) {
+      actions.push(prisma.student.update({ where: { id: enrollment.studentId }, data: studentUpdates }));
+    }
+    if (Object.keys(familyUpdates).length > 0) {
+      actions.push(prisma.family.update({ where: { id: enrollment.student.familyId }, data: familyUpdates }));
+    }
+    if (Object.keys(enrollmentUpdates).length > 0) {
+      actions.push(prisma.enrollment.update({ where: { id }, data: enrollmentUpdates }));
+    }
+    classTransactions.forEach((tx) => actions.push(prisma.class.update(tx)));
+
+    if (actions.length > 0) {
+      await prisma.$transaction(actions);
+    }
+    if (healthFormAction) {
+      await healthFormAction();
+    }
+
+    const updated = await prisma.enrollment.findUnique({
+      where: { id },
+      include: {
+        student: {
+          include: {
+            family: true,
+            healthForms: { include: { emergencyContacts: true, pickupAuthorizations: true } },
+          },
+        },
+        class: { include: { level: { include: { pole: true } } } },
+        schoolYear: true,
+      },
+    });
+
+    res.json({ enrollment: updated });
+  } catch (error) {
+    console.error('Erreur updateEnrollment:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -1431,4 +1667,5 @@ module.exports = {
   updateTeacher,
   resetTeacherPassword,
   deleteTeacher,
+  updateEnrollment,
 };

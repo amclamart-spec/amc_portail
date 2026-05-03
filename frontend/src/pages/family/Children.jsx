@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit, FiTrash2 } from 'react-icons/fi';
 
 export default function FamilyChildren() {
+  const navigate = useNavigate();
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -75,74 +77,17 @@ export default function FamilyChildren() {
     <div>
       <div className="flex-between mb-2">
         <h2 style={{ color: 'var(--amc-primary)' }}>Mes enfants</h2>
-        <button className="btn btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
-          <FiPlus /> Ajouter un enfant
+        <button className="btn btn-outline" onClick={() => navigate('/famille/inscription/nouveau')}>
+          <FiPlus /> Inscrire un nouveau membre
         </button>
       </div>
 
-      {/* Formulaire */}
-      {showForm && (
-        <div className="card mb-2">
-          <div className="card-header">
-            <h3>{editing ? 'Modifier l\'enfant' : 'Ajouter un enfant'}</h3>
-            <button className="btn btn-outline btn-sm" onClick={resetForm}>Annuler</button>
-          </div>
-          <form onSubmit={handleSubmit}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div className="form-group">
-                <label>Nom <span className="required">*</span></label>
-                <input className="form-control" value={form.lastName} onChange={handleChange('lastName')} required />
-              </div>
-              <div className="form-group">
-                <label>Prénom <span className="required">*</span></label>
-                <input className="form-control" value={form.firstName} onChange={handleChange('firstName')} required />
-              </div>
-              <div className="form-group">
-                <label>Date de naissance <span className="required">*</span></label>
-                <input type="date" className="form-control" value={form.dateOfBirth} onChange={handleChange('dateOfBirth')} required />
-              </div>
-              <div className="form-group">
-                <label>Sexe <span className="required">*</span></label>
-                <select className="form-control" value={form.gender} onChange={handleChange('gender')}>
-                  <option value="GARCON">Garçon</option>
-                  <option value="FILLE">Fille</option>
-                </select>
-              </div>
-            </div>
-
-            <h4 style={{ color: 'var(--amc-primary)', margin: '16px 0 12px', fontSize: 15 }}>Informations médicales (optionnel)</h4>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div className="form-group">
-                <label>Allergies connues</label>
-                <textarea className="form-control" value={form.allergies} onChange={handleChange('allergies')} rows={2} />
-              </div>
-              <div className="form-group">
-                <label>Traitements en cours</label>
-                <textarea className="form-control" value={form.currentTreatments} onChange={handleChange('currentTreatments')} rows={2} />
-              </div>
-              <div className="form-group">
-                <label>Personne à prévenir en urgence</label>
-                <input className="form-control" placeholder="Nom" value={form.emergencyContactName} onChange={handleChange('emergencyContactName')} />
-              </div>
-              <div className="form-group">
-                <label>Téléphone d'urgence</label>
-                <input className="form-control" placeholder="06 XX XX XX XX" value={form.emergencyContactPhone} onChange={handleChange('emergencyContactPhone')} />
-              </div>
-            </div>
-
-            <button type="submit" className="btn btn-primary mt-2">
-              {editing ? 'Modifier' : 'Enregistrer l\'enfant'}
-            </button>
-          </form>
-        </div>
-      )}
-
       {/* Liste */}
-      {students.length === 0 && !showForm ? (
+      {students.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 40 }}>
           <p style={{ fontSize: 16, color: '#6B7280', marginBottom: 16 }}>Aucun enfant enregistré</p>
-          <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-            <FiPlus /> Ajouter mon premier enfant
+          <button className="btn btn-primary" onClick={() => navigate('/famille/inscription/nouveau')}>
+            <FiPlus /> Inscrire un nouveau membre
           </button>
         </div>
       ) : (

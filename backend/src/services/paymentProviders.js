@@ -1,10 +1,16 @@
 const crypto = require('crypto');
 const config = require('../config');
 
+function hasConfigValue(value) {
+  if (value === undefined || value === null) return false;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized !== '' && normalized !== 'undefined' && normalized !== 'null';
+}
+
 function providerConfigured(provider) {
-  if (provider === 'STRIPE') return Boolean(config.payments.stripeSecretKey);
-  if (provider === 'GOCARDLESS') return Boolean(config.payments.goCardlessAccessToken);
-  if (provider === 'PAYPAL') return Boolean(config.payments.paypalClientId && config.payments.paypalClientSecret);
+  if (provider === 'STRIPE') return hasConfigValue(config.payments.stripeSecretKey);
+  if (provider === 'GOCARDLESS') return hasConfigValue(config.payments.goCardlessAccessToken);
+  if (provider === 'PAYPAL') return hasConfigValue(config.payments.paypalClientId) && hasConfigValue(config.payments.paypalClientSecret);
   return false;
 }
 
@@ -24,6 +30,10 @@ function toFormUrlEncoded(payload = {}) {
 }
 
 async function createStripeCheckout({ amount, currency = 'eur', paymentId, returnUrl, cancelUrl, installments = 1, metadata = {} }) {
+  if (!hasConfigValue(config.payments.stripeSecretKey)) {
+    throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
+  }
+
   const formData = {
     mode: 'payment',
     'success_url': `${returnUrl}?payment_id=${paymentId}`,
@@ -169,6 +179,35 @@ async function createOnlineCheckout({
   };
 }
 
+async function completeGoCardlessRedirectFlow({ redirectFlowId, sessionToken }) {
+  const baseUrl = getGoCardlessBaseUrl();
+
+  const response = await fetch(`${baseUrl}/redirect_flows/${redirectFlowId}/actions/complete`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.payments.goCardlessAccessToken}`,
+      'Content-Type': 'application/json',
+      'GoCardless-Version': '2015-07-06',
+      'Idempotency-Key': `amc-gocardless-complete-${redirectFlowId}-${Date.now()}`,
+    },
+    body: JSON.stringify({ session_token: sessionToken }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    const firstError = data?.error?.errors?.[0]?.message;
+    throw new Error(firstError || 'Erreur GoCardless lors de la finalisation du mandat');
+  }
+
+  const flow = data.redirect_flows;
+  return {
+    configured: true,
+    provider: 'GOCARDLESS',
+    redirectFlowId,
+    flow,
+  };
+}
+
 function verifyStripeWebhookSignature(rawBody, signatureHeader) {
   if (!config.payments.stripeWebhookSecret) return true;
   if (!signatureHeader) return false;
@@ -205,6 +244,7 @@ function verifyGoCardlessWebhookSignature(rawBody, signatureHeader) {
 
 module.exports = {
   createOnlineCheckout,
+  completeGoCardlessRedirectFlow,
   providerConfigured,
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,

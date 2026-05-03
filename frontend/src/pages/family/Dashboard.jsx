@@ -68,59 +68,12 @@ export default function FamilyDashboard() {
               <h3>Actions rapides</h3>
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <Link to="/famille/enfants" className="btn btn-primary">
-                <FiPlus /> Ajouter un enfant
-              </Link>
-              <Link to="/famille/inscription" className="btn btn-secondary">
-                <FiBookOpen /> Inscrire à un cours
+              <Link to="/famille/inscription/nouveau" className="btn btn-primary">
+                <FiPlus /> Inscrire un nouveau membre
               </Link>
             </div>
           </div>
 
-          {/* Mes enfants */}
-          <div className="card">
-            <div className="card-header">
-              <h3>Mes enfants</h3>
-              <Link to="/famille/enfants" className="btn btn-outline btn-sm">Gérer</Link>
-            </div>
-            {students.length === 0 ? (
-              <p style={{ color: '#6B7280', textAlign: 'center', padding: 20 }}>
-                Aucun enfant enregistré. <Link to="/famille/enfants">Ajouter un enfant</Link>
-              </p>
-            ) : (
-              <div style={{ display: 'grid', gap: 12 }}>
-                {students.map((s) => {
-                  const age = Math.floor((Date.now() - new Date(s.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-                  const sEnrollments = (s.enrollments || []).filter((e) => e.schoolYear?.isCurrent && e.status !== 'CANCELLED');
-                  return (
-                    <div key={s.id} style={{
-                      border: '1px solid var(--amc-border)', borderRadius: 8, padding: 16,
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12,
-                    }}>
-                      <div>
-                        <strong style={{ fontSize: 16 }}>{s.lastName} {s.firstName}</strong>
-                        <div style={{ color: '#6B7280', fontSize: 13 }}>
-                          {age} ans • {s.gender === 'GARCON' ? 'Garçon' : 'Fille'}
-                        </div>
-                        {sEnrollments.length > 0 && (
-                          <div style={{ marginTop: 8 }}>
-                            {sEnrollments.map((e) => (
-                              <span key={e.id} className="badge badge-info" style={{ marginRight: 6, marginBottom: 4 }}>
-                                {e.class?.level?.pole?.name} — {e.class?.level?.name}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <Link to="/famille/inscription" className="btn btn-outline btn-sm">
-                        <FiBookOpen /> Inscrire
-                      </Link>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </>
       )}
     </div>

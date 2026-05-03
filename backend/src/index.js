@@ -62,13 +62,22 @@ app.use((err, req, res, _next) => {
 });
 
 const PORT = config.port;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
   🟢 AMC Portail API démarrée
   🌐 Port: ${PORT}
   📀 Environnement: ${config.nodeEnv}
   🔗 Frontend: ${config.frontendUrl}
   `);
+});
+
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} déjà utilisé. Fermez l’autre instance ou changez la variable d’environnement PORT.`);
+    process.exit(1);
+  }
+  console.error('Erreur du serveur :', error);
+  process.exit(1);
 });
 
 module.exports = app;

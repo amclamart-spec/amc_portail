@@ -8,6 +8,7 @@ const {
   refreshToken,
   verifyEmail,
   getMe,
+  changePassword,
   logout,
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
@@ -30,6 +31,17 @@ const loginValidation = [
   body('password').notEmpty().withMessage('Mot de passe requis'),
 ];
 
+const changePasswordValidation = [
+  body('currentPassword').notEmpty().withMessage('Mot de passe actuel requis'),
+  body('newPassword')
+    .isLength({ min: 8 }).withMessage('Minimum 8 caractères')
+    .matches(/[A-Z]/).withMessage('Au moins une majuscule')
+    .matches(/[0-9]/).withMessage('Au moins un chiffre'),
+  body('confirmPassword')
+    .custom((value, { req }) => value === req.body.newPassword)
+    .withMessage('Les mots de passe ne correspondent pas'),
+];
+
 function validate(req, res, next) {
   const { validationResult } = require('express-validator');
   const errors = validationResult(req);
@@ -48,6 +60,7 @@ router.get('/google/callback', googleCallback);
 router.post('/refresh', refreshToken);
 router.get('/verify-email/:token', verifyEmail);
 router.get('/me', authenticate, getMe);
+router.post('/change-password', authenticate, changePasswordValidation, validate, changePassword);
 router.post('/logout', authenticate, logout);
 
 module.exports = router;

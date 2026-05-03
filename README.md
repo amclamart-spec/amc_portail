@@ -97,8 +97,29 @@ cp .env.example .env
 | `SMTP_PASS` | Mot de passe app | `xxxx-xxxx-xxxx` |
 | `FRONTEND_URL` | URL du frontend | `http://localhost:5173` |
 | `CORS_ORIGIN` | Origine CORS | `http://localhost:5173` |
+| `STRIPE_SECRET_KEY` | Clé secrète Stripe test | `sk_test_xxxxxxx` |
+| `STRIPE_PUBLIC_KEY` | Clé publique Stripe test | `pk_test_xxxxxxx` |
+| `STRIPE_WEBHOOK_SECRET` | Secret webhook Stripe en mode test | `whsec_xxxxxxx` |
 
-### 3. Migration de la base de données
+### 3. Paiement par carte bancaire (Stripe) en local
+
+Pour tester le paiement par carte bancaire via Stripe :
+
+1. Créez un compte Stripe ou connectez-vous à `https://dashboard.stripe.com/test`.
+2. Copiez les clés de test et ajoutez-les dans `backend/.env` :
+   - `STRIPE_SECRET_KEY`
+   - `STRIPE_PUBLIC_KEY`
+   - `STRIPE_WEBHOOK_SECRET`
+3. Pour les webhooks locaux, utilisez `stripe listen --forward-to localhost:4000/api/payments/webhooks/stripe`.
+4. Dans l’interface Stripe, utilisez la carte de test suivante :
+   - Numéro : `4242 4242 4242 4242`
+   - Date d’expiration : n’importe quelle date future
+   - CVC : `123`
+   - Code postal : `75001`
+
+> En mode test, Stripe n’effectue pas de transactions réelles.
+
+### 4. Migration de la base de données
 
 ```bash
 # Créer la base de données PostgreSQL

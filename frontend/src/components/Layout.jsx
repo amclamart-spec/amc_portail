@@ -21,54 +21,147 @@ import { ROLE_LABEL } from '../utils/roles';
 const navSectionsByRole = {
   SUPER_ADMIN: [
     {
-      title: 'Administration',
+      title: 'Mon espace',
       items: [
-        { path: '/super-admin', icon: FiShield, label: 'Rôles & admins' },
-        { path: '/admin', icon: FiBarChart2, label: 'Vue Admin' },
-        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
-        { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
+        { path: '/admin', icon: FiHome, label: 'Tableau de bord' },
       ],
     },
     {
-      title: 'Paramètres',
+      title: 'Gestion des inscrits',
       items: [
-        { path: '/admin/settings', icon: FiSettings, label: 'Référentiels' },
-        { path: '/admin/salles', icon: FiHome, label: 'Salles' },
-        { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
-        { path: '/admin/niveaux', icon: FiSettings, label: 'Niveaux' },
+        { path: '/admin/users', icon: FiUsers, label: 'Familles' },
+        { path: '/admin/enrollments', icon: FiClipboard, label: 'Élèves' },
+        { path: '/admin/users', icon: FiUsers, label: 'Parents' },
       ],
     },
     {
       title: 'Pédagogie',
       items: [
+        { path: '/admin/niveaux', icon: FiSettings, label: 'Pôles et Niveaux' },
         { path: '/admin/classes', icon: FiBookOpen, label: 'Classes' },
         { path: '/admin/professeurs', icon: FiUser, label: 'Professeurs' },
+        { path: '/admin/salles', icon: FiHome, label: 'Salles' },
+        { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
+      ],
+    },
+    {
+      title: 'Finance',
+      items: [
+        { icon: FiCreditCard, label: 'Paiements', disabled: true },
+        { icon: FiCreditCard, label: 'Échéanciers', disabled: true },
+        { icon: FiCreditCard, label: 'Impayés', disabled: true },
+        { icon: FiCreditCard, label: 'Remboursements', disabled: true },
+        { icon: FiCreditCard, label: 'Exports comptables', disabled: true },
+      ],
+    },
+    {
+      title: 'Communication',
+      items: [
+        { icon: FiClipboard, label: 'Envoyer un message', disabled: true },
+        { icon: FiClipboard, label: 'Messages envoyés', disabled: true },
+        { icon: FiClipboard, label: 'Templates d\'emails', disabled: true },
+        { icon: FiClipboard, label: 'Statistiques SMS', disabled: true },
+      ],
+    },
+    {
+      title: 'Statistiques',
+      items: [
+        { icon: FiBarChart2, label: 'Effectifs', disabled: true },
+        { icon: FiBarChart2, label: 'Évolution inter-années', disabled: true },
+        { icon: FiBarChart2, label: 'Taux de remplissage', disabled: true },
+        { icon: FiBarChart2, label: 'Analyses financières', disabled: true },
+      ],
+    },
+    {
+      title: 'Paramètres',
+      items: [
+        { path: '/admin/settings', icon: FiSettings, label: 'Années scolaires' },
+        { path: '/admin/settings', icon: FiSettings, label: 'Tarifs' },
+        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs / Rôles' },
+        { icon: FiSettings, label: 'Configuration paiements', disabled: true },
+        { path: '/admin/settings', icon: FiSettings, label: 'RGPD / Données' },
+      ],
+    },
+    {
+      title: 'Exports',
+      items: [
+        { path: '/admin/enrollments', icon: FiBookOpen, label: 'Listes élèves' },
+        { path: '/admin/classes', icon: FiBookOpen, label: 'Listes par classe' },
+        { icon: FiBookOpen, label: 'Feuilles d\'émargement', disabled: true },
+        { icon: FiBookOpen, label: 'Exports comptables', disabled: true },
       ],
     },
   ],
   ADMIN: [
     {
-      title: 'Administration',
+      title: 'Mon espace',
       items: [
-        { path: '/admin', icon: FiBarChart2, label: 'Tableau de bord' },
-        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
-        { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
+        { path: '/admin', icon: FiHome, label: 'Tableau de bord' },
       ],
     },
     {
-      title: 'Paramètres',
+      title: 'Gestion des inscrits',
       items: [
-        { path: '/admin/settings', icon: FiSettings, label: 'Référentiels' },
-        { path: '/admin/salles', icon: FiHome, label: 'Salles' },
-        { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
-        { path: '/admin/niveaux', icon: FiSettings, label: 'Niveaux' },
+        { path: '/admin/users', icon: FiUsers, label: 'Familles' },
+        { path: '/admin/enrollments', icon: FiClipboard, label: 'Élèves' },
+        { path: '/admin/users', icon: FiUsers, label: 'Parents' },
       ],
     },
     {
       title: 'Pédagogie',
       items: [
+        { path: '/admin/niveaux', icon: FiSettings, label: 'Pôles et Niveaux' },
         { path: '/admin/classes', icon: FiBookOpen, label: 'Classes' },
         { path: '/admin/professeurs', icon: FiUser, label: 'Professeurs' },
+        { path: '/admin/salles', icon: FiHome, label: 'Salles' },
+        { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
+      ],
+    },
+    {
+      title: 'Finance',
+      items: [
+        { icon: FiCreditCard, label: 'Paiements', disabled: true },
+        { icon: FiCreditCard, label: 'Échéanciers', disabled: true },
+        { icon: FiCreditCard, label: 'Impayés', disabled: true },
+        { icon: FiCreditCard, label: 'Remboursements', disabled: true },
+        { icon: FiCreditCard, label: 'Exports comptables', disabled: true },
+      ],
+    },
+    {
+      title: 'Communication',
+      items: [
+        { icon: FiClipboard, label: 'Envoyer un message', disabled: true },
+        { icon: FiClipboard, label: 'Messages envoyés', disabled: true },
+        { icon: FiClipboard, label: 'Templates d\'emails', disabled: true },
+        { icon: FiClipboard, label: 'Statistiques SMS', disabled: true },
+      ],
+    },
+    {
+      title: 'Statistiques',
+      items: [
+        { icon: FiBarChart2, label: 'Effectifs', disabled: true },
+        { icon: FiBarChart2, label: 'Évolution inter-années', disabled: true },
+        { icon: FiBarChart2, label: 'Taux de remplissage', disabled: true },
+        { icon: FiBarChart2, label: 'Analyses financières', disabled: true },
+      ],
+    },
+    {
+      title: 'Paramètres',
+      items: [
+        { path: '/admin/settings', icon: FiSettings, label: 'Années scolaires' },
+        { path: '/admin/settings', icon: FiSettings, label: 'Tarifs' },
+        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs / Rôles' },
+        { icon: FiSettings, label: 'Configuration paiements', disabled: true },
+        { path: '/admin/settings', icon: FiSettings, label: 'RGPD / Données' },
+      ],
+    },
+    {
+      title: 'Exports',
+      items: [
+        { path: '/admin/enrollments', icon: FiBookOpen, label: 'Listes élèves' },
+        { path: '/admin/classes', icon: FiBookOpen, label: 'Listes par classe' },
+        { icon: FiBookOpen, label: 'Feuilles d\'émargement', disabled: true },
+        { icon: FiBookOpen, label: 'Exports comptables', disabled: true },
       ],
     },
   ],
@@ -92,10 +185,9 @@ const navSectionsByRole = {
       title: 'Mon espace',
       items: [
         { path: '/famille', icon: FiHome, label: 'Tableau de bord' },
-        { path: '/famille/enfants', icon: FiUsers, label: 'Mes enfants' },
-        { path: '/famille/inscription', icon: FiBookOpen, label: 'Inscription' },
+        { path: '/famille/inscription', icon: FiBookOpen, label: 'Inscriptions' },
         { path: '/famille/paiements', icon: FiCreditCard, label: 'Paiements' },
-        { path: '/famille/profil', icon: FiUser, label: 'Mon profil' },
+        { path: '/famille/profil', icon: FiUser, label: 'Profil' },
       ],
     },
   ],
@@ -149,22 +241,35 @@ export default function Layout({ children }) {
 
               {section.items.map((item) => {
                 const Icon = item.icon;
-                const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+                const isActive = item.path && (location.pathname === item.path || location.pathname.startsWith(`${item.path}/`));
+                const itemStyles = {
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '12px 24px',
+                  color: item.disabled ? 'rgba(255,255,255,0.6)' : 'var(--amc-white)',
+                  textDecoration: 'none',
+                  background: isActive ? 'rgba(255,255,255,0.15)' : 'transparent',
+                  borderLeft: isActive ? '3px solid #0088CC' : '3px solid transparent',
+                  cursor: item.disabled ? 'default' : 'pointer',
+                  opacity: item.disabled ? 0.65 : 1,
+                };
+
+                if (item.disabled || !item.path) {
+                  return (
+                    <div key={`${item.label}-${item.icon?.name || 'item'}`} style={itemStyles}>
+                      <Icon size={18} />
+                      {item.label}
+                    </div>
+                  );
+                }
+
                 return (
                   <Link
                     key={item.path}
                     to={item.path}
                     onClick={() => setSidebarOpen(false)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                      padding: '12px 24px',
-                      color: 'var(--amc-white)',
-                      textDecoration: 'none',
-                      background: isActive ? 'rgba(255,255,255,0.15)' : 'transparent',
-                      borderLeft: isActive ? '3px solid #0088CC' : '3px solid transparent',
-                    }}
+                    style={itemStyles}
                   >
                     <Icon size={18} />
                     {item.label}

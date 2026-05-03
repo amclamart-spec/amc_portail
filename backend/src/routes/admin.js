@@ -40,6 +40,7 @@ const {
   exportClassStudentsExcel,
   exportClassStudentsPdf,
   sendMessageToClassFamilies,
+  updateEnrollment,
 
   getTeachers,
   getTeacherById,
@@ -61,6 +62,7 @@ router.put('/users/:id/approve', authorizePermission(PERMISSIONS.USERS_APPROVE),
 router.put('/users/:id/reject', authorizePermission(PERMISSIONS.USERS_APPROVE), rejectUser);
 
 router.get('/enrollments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollments);
+router.put('/enrollments/:id', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), updateEnrollment);
 
 router.get('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getSchoolYears);
 router.post('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createSchoolYear);

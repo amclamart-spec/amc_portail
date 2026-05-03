@@ -151,6 +151,9 @@ async function getEnrollmentSummary(req, res) {
       levelName: e.class.level.name,
       levelCode: e.class.level.code,
       schedule: `${e.class.dayOfWeek} ${e.class.startTime}-${e.class.endTime}`,
+      status: e.status,
+      room: e.class.room || null,
+      teacherName: e.class.teacherName || null,
     }));
 
     const pricingConfig = await resolvePricingConfig(prisma);
