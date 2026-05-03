@@ -4,10 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
+  "build": "npx vite build",
+  "dev": "npx vite",
+  "preview": "npx vite preview"
+},
   "dependencies": {
     "axios": "^1.7.7",
     "react": "^18.3.1",
