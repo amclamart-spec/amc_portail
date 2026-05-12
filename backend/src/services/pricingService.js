@@ -3,6 +3,7 @@
  */
 
 const DEFAULT_PRICING = {
+  // Frais d'inscription facturés une seule fois par famille, quel que soit le nombre d'enfants inscrits.
   registrationFee: 10,
   fraisPrelevement: 0,
   arabicTiers: {
@@ -71,7 +72,8 @@ function getIndividualCoursePrice(levelCode, pricing = DEFAULT_PRICING) {
   return pricing.individualPricing[levelCode] || 0;
 }
 
-function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING) {
+function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = {}) {
+  const { skipRegistrationFee = false } = options;
   let arabicCount = 0;
   let coranScienceTotal = 0;
 
@@ -85,11 +87,12 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING) {
     coranScienceTotal += getIndividualCoursePrice(enrollment.levelCode, pricing);
   }
 
+  const registrationFee = skipRegistrationFee ? 0 : (pricing.registrationFee || 0);
   const arabicFee = calculateArabicFee(arabicCount, pricing);
-  const total = pricing.registrationFee + arabicFee + coranScienceTotal;
+  const total = registrationFee + arabicFee + coranScienceTotal;
 
   return {
-    registrationFee: pricing.registrationFee,
+    registrationFee,
     fraisPrelevement: pricing.fraisPrelevement || 0,
     arabicFee,
     arabicCount,

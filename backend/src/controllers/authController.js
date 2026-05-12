@@ -4,7 +4,7 @@ const passport = require('passport');
 const { v4: uuidv4 } = require('uuid');
 const { PrismaClient } = require('@prisma/client');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
-const { sendVerificationEmail } = require('../services/emailService');
+const { sendVerificationEmail, sendResetPasswordEmail } = require('../services/emailService');
 const config = require('../config');
 
 const prisma = new PrismaClient();
@@ -314,6 +314,83 @@ async function getMe(req, res) {
 /**
  * POST /api/auth/change-password
  */
+async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email requis' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.json({ message: 'Si cet email existe dans notre système, un lien de réinitialisation a été envoyé.' });
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 heure
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetPasswordToken: token,
+        resetPasswordExpires: expires,
+      },
+    });
+
+    await sendResetPasswordEmail(user, token);
+
+    return res.json({ message: 'Si cet email existe dans notre système, un lien de réinitialisation a été envoyé.' });
+  } catch (error) {
+    console.error('Erreur forgotPassword:', error);
+    return res.status(500).json({ error: 'Erreur serveur lors de la demande de réinitialisation' });
+  }
+}
+
+async function resetPassword(req, res) {
+  try {
+    const { token, newPassword, confirmPassword } = req.body;
+    if (!token || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: 'Tous les champs sont requis' });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'Les mots de passe ne correspondent pas' });
+    }
+
+    if (newPassword.length < 8 || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+      return res.status(400).json({ error: 'Le nouveau mot de passe doit contenir au moins 8 caractères, une majuscule et un chiffre' });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        resetPasswordToken: token,
+        resetPasswordExpires: { gt: new Date() },
+      },
+    });
+
+    if (!user) {
+      return res.status(400).json({ error: 'Lien de réinitialisation invalide ou expiré' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        resetPasswordToken: null,
+        resetPasswordExpires: null,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+
+    return res.json({ message: 'Mot de passe réinitialisé avec succès' });
+  } catch (error) {
+    console.error('Erreur resetPassword:', error);
+    return res.status(500).json({ error: 'Erreur serveur lors de la réinitialisation du mot de passe' });
+  }
+}
+
 async function changePassword(req, res) {
   try {
     const { currentPassword, newPassword, confirmPassword } = req.body;
@@ -372,6 +449,8 @@ module.exports = {
   refreshToken,
   verifyEmail,
   getMe,
+  forgotPassword,
+  resetPassword,
   changePassword,
   logout,
 };

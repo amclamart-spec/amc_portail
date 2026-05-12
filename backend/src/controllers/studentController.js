@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { savePhotoBase64, deletePhotoFile } = require('../utils/photoUtils');
 
 const prisma = new PrismaClient();
 
@@ -12,7 +13,8 @@ async function addStudent(req, res) {
       return res.status(400).json({ error: 'Créez d\'abord votre profil famille' });
     }
 
-    const { lastName, firstName, dateOfBirth, gender, allergies, currentTreatments, emergencyContactName, emergencyContactPhone } = req.body;
+    const { lastName, firstName, dateOfBirth, gender, allergies, currentTreatments, emergencyContactName, emergencyContactPhone, photoBase64 } = req.body;
+    const photoUrl = photoBase64 ? savePhotoBase64(photoBase64) : null;
 
     const student = await prisma.student.create({
       data: {
@@ -21,6 +23,7 @@ async function addStudent(req, res) {
         firstName,
         dateOfBirth: new Date(dateOfBirth),
         gender,
+        photoUrl,
         allergies,
         currentTreatments,
         emergencyContactName,
@@ -73,7 +76,15 @@ async function updateStudent(req, res) {
     const student = await prisma.student.findFirst({ where: { id: req.params.id, familyId: family?.id } });
     if (!student) return res.status(404).json({ error: 'Élève non trouvé' });
 
-    const { lastName, firstName, dateOfBirth, gender, allergies, currentTreatments, emergencyContactName, emergencyContactPhone } = req.body;
+    const { lastName, firstName, dateOfBirth, gender, allergies, currentTreatments, emergencyContactName, emergencyContactPhone, photoBase64 } = req.body;
+
+    let photoUrl;
+    if (photoBase64) {
+      if (student.photoUrl) {
+        deletePhotoFile(student.photoUrl);
+      }
+      photoUrl = savePhotoBase64(photoBase64);
+    }
 
     const updated = await prisma.student.update({
       where: { id: req.params.id },
@@ -82,6 +93,7 @@ async function updateStudent(req, res) {
         ...(firstName && { firstName }),
         ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
         ...(gender && { gender }),
+        ...(photoUrl ? { photoUrl } : {}),
         allergies,
         currentTreatments,
         emergencyContactName,

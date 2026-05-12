@@ -5,18 +5,90 @@ const {
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,
 } = require('../services/paymentProviders');
-const { sendPaymentConfirmationEmail, sendEnrollmentConfirmationEmail } = require('../services/emailService');
+const { sendPaymentConfirmationEmail, sendEnrollmentConfirmationEmail, sendPaymentValidationEmail } = require('../services/emailService');
 const {
   resolvePricingConfig,
   calculateFamilyTotal,
   buildInstallmentSchedule,
 } = require('../services/pricingService');
+const { generateInvoicePDF, getInvoiceFilePath } = require('../utils/invoiceUtils');
 const config = require('../config');
 
 const prisma = new PrismaClient();
 
 function toDecimal(value) {
   return new Prisma.Decimal(value || 0);
+}
+
+async function generateInvoiceForPayment(paymentId) {
+  try {
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        family: { include: { user: true } },
+        schoolYear: true,
+      },
+    });
+
+    if (!payment || payment.status !== 'COMPLETED') {
+      console.error(`Paiement ${paymentId} non trouvé ou non complété`);
+      return null;
+    }
+
+    if (!payment.family || !payment.family.user) {
+      console.error(`Famille ou utilisateur manquant pour paiement ${paymentId}`);
+      return null;
+    }
+
+    // Get enrolled students for this family
+    let enrollmentIds = payment.metadata?.enrollmentIds || [];
+    if (!Array.isArray(enrollmentIds) || enrollmentIds.length === 0) {
+      console.warn(`Aucun enrollmentIds dans metadata pour paiement ${paymentId}, recherche d'inscriptions alternatives`);
+      // Fallback: find enrollments for this family in the same school year
+      const fallbackEnrollments = await prisma.enrollment.findMany({
+        where: {
+          familyId: payment.familyId,
+          schoolYearId: payment.schoolYearId,
+          status: 'CONFIRMED',
+        },
+        include: {
+          class: {
+            include: {
+              level: { include: { pole: true } },
+              schoolYear: true,
+            },
+          },
+        },
+      });
+      enrollmentIds = fallbackEnrollments.map(e => e.id);
+      console.log(`Fallback trouvé ${enrollmentIds.length} inscriptions pour ${paymentId}`);
+    }
+
+    const enrollments = await prisma.enrollment.findMany({
+      where: {
+        id: { in: enrollmentIds },
+      },
+      include: {
+        class: {
+          include: {
+            level: { include: { pole: true } },
+            schoolYear: true,
+          },
+        },
+      },
+    });
+
+    console.log(`Génération facture pour ${paymentId} avec ${enrollments.length} inscriptions`);
+
+    // Generate PDF invoice
+    const invoiceResult = await generateInvoicePDF(payment, payment.family, enrollments);
+    console.log(`✅ Facture générée: ${invoiceResult.filename}`);
+
+    return invoiceResult;
+  } catch (error) {
+    console.error(`❌ Erreur génération facture ${paymentId}:`, error);
+    return null;
+  }
 }
 
 async function confirmEnrollmentsForPayment(paymentId) {
@@ -43,7 +115,17 @@ async function confirmEnrollmentsForPayment(paymentId) {
   });
 
   if (result.count > 0 && payment.family?.user) {
-    await sendEnrollmentConfirmationEmail(payment.family.user, `Votre paiement a validé ${result.count} inscription(s).`);
+    const paymentData = {
+      id: payment.id,
+      totalAmount: payment.totalAmount,
+      method: payment.paymentMethod,
+    };
+    await sendPaymentValidationEmail(payment.family.user, paymentData);
+
+    // Generate invoice after payment confirmation
+    if (payment.status === 'COMPLETED') {
+      await generateInvoiceForPayment(paymentId);
+    }
   }
 }
 
@@ -142,7 +224,19 @@ async function createFamilyEnrollmentPayment(req, res) {
       levelCode: e.class.level.code,
       poleName: e.class.level.pole.name,
     }));
-    const pricing = calculateFamilyTotal(enrollmentData, pricingConfig);
+
+    const hasPreviousRegistrationPayment = await prisma.payment.findFirst({
+      where: {
+        familyId: family.id,
+        schoolYearId: currentYear.id,
+        registrationFee: { gt: 0 },
+        status: { not: 'CANCELLED' },
+      },
+    });
+
+    const pricing = calculateFamilyTotal(enrollmentData, pricingConfig, {
+      skipRegistrationFee: Boolean(hasPreviousRegistrationPayment),
+    });
     const paymentTotal = pricing.total + (normalizedMethod === 'GO_CARDLESS_SEPA' ? pricing.fraisPrelevement : 0);
 
     const provider = normalizedMethod === 'STRIPE_CARD' ? 'STRIPE' : normalizedMethod === 'GO_CARDLESS_SEPA' ? 'GOCARDLESS' : 'OFFLINE';
@@ -397,11 +491,13 @@ async function recordOfflinePayment(req, res) {
       },
     });
 
-    await sendPaymentConfirmationEmail(payment.family.user, {
-      id: payment.id,
-      amount,
-      method,
-    });
+    if (!payment.metadata?.enrollmentIds?.length) {
+      await sendPaymentConfirmationEmail(payment.family.user, {
+        id: payment.id,
+        amount,
+        method,
+      });
+    }
 
     return res.json({ payment: updatedPayment, transaction });
   } catch (error) {
@@ -658,7 +754,7 @@ async function finalizeStripePayment(paymentId) {
     },
   });
 
-  if (payment.family?.user) {
+  if (payment.family?.user && !payment.metadata?.enrollmentIds?.length) {
     await sendPaymentConfirmationEmail(payment.family.user, {
       id: payment.id,
       totalAmount: Number(payment.totalAmount),
@@ -857,11 +953,13 @@ async function handleStripeWebhook(req, res) {
             },
           });
 
-          await sendPaymentConfirmationEmail(payment.family.user, {
-            id: payment.id,
-            totalAmount: Number(payment.totalAmount),
-            method: 'Carte bancaire Stripe',
-          });
+          if (!payment.metadata?.enrollmentIds?.length) {
+            await sendPaymentConfirmationEmail(payment.family.user, {
+              id: payment.id,
+              totalAmount: Number(payment.totalAmount),
+              method: 'Carte bancaire Stripe',
+            });
+          }
         }
       }
     }
@@ -954,6 +1052,70 @@ async function handleGoCardlessWebhook(req, res) {
   }
 }
 
+async function getPaymentInvoice(req, res) {
+  try {
+    const { paymentId } = req.params;
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { family: true },
+    });
+
+    if (!payment) return res.status(404).json({ error: 'Paiement introuvable' });
+    if (!payment.family || payment.family.userId !== req.user.id) return res.status(403).json({ error: 'Accès non autorisé' });
+    if (payment.status !== 'COMPLETED') return res.status(400).json({ error: 'Le paiement n\'est pas encore complété' });
+
+    const invoiceInfo = getInvoiceFilePath(paymentId);
+    if (!invoiceInfo) return res.status(404).json({ error: 'Facture non disponible' });
+
+    return res.json({
+      invoiceId: paymentId,
+      filename: invoiceInfo.filename,
+      downloadUrl: `/api/payments/${paymentId}/invoice/download`,
+    });
+  } catch (error) {
+    console.error('Erreur getPaymentInvoice:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function downloadInvoice(req, res) {
+  try {
+    const { paymentId } = req.params;
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { family: true },
+    });
+
+    if (!payment) return res.status(404).json({ error: 'Paiement introuvable' });
+    if (!payment.family || payment.family.userId !== req.user.id) return res.status(403).json({ error: 'Accès non autorisé' });
+    if (payment.status !== 'COMPLETED') return res.status(400).json({ error: 'Le paiement n\'est pas encore complété' });
+
+    let invoiceInfo = getInvoiceFilePath(paymentId);
+    if (!invoiceInfo) {
+      console.log(`Facture manquante pour paiement ${paymentId}, régénération en cours...`);
+      const generated = await generateInvoiceForPayment(paymentId);
+      if (!generated) {
+        console.error(`Échec de régénération de la facture pour ${paymentId}`);
+        return res.status(500).json({ error: 'Impossible de générer la facture. Veuillez contacter l\'administration.' });
+      }
+      invoiceInfo = getInvoiceFilePath(paymentId);
+      if (!invoiceInfo) {
+        console.error(`Facture régénérée introuvable pour ${paymentId}`);
+        return res.status(500).json({ error: 'Erreur lors de la récupération de la facture régénérée' });
+      }
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${invoiceInfo.filename}"`);
+    res.sendFile(invoiceInfo.filePath);
+  } catch (error) {
+    console.error('Erreur downloadInvoice:', error);
+    return res.status(500).json({ error: 'Erreur serveur lors du téléchargement' });
+  }
+}
+
 module.exports = {
   createFamilyEnrollmentPayment,
   createPaymentIntent,
@@ -970,4 +1132,6 @@ module.exports = {
   handleGoCardlessCancel,
   handleStripeWebhook,
   handleGoCardlessWebhook,
+  downloadInvoice,
+  getPaymentInvoice,
 };

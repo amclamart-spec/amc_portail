@@ -174,12 +174,40 @@ async function getAllUsers(req, res) {
  */
 async function approveUser(req, res) {
   try {
-    const user = await prisma.user.update({
-      where: { id: req.params.id },
-      data: { validationStatus: 'APPROVED' },
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: { id: req.params.id },
+        data: { validationStatus: 'APPROVED' },
+      });
+
+      let teacher = null;
+      if (user.role === 'PROFESSEUR') {
+        teacher = await tx.teacher.findUnique({ where: { userId: user.id } });
+        if (!teacher) {
+          teacher = await tx.teacher.create({
+            data: {
+              userId: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              email: user.email,
+              phone: user.phone,
+            },
+          });
+        }
+      }
+
+      return { user, teacher };
     });
-    await sendAccountApprovedEmail(user);
-    res.json({ message: 'Compte validé avec succès', user: { id: user.id, email: user.email, validationStatus: user.validationStatus } });
+
+    await sendAccountApprovedEmail(result.user);
+    res.json({
+      message: 'Compte validé avec succès',
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        validationStatus: result.user.validationStatus,
+      },
+    });
   } catch (error) {
     console.error('Erreur approveUser:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -248,6 +276,10 @@ async function getEnrollments(req, res) {
       ? { where: { schoolYearId }, include: { emergencyContacts: true, pickupAuthorizations: true } }
       : { include: { emergencyContacts: true, pickupAuthorizations: true } };
 
+    const studentConsentsInclude = schoolYearId
+      ? { where: { schoolYearId, consentType: 'SANITARY_FORM' } }
+      : { where: { consentType: 'SANITARY_FORM' } };
+
     const [enrollments, total] = await Promise.all([
       prisma.enrollment.findMany({
         where,
@@ -256,6 +288,7 @@ async function getEnrollments(req, res) {
             include: {
               family: true,
               healthForms: studentHealthFormsInclude,
+              enrollmentConsents: studentConsentsInclude,
             },
           },
           class: {
@@ -399,6 +432,11 @@ async function updateEnrollment(req, res) {
         where: { studentId: enrollment.studentId, schoolYearId: targetSchoolYearId },
       });
 
+      const signedAt = healthFormData.signedAt ? new Date(healthFormData.signedAt) : null;
+      if (healthFormData.signedAt && Number.isNaN(signedAt.getTime())) {
+        return res.status(400).json({ error: 'Date de signature de la fiche sanitaire invalide' });
+      }
+
       const healthFormPayload = {
         studentId: enrollment.studentId,
         schoolYearId: targetSchoolYearId,
@@ -412,28 +450,29 @@ async function updateEnrollment(req, res) {
         disabilityDetails: healthFormData.disabilityDetails || null,
         otherUsefulHealthInfo: healthFormData.otherUsefulHealthInfo || null,
         canLeaveAloneAfterClass: healthFormData.canLeaveAloneAfterClass,
-        legalRepresentativeFullName: healthFormData.legalRepresentativeFullName || null,
-        citySigned: healthFormData.citySigned || null,
-        signedAt: healthFormData.signedAt ? new Date(healthFormData.signedAt) : null,
         confidentialityAccepted: Boolean(healthFormData.confidentialityAccepted),
         noMedicationPolicyAccepted: Boolean(healthFormData.noMedicationPolicyAccepted),
       };
 
       const emergencyContactsData = Array.isArray(healthFormData.emergencyContacts)
-        ? healthFormData.emergencyContacts.map((contact) => ({
-          firstName: contact.firstName || null,
-          lastName: contact.lastName || null,
-          relationship: contact.relationship || 'Proche',
-          phone: contact.phone || null,
-        }))
+        ? healthFormData.emergencyContacts
+          .filter((contact) => contact.firstName?.trim() && contact.lastName?.trim() && contact.phone?.trim())
+          .map((contact) => ({
+            firstName: contact.firstName.trim(),
+            lastName: contact.lastName.trim(),
+            relationship: contact.relationship?.trim() || 'Proche',
+            phone: contact.phone.trim(),
+          }))
         : [];
 
       const pickupAuthorizedPersonsData = Array.isArray(healthFormData.pickupAuthorizedPersons)
-        ? healthFormData.pickupAuthorizedPersons.map((person) => ({
-          fullName: person.fullName || null,
-          relationship: person.relationship || 'Proche',
-          phone: person.phone || null,
-        }))
+        ? healthFormData.pickupAuthorizedPersons
+          .filter((person) => person.fullName?.trim() && person.phone?.trim())
+          .map((person) => ({
+            fullName: person.fullName.trim(),
+            relationship: person.relationship?.trim() || 'Proche',
+            phone: person.phone.trim(),
+          }))
         : [];
 
       if (existingHealthForm) {
@@ -478,11 +517,52 @@ async function updateEnrollment(req, res) {
     }
     classTransactions.forEach((tx) => actions.push(prisma.class.update(tx)));
 
-    if (actions.length > 0) {
-      await prisma.$transaction(actions);
-    }
     if (healthFormAction) {
       await healthFormAction();
+    }
+
+    // Update EnrollmentConsent for SANITARY_FORM if relevant fields are provided
+    if (healthFormData && (healthFormData.legalRepresentativeFullName || healthFormData.citySigned || healthFormData.signedAt)) {
+      const consentUpdateData = {};
+      if (healthFormData.legalRepresentativeFullName !== undefined) {
+        consentUpdateData.acceptedByFullName = healthFormData.legalRepresentativeFullName.trim() || null;
+      }
+      if (healthFormData.citySigned !== undefined) {
+        consentUpdateData.citySigned = healthFormData.citySigned.trim() || null;
+      }
+      if (healthFormData.signedAt !== undefined) {
+        const signedAt = healthFormData.signedAt ? new Date(healthFormData.signedAt) : null;
+        if (healthFormData.signedAt && Number.isNaN(signedAt.getTime())) {
+          return res.status(400).json({ error: 'Date de signature invalide' });
+        }
+        consentUpdateData.signedAt = signedAt;
+      }
+
+      if (Object.keys(consentUpdateData).length > 0) {
+        await prisma.enrollmentConsent.updateMany({
+          where: {
+            familyId: enrollment.student.familyId,
+            studentId: enrollment.studentId,
+            schoolYearId: targetSchoolYearId,
+            consentType: 'SANITARY_FORM',
+          },
+          data: consentUpdateData,
+        });
+      }
+    }
+    if (Object.keys(studentUpdates).length > 0) {
+      actions.push(prisma.student.update({ where: { id: enrollment.studentId }, data: studentUpdates }));
+    }
+    if (Object.keys(familyUpdates).length > 0) {
+      actions.push(prisma.family.update({ where: { id: enrollment.student.familyId }, data: familyUpdates }));
+    }
+    if (Object.keys(enrollmentUpdates).length > 0) {
+      actions.push(prisma.enrollment.update({ where: { id }, data: enrollmentUpdates }));
+    }
+    classTransactions.forEach((tx) => actions.push(prisma.class.update(tx)));
+
+    if (actions.length > 0) {
+      await prisma.$transaction(actions);
     }
 
     const updated = await prisma.enrollment.findUnique({
@@ -492,6 +572,7 @@ async function updateEnrollment(req, res) {
           include: {
             family: true,
             healthForms: { include: { emergencyContacts: true, pickupAuthorizations: true } },
+            enrollmentConsents: { where: { consentType: 'SANITARY_FORM' } },
           },
         },
         class: { include: { level: { include: { pole: true } } } },

@@ -5,12 +5,10 @@ const prisma = new PrismaClient();
 async function getTeacherDashboard(req, res) {
   try {
     const teacherProfile = await prisma.teacher.findUnique({ where: { userId: req.user.id } });
-    if (!teacherProfile) {
-      return res.json({ classes: [], summary: { totalClasses: 0, totalStudents: 0 } });
-    }
+    const teacherFilter = teacherProfile ? { teacherId: teacherProfile.id } : { teacherUserId: req.user.id };
 
     const classes = await prisma.class.findMany({
-      where: { teacherId: teacherProfile.id },
+      where: teacherFilter,
       include: {
         level: { include: { pole: true } },
         schoolYear: true,
@@ -41,12 +39,10 @@ async function getTeacherDashboard(req, res) {
 async function getTeacherClasses(req, res) {
   try {
     const teacherProfile = await prisma.teacher.findUnique({ where: { userId: req.user.id } });
-    if (!teacherProfile) {
-      return res.json({ classes: [] });
-    }
+    const teacherFilter = teacherProfile ? { teacherId: teacherProfile.id } : { teacherUserId: req.user.id };
 
     const classes = await prisma.class.findMany({
-      where: { teacherId: teacherProfile.id },
+      where: teacherFilter,
       include: {
         level: { include: { pole: true } },
         schoolYear: true,

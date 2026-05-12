@@ -49,6 +49,15 @@ const {
   resetTeacherPassword,
   deleteTeacher,
 } = require('../controllers/adminController');
+const {
+  exportStudents,
+  exportAttendanceSheet,
+  exportPlanning,
+  exportAccountingPayments,
+  exportAccountingUnpaid,
+  exportAccountingTransactions,
+  exportAccountingAnnualSummary,
+} = require('../controllers/adminAdvancedController');
 const { getPricingConfig, updatePricingConfig } = require('../controllers/pricingController');
 
 const router = Router();
@@ -111,6 +120,15 @@ router.delete('/classes/:classId/inscriptions/:enrollmentId', authorizePermissio
 router.get('/classes/:id/export/excel', authorizePermission(PERMISSIONS.CLASSES_MANAGE), exportClassStudentsExcel);
 router.get('/classes/:id/export/pdf', authorizePermission(PERMISSIONS.CLASSES_MANAGE), exportClassStudentsPdf);
 router.post('/classes/:id/message-familles', authorizePermission(PERMISSIONS.CLASSES_MANAGE), sendMessageToClassFamilies);
+
+// Exports avancés
+router.post('/exports/students', authorizePermission(PERMISSIONS.CLASSES_MANAGE), exportStudents);
+router.post('/exports/attendance-sheet', authorizePermission(PERMISSIONS.CLASSES_MANAGE), exportAttendanceSheet);
+router.post('/exports/planning', authorizePermission(PERMISSIONS.CLASSES_MANAGE), exportPlanning);
+router.get('/exports/accounting/payments', authorizePermission(PERMISSIONS.FINANCE_VIEW), exportAccountingPayments);
+router.get('/exports/accounting/unpaid', authorizePermission(PERMISSIONS.FINANCE_VIEW), exportAccountingUnpaid);
+router.get('/exports/accounting/transactions', authorizePermission(PERMISSIONS.FINANCE_VIEW), exportAccountingTransactions);
+router.get('/exports/accounting/annual-summary', authorizePermission(PERMISSIONS.FINANCE_VIEW), exportAccountingAnnualSummary);
 
 // Professeurs
 router.get('/professeurs', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTeachers);

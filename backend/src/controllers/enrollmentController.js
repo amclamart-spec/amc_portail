@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { calculateFamilyTotal, resolvePricingConfig } = require('../services/pricingService');
 const { sendEnrollmentConfirmationEmail } = require('../services/emailService');
+const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
 
 const prisma = new PrismaClient();
 
@@ -91,10 +92,17 @@ async function createEnrollment(req, res) {
       return res.status(409).json({ error: 'Cet élève est déjà inscrit à cette classe' });
     }
 
-    // Créer l'inscription et mettre à jour le compteur
+    // Générer un identifiant d'inscription et créer l'inscription
+    const registrationCode = await getNextEnrollmentRegistrationCode(prisma, cls.schoolYearId);
     const [enrollment] = await prisma.$transaction([
       prisma.enrollment.create({
-        data: { studentId, classId, schoolYearId: cls.schoolYearId, status: 'PENDING' },
+        data: {
+          studentId,
+          classId,
+          schoolYearId: cls.schoolYearId,
+          status: 'PENDING',
+          registrationCode,
+        },
       }),
       prisma.class.update({
         where: { id: classId },

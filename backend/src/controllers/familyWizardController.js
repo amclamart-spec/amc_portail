@@ -4,6 +4,9 @@ const { PrismaClient, Prisma } = require('@prisma/client');
 const { sendVerificationEmail, sendEnrollmentConfirmationEmail } = require('../services/emailService');
 const { resolvePricingConfig, calculateFamilyTotal, buildInstallmentSchedule } = require('../services/pricingService');
 const { createOnlineCheckout } = require('../services/paymentProviders');
+const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
+const { savePhotoBase64 } = require('../utils/photoUtils');
+const config = require('../config');
 
 const prisma = new PrismaClient();
 
@@ -119,7 +122,24 @@ async function getPricingPreview(req, res) {
       .filter(Boolean);
 
     const pricingConfig = await resolvePricingConfig(prisma);
-    const pricing = calculateFamilyTotal(enrollments, pricingConfig);
+    let skipRegistrationFee = false;
+
+    if (req.user) {
+      const family = await prisma.family.findUnique({ where: { userId: req.user.id } });
+      if (family) {
+        const currentYear = await ensureCurrentSchoolYear();
+        const existingCount = await prisma.enrollment.count({
+          where: {
+            student: { familyId: family.id },
+            schoolYearId: currentYear.id,
+            status: { in: ['PENDING', 'CONFIRMED'] },
+          },
+        });
+        skipRegistrationFee = existingCount > 0;
+      }
+    }
+
+    const pricing = calculateFamilyTotal(enrollments, pricingConfig, { skipRegistrationFee });
 
     return res.json({ pricing, classes });
   } catch (error) {
@@ -223,7 +243,17 @@ async function completeExistingFamilyRegistration(req, res) {
       })
       .filter(Boolean);
 
-    const pricing = calculateFamilyTotal(enrollmentForPricing, pricingConfig);
+    const existingEnrollmentsCount = await prisma.enrollment.count({
+      where: {
+        student: { familyId: family.id },
+        schoolYearId: currentYear.id,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      },
+    });
+
+    const pricing = calculateFamilyTotal(enrollmentForPricing, pricingConfig, {
+      skipRegistrationFee: existingEnrollmentsCount > 0,
+    });
 
     const installmentsCount = Number(payment.installmentsCount || 1);
     const scheduleDay = Number(payment.scheduleDay || 10);
@@ -252,6 +282,7 @@ async function completeExistingFamilyRegistration(req, res) {
       const students = [];
       for (let i = 0; i < members.length; i += 1) {
         const m = members[i];
+        const photoUrl = m.photoBase64 ? savePhotoBase64(m.photoBase64) : null;
         const student = await tx.student.create({
           data: {
             familyId: family.id,
@@ -259,6 +290,7 @@ async function completeExistingFamilyRegistration(req, res) {
             lastName: m.lastName,
             dateOfBirth: new Date(m.dateOfBirth),
             gender: m.gender || 'GARCON',
+            photoUrl,
             allergies: m.allergies || null,
             currentTreatments: m.currentTreatments || null,
             emergencyContactName: m.emergencyContactName || null,
@@ -281,8 +313,10 @@ async function completeExistingFamilyRegistration(req, res) {
           throw new Error(`Le créneau ${cls.dayOfWeek} ${cls.startTime}-${cls.endTime} est complet`);
         }
 
+        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
         const enrollment = await tx.enrollment.create({
           data: {
+            registrationCode,
             studentId: student.id,
             classId: cls.id,
             schoolYearId: currentYear.id,
@@ -521,16 +555,17 @@ async function completeExistingFamilyRegistration(req, res) {
       }
 
       if (provider === 'OFFLINE') {
+        const isCheque = paymentMethod === 'CHEQUE';
         await tx.paymentTransaction.create({
           data: {
             paymentId: paymentRecord.id,
             provider: 'OFFLINE',
-            method: 'CHEQUE',
+            method: paymentMethod,
             amount: toDecimal(paymentTotal),
             status: 'INITIATED',
-            description: 'Paiement par chèque en attente',
+            description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
-              instructions: 'Déposer les chèques selon l’échéancier communiqué par AMC.',
+              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par AMC.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
             },
           },
         });
@@ -551,7 +586,15 @@ async function completeExistingFamilyRegistration(req, res) {
       };
     });
 
-    await sendEnrollmentConfirmationEmail(req.user, `Inscription de ${result.students.map((s) => `${s.firstName} ${s.lastName}`).join(', ')}`);
+    // Envoi du mail d'inscription enregistrée
+    const childrenSummaryHtml = `<strong>Enfant(s) enregistré(s) :</strong><br/>${result.students.map((s) => `• ${s.firstName} ${s.lastName}`).join('<br/>')}`;
+    const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
+      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
+      <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
+      <strong>Échéances :</strong> ${result.installments.length}
+    </div>`;
+
+    await sendEnrollmentConfirmationEmail(req.user, `${childrenSummaryHtml}${paymentDetailsHtml}`);
 
     return res.status(201).json({
       message: 'Inscription du nouveau membre enregistrée. Les inscriptions seront confirmées après paiement réussi.',
@@ -745,6 +788,7 @@ async function completeFamilyRegistration(req, res) {
       const students = [];
       for (let i = 0; i < members.length; i += 1) {
         const m = members[i];
+        const photoUrl = m.photoBase64 ? savePhotoBase64(m.photoBase64) : null;
         const student = await tx.student.create({
           data: {
             familyId: family.id,
@@ -752,6 +796,7 @@ async function completeFamilyRegistration(req, res) {
             lastName: m.lastName,
             dateOfBirth: new Date(m.dateOfBirth),
             gender: m.gender || 'GARCON',
+            photoUrl,
             allergies: m.allergies || null,
             currentTreatments: m.currentTreatments || null,
             emergencyContactName: m.emergencyContactName || null,
@@ -774,8 +819,10 @@ async function completeFamilyRegistration(req, res) {
           throw new Error(`Le créneau ${cls.dayOfWeek} ${cls.startTime}-${cls.endTime} est complet`);
         }
 
+        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
         const enrollment = await tx.enrollment.create({
           data: {
+            registrationCode,
             studentId: student.id,
             classId: cls.id,
             schoolYearId: currentYear.id,
@@ -1015,16 +1062,17 @@ async function completeFamilyRegistration(req, res) {
       }
 
       if (provider === 'OFFLINE') {
+        const isCheque = paymentMethod === 'CHEQUE';
         await tx.paymentTransaction.create({
           data: {
             paymentId: paymentRecord.id,
             provider: 'OFFLINE',
-            method: 'CHEQUE',
+            method: paymentMethod,
             amount: toDecimal(paymentTotal),
             status: 'INITIATED',
-            description: 'Paiement par chèque en attente',
+            description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
-              instructions: 'Déposer les chèques selon l’échéancier communiqué par AMC.',
+              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par AMC.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
             },
           },
         });
@@ -1048,7 +1096,20 @@ async function completeFamilyRegistration(req, res) {
       };
     });
 
-    await sendVerificationEmail(result.user, emailVerifyToken);
+    // Envoi du mail d'inscription enregistrée (avec activation si nécessaire)
+    const familySummary = `<strong>${result.students.length} enfant(s) inscrit(s) :</strong><br/>${result.students.map((s) => `• ${s.firstName} ${s.lastName}`).join('<br/>')}`;
+    const verifyUrl = `${config.frontendUrl}/verify-email?token=${emailVerifyToken}`;
+    const activationHtml = `<p>Pour activer votre compte famille, cliquez sur le bouton ci-dessous :</p>
+      <p style="text-align:center;">
+        <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;">Activer mon compte</a>
+      </p>`;
+    const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
+      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
+      <strong>Mode :</strong> ${paymentMethod}<br/>
+      <strong>Échéances :</strong> ${result.installments.length}
+    </div>`;
+
+    await sendEnrollmentConfirmationEmail(result.user, `${familySummary}${paymentDetailsHtml}${activationHtml}`);
 
     return res.status(201).json({
       message: 'Inscription famille enregistrée. Vérifiez votre email pour activer votre compte. Les inscriptions des membres seront confirmées après paiement réussi.',

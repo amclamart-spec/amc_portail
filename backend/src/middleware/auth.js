@@ -39,6 +39,39 @@ async function authenticate(req, res, next) {
   }
 }
 
+async function authenticateOptional(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next();
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = verifyAccessToken(token);
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        validationStatus: true,
+        firstName: true,
+        lastName: true,
+        emailVerified: true,
+      },
+    });
+
+    if (user) {
+      req.user = user;
+    }
+  } catch (error) {
+    console.warn('authenticateOptional: token ignored', error.message);
+  }
+
+  next();
+}
+
 function authorize(...roles) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Non authentifié' });
@@ -77,6 +110,7 @@ function requireApproved(req, res, next) {
 
 module.exports = {
   authenticate,
+  authenticateOptional,
   authorize,
   authorizePermission,
   requireApproved,

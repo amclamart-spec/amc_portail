@@ -15,6 +15,7 @@ function parseSchoolYearPayload(payload = {}) {
     name: payload.name || payload.label,
     startDate: payload.startDate,
     endDate: payload.endDate,
+    period: payload.period,
     status: payload.status,
   };
 }
@@ -32,6 +33,7 @@ function normalizeSchoolYear(year, stats = null) {
     label: year.label,
     startDate: year.startDate,
     endDate: year.endDate,
+    period: year.period || 'ANNUEL',
     status: year.status,
     isCurrent: year.isCurrent,
     createdAt: year.createdAt,
@@ -140,6 +142,7 @@ async function createSchoolYear(req, res) {
           label: name,
           startDate,
           endDate,
+          period: payload.period || 'ANNUEL',
           status: requestedStatus,
           isCurrent: requestedStatus === 'CURRENT',
         },
@@ -212,6 +215,13 @@ async function updateSchoolYear(req, res) {
 
       data.status = payload.status;
       data.isCurrent = false;
+    }
+
+    if (payload.period !== undefined) {
+      if (!['MENSUEL', 'TRIMESTRIEL', 'SEMESTRIEL', 'ANNUEL'].includes(payload.period)) {
+        return res.status(400).json({ error: 'Période scolaire invalide' });
+      }
+      data.period = payload.period;
     }
 
     if (existing.isCurrent && payload.status === 'ARCHIVED') {

@@ -85,19 +85,71 @@ function sendSimplePdf(res, filename, title, headers, rows) {
   const doc = new PDFDocument({ margin: 36, size: 'A4' });
   doc.pipe(res);
 
-  doc.fontSize(16).text(title, { underline: true });
-  doc.moveDown(0.5);
-  doc.fontSize(9).text(`Généré le ${new Date().toLocaleString('fr-FR')}`);
-  doc.moveDown();
+  const titleColor = '#1D4F91';
+  const headerBg = '#0E3A6C';
+  const headerText = '#FFFFFF';
+  const rowBg1 = '#F4F8FF';
+  const rowBg2 = '#FFFFFF';
+  const borderColor = '#CED9EB';
+  const textColor = '#222222';
 
-  doc.fontSize(10).text(headers.join(' | '));
+  doc.fontSize(18).fillColor(titleColor).text(title);
+  doc.moveDown(0.2);
+  doc.fontSize(9).fillColor('#5A677D').text(`Généré le ${new Date().toLocaleString('fr-FR')}`);
   doc.moveDown(0.5);
 
-  rows.forEach((row, index) => {
-    doc.fontSize(9).text(`${index + 1}. ${row.join(' | ')}`);
-    if (doc.y > 760) {
-      doc.addPage();
+  const pageLeft = doc.page.margins.left;
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const columnCount = headers.length;
+  const columnWidth = Math.max(80, Math.floor(pageWidth / columnCount));
+  const availableWidth = Math.min(pageWidth, columnWidth * columnCount);
+  const rowPadding = 6;
+
+  let y = doc.y;
+
+  function drawTableHeader() {
+    let x = pageLeft;
+    for (let i = 0; i < headers.length; i += 1) {
+      const width = i === headers.length - 1 ? availableWidth - (columnWidth * (headers.length - 1)) : columnWidth;
+      doc.rect(x, y, width, 26).fill(headerBg).stroke(borderColor);
+      doc.fillColor(headerText).fontSize(9).text(headers[i], x + rowPadding, y + 7, { width: width - rowPadding * 2, align: 'left' });
+      x += width;
     }
+    y += 26;
+  }
+
+  function addPage() {
+    doc.addPage();
+    y = doc.y;
+    drawTableHeader();
+  }
+
+  drawTableHeader();
+
+  rows.forEach((row, rowIndex) => {
+    const rowBg = rowIndex % 2 === 0 ? rowBg1 : rowBg2;
+    let x = pageLeft;
+    const cellHeights = row.map((cell, cellIndex) => {
+      const width = cellIndex === headers.length - 1 ? availableWidth - (columnWidth * (headers.length - 1)) : columnWidth;
+      return doc.heightOfString(String(cell ?? ''), { width: width - rowPadding * 2, align: 'left', continued: false, paragraphGap: 2 });
+    });
+    const rowHeight = Math.max(20, Math.max(...cellHeights) + rowPadding * 2);
+
+    if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+      addPage();
+    }
+
+    for (let cellIndex = 0; cellIndex < row.length; cellIndex += 1) {
+      const width = cellIndex === headers.length - 1 ? availableWidth - (columnWidth * (headers.length - 1)) : columnWidth;
+      doc.rect(x, y, width, rowHeight).fill(rowBg).stroke(borderColor);
+      doc.fillColor(textColor).fontSize(9).text(String(row[cellIndex] ?? ''), x + rowPadding, y + rowPadding, {
+        width: width - rowPadding * 2,
+        align: 'left',
+      });
+      x += width;
+    }
+
+    y += rowHeight;
   });
 
   doc.end();
@@ -314,46 +366,80 @@ async function exportAttendanceSheet(req, res) {
     const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
     doc.pipe(res);
 
-    doc.fontSize(15).text('Feuille de présence', { underline: true });
-    doc.moveDown(0.4);
-    doc.fontSize(10).text(`Classe: ${cls.level.pole?.name || '-'} - ${cls.level.name}`);
+    const titleColor = '#1D4F91';
+    const headerBg = '#0E3A6C';
+    const headerText = '#FFFFFF';
+    const rowBg1 = '#F4F8FF';
+    const rowBg2 = '#FFFFFF';
+    const borderColor = '#CED9EB';
+    const textColor = '#212B3A';
+
+    doc.fontSize(16).fillColor(titleColor).text('Feuille de présence');
+    doc.moveDown(0.3);
+    doc.fontSize(10).fillColor('#5A677D').text(`Classe: ${cls.level.pole?.name || '-'} - ${cls.level.name}`);
     doc.text(`Année scolaire: ${cls.schoolYear?.label || '-'}`);
     doc.text(`Créneau: ${cls.dayOfWeek} ${cls.startTime}-${cls.endTime}`);
     doc.text(`Période: ${start.toLocaleDateString('fr-FR')} → ${end.toLocaleDateString('fr-FR')}`);
-    doc.moveDown(0.8);
+    doc.moveDown(0.6);
 
-    const startX = doc.x;
-    let y = doc.y;
-    const rowHeight = 22;
+    const pageLeft = doc.page.margins.left;
+    const pageRight = doc.page.width - doc.page.margins.right;
+    const pageWidth = pageRight - pageLeft;
+    const rowHeight = 24;
     const nameWidth = 180;
-    const dateWidth = Math.max(42, Math.floor((doc.page.width - 60 - nameWidth) / Math.max(dates.length, 1)));
+    const dateWidth = Math.max(42, Math.floor((pageWidth - nameWidth) / Math.max(dates.length, 1)));
 
-    doc.rect(startX, y, nameWidth, rowHeight).stroke();
-    doc.fontSize(8).text('Élève', startX + 4, y + 7, { width: nameWidth - 8 });
+    let y = doc.y;
+    let page = 1;
 
-    dates.forEach((date, index) => {
-      const x = startX + nameWidth + index * dateWidth;
-      doc.rect(x, y, dateWidth, rowHeight).stroke();
-      doc.fontSize(7).text(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), x + 3, y + 7, { width: dateWidth - 6, align: 'center' });
-    });
+    function drawHeaderRow() {
+      let x = pageLeft;
+      doc.save();
+      doc.fillColor(headerBg).rect(x, y, nameWidth, rowHeight).fill();
+      doc.restore();
+      doc.strokeColor(borderColor).lineWidth(0.5).rect(x, y, nameWidth, rowHeight).stroke();
+      doc.fillColor(headerText).fontSize(8).text('Élève', x + 6, y + 7, { width: nameWidth - 12, align: 'left' });
 
-    y += rowHeight;
-    cls.enrollments.forEach((enrollment) => {
-      if (y > doc.page.height - 40) {
-        doc.addPage();
-        y = 30;
-      }
-
-      doc.rect(startX, y, nameWidth, rowHeight).stroke();
-      doc.fontSize(8).text(`${enrollment.student.lastName} ${enrollment.student.firstName}`, startX + 4, y + 7, { width: nameWidth - 8 });
-
-      dates.forEach((_, index) => {
-        const x = startX + nameWidth + index * dateWidth;
-        doc.rect(x, y, dateWidth, rowHeight).stroke();
+      dates.forEach((date, index) => {
+        const xDate = x + nameWidth + index * dateWidth;
+        doc.save();
+        doc.fillColor(headerBg).rect(xDate, y, dateWidth, rowHeight).fill();
+        doc.restore();
+        doc.strokeColor(borderColor).lineWidth(0.5).rect(xDate, y, dateWidth, rowHeight).stroke();
+        doc.fillColor(headerText).fontSize(7).text(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), xDate + 4, y + 7, { width: dateWidth - 8, align: 'center' });
       });
 
       y += rowHeight;
-    });
+    }
+
+    function addRow(enrollment, rowIndex) {
+      let x = pageLeft;
+      const rowBg = rowIndex % 2 === 0 ? rowBg1 : rowBg2;
+      doc.save();
+      doc.fillColor(rowBg).rect(x, y, nameWidth, rowHeight).fill();
+      doc.restore();
+      doc.strokeColor(borderColor).lineWidth(0.5).rect(x, y, nameWidth, rowHeight).stroke();
+      doc.fillColor(textColor).fontSize(8).text(`${enrollment.student.lastName} ${enrollment.student.firstName}`, x + 6, y + 7, { width: nameWidth - 12, align: 'left' });
+
+      dates.forEach((_, index) => {
+        const xDate = x + nameWidth + index * dateWidth;
+        doc.save();
+        doc.fillColor(rowBg).rect(xDate, y, dateWidth, rowHeight).fill();
+        doc.restore();
+        doc.strokeColor(borderColor).lineWidth(0.5).rect(xDate, y, dateWidth, rowHeight).stroke();
+      });
+
+      y += rowHeight;
+      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = doc.y;
+        page += 1;
+        drawHeaderRow();
+      }
+    }
+
+    drawHeaderRow();
+    cls.enrollments.forEach((enrollment, index) => addRow(enrollment, index));
 
     doc.end();
 
@@ -367,6 +453,239 @@ async function exportAttendanceSheet(req, res) {
   } catch (error) {
     console.error('Erreur exportAttendanceSheet:', error);
     res.status(500).json({ error: 'Erreur export feuille de présence' });
+  }
+}
+
+function parseTime(value) {
+  const [hours, minutes] = String(value || '00:00').split(':').map((item) => Number(item));
+  return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : 0;
+}
+
+function getPlanningColor(key) {
+  const palette = ['#AEDFF7', '#C4F0A9', '#F7C9C9', '#F7E8A9', '#D9C4F7', '#F7D9A9', '#B8F7D0', '#D0B8F7', '#F7B8D0', '#C4F7B8'];
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) % palette.length;
+  }
+  return palette[hash];
+}
+
+function buildPlanningLabel(cls, type) {
+  const baseClass = `${cls.level?.pole?.name || 'Pôle'} - ${cls.level?.name || 'Niveau'}`;
+  const teacher = cls.teacher?.lastName ? `${cls.teacher.firstName || ''} ${cls.teacher.lastName}`.trim() : cls.teacherName || 'Professeur non défini';
+  const room = cls.room || cls.roomRef?.name || 'Salle non définie';
+
+  if (type === 'teacher') {
+    return `${baseClass} • ${room}`;
+  }
+  if (type === 'room') {
+    return `${baseClass} • ${teacher}`;
+  }
+  return `${baseClass} • ${teacher} • ${room}`;
+}
+
+function getPlanningGroupKey(cls, type) {
+  if (type === 'room') {
+    return cls.room || cls.roomRef?.name || 'Salle non définie';
+  }
+  if (type === 'teacher') {
+    return cls.teacher?.lastName ? `${cls.teacher.firstName || ''} ${cls.teacher.lastName}`.trim() : cls.teacherName || 'Professeur non défini';
+  }
+  return `${cls.level?.pole?.name || 'Pôle'} - ${cls.level?.name || 'Niveau'}`;
+}
+
+async function exportPlanning(req, res) {
+  try {
+    const { type, poleId, roomId, teacherId } = req.body || {};
+    const validTypes = ['global', 'room', 'teacher'];
+    if (!type || !validTypes.includes(type)) {
+      return res.status(400).json({ error: 'Type de planning invalide' });
+    }
+
+    if (type === 'room' && !roomId) {
+      return res.status(400).json({ error: 'Salle requise pour l\'export par salle' });
+    }
+
+    if (type === 'teacher' && !teacherId) {
+      return res.status(400).json({ error: 'Professeur requis pour l\'export par professeur' });
+    }
+
+    const schoolYearId = await getTargetSchoolYearId(null);
+    if (!schoolYearId) {
+      return res.status(400).json({ error: 'Année scolaire en cours introuvable' });
+    }
+
+    const [currentYear, pole, selectedRoom, selectedTeacher] = await Promise.all([
+      prisma.schoolYear.findUnique({ where: { id: schoolYearId } }),
+      poleId ? prisma.pole.findUnique({ where: { id: poleId } }) : null,
+      type === 'room' && roomId ? prisma.room.findUnique({ where: { id: roomId } }) : null,
+      type === 'teacher' && teacherId ? prisma.teacher.findUnique({ where: { id: teacherId } }) : null,
+    ]);
+
+    const classes = await prisma.class.findMany({
+      where: {
+        schoolYearId,
+        ...(poleId ? { poleId } : {}),
+        ...(type === 'room' ? { roomId } : {}),
+        ...(type === 'teacher' ? { teacherId } : {}),
+      },
+      include: {
+        level: { include: { pole: true } },
+        pole: true,
+        roomRef: true,
+        teacher: true,
+      },
+      orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+    });
+
+    const days = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI'];
+    const uniquePeriods = Array.from(
+      classes.reduce((map, cls) => {
+        const key = `${cls.startTime}-${cls.endTime}`;
+        if (!map.has(key)) {
+          map.set(key, { startTime: cls.startTime, endTime: cls.endTime });
+        }
+        return map;
+      }, new Map()),
+    ).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime) || parseTime(a.endTime) - parseTime(b.endTime));
+
+    const schedule = days.reduce((acc, day) => ({ ...acc, [day]: {} }), {});
+    classes.forEach((cls) => {
+      if (!days.includes(cls.dayOfWeek)) return;
+      const periodKey = `${cls.startTime}-${cls.endTime}`;
+      schedule[cls.dayOfWeek][periodKey] = schedule[cls.dayOfWeek][periodKey] || [];
+      schedule[cls.dayOfWeek][periodKey].push(cls);
+    });
+
+    const doc = new PDFDocument({ margin: 24, size: 'A4', layout: 'landscape' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="planning-${type}-${Date.now()}.pdf"`);
+    doc.pipe(res);
+
+    const titleColor = '#1D4F91';
+    const headerColor = '#0E3A6C';
+    const accentColor = '#E8F1FA';
+
+    doc.fontSize(18).fillColor(titleColor).text('Planning hebdomadaire');
+    doc.moveDown(0.2);
+    doc.fontSize(10).fillColor(headerColor).text(`Type: ${type === 'global' ? 'Planning globale' : type === 'room' ? 'Planning par salle' : 'Planning par professeur'}`);
+    if (type === 'room') {
+      doc.text(`Salle: ${selectedRoom?.name || 'Salle non définie'}`);
+    }
+    if (type === 'teacher') {
+      const teacherName = selectedTeacher ? `${selectedTeacher.firstName || ''} ${selectedTeacher.lastName || ''}`.trim() : 'Professeur non défini';
+      doc.text(`Professeur: ${teacherName}`);
+    }
+    doc.text(`Pôle: ${pole?.name || 'Tous'}`);
+    doc.text(`Année scolaire: ${currentYear?.label || 'Actuelle'}`);
+    doc.moveDown(0.4);
+
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const timeColWidth = 80;
+    const dayColWidth = Math.floor((pageWidth - timeColWidth) / days.length);
+    const headerHeight = 24;
+    const startX = doc.x;
+    let y = doc.y;
+
+    function drawTableHeader() {
+      doc.save();
+      doc.fillColor(accentColor).rect(startX, y, timeColWidth, headerHeight).fill();
+      days.forEach((day, index) => {
+        const x = startX + timeColWidth + index * dayColWidth;
+        doc.rect(x, y, dayColWidth, headerHeight).fill();
+      });
+      doc.restore();
+
+      doc.fontSize(8).fillColor(headerColor);
+      doc.rect(startX, y, timeColWidth, headerHeight).stroke();
+      doc.text('Horaire', startX + 4, y + 6, { width: timeColWidth - 8, align: 'left' });
+
+      days.forEach((day, index) => {
+        const x = startX + timeColWidth + index * dayColWidth;
+        doc.rect(x, y, dayColWidth, headerHeight).stroke();
+        doc.text(day, x + 4, y + 6, { width: dayColWidth - 8, align: 'center' });
+      });
+      y += headerHeight;
+    }
+
+    drawTableHeader();
+
+    const legendMap = new Map();
+
+    uniquePeriods.forEach((period) => {
+      const classesByDay = days.map((day) => schedule[day][`${period.startTime}-${period.endTime}`] || []);
+      const maxRows = Math.max(1, ...classesByDay.map((list) => Math.min(list.length, 4)));
+      const rowHeight = Math.max(32, maxRows * 14 + 12);
+
+      if (y + rowHeight > doc.page.height - 60) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawTableHeader();
+      }
+
+      doc.rect(startX, y, timeColWidth, rowHeight).stroke();
+      doc.fontSize(8).text(`${period.startTime} - ${period.endTime}`, startX + 4, y + 6, { width: timeColWidth - 8 });
+
+      days.forEach((day, dayIndex) => {
+        const x = startX + timeColWidth + dayIndex * dayColWidth;
+        doc.rect(x, y, dayColWidth, rowHeight).stroke();
+        const cellClasses = schedule[day][`${period.startTime}-${period.endTime}`] || [];
+
+        if (cellClasses.length === 0) {
+          doc.fontSize(7).fillColor('#555555').text('-', x + 4, y + 6, { width: dayColWidth - 8, align: 'left' });
+          return;
+        }
+
+        let lineY = y + 4;
+        cellClasses.slice(0, 4).forEach((cls) => {
+          const groupKey = getPlanningGroupKey(cls, type);
+          const color = getPlanningColor(groupKey);
+          const labelText = buildPlanningLabel(cls, type);
+
+          doc.rect(x + 4, lineY, 8, 8).fill(color).stroke();
+          doc.fillColor('#000000').fontSize(7).text(labelText, x + 16, lineY - 1, {
+            width: dayColWidth - 22,
+            continued: false,
+          });
+          lineY += 14;
+          legendMap.set(groupKey, { color, label: groupKey });
+        });
+
+        if (cellClasses.length > 4) {
+          const remaining = cellClasses.length - 4;
+          doc.fillColor('#000000').fontSize(7).text(`+ ${remaining} autre(s)`, x + 4, lineY, { width: dayColWidth - 8, continued: false });
+        }
+      });
+
+      y += rowHeight;
+    });
+
+    if (legendMap.size > 0) {
+      if (y + 80 > doc.page.height - 40) {
+        doc.addPage();
+        y = doc.page.margins.top;
+      }
+      doc.moveTo(startX, y);
+      doc.fontSize(10).text('Légende :', startX, y);
+      y += 18;
+      legendMap.forEach(({ color, label }) => {
+        doc.rect(startX + 2, y + 2, 10, 10).fill(color).stroke();
+        doc.fillColor('#000000').fontSize(8).text(label, startX + 16, y, { width: pageWidth - 18 });
+        y += 16;
+      });
+    }
+
+    doc.end();
+
+    await createActivityLog({
+      userId: req.user?.id,
+      action: 'ADMIN_EXPORT_PLANNING',
+      entityType: 'Schedule',
+      details: { type, poleId, classes: classes.length },
+    });
+  } catch (error) {
+    console.error('Erreur exportPlanning:', error);
+    res.status(500).json({ error: 'Erreur export planning' });
   }
 }
 
@@ -1102,6 +1421,7 @@ async function getDashboardAlerts(_req, res) {
 module.exports = {
   exportStudents,
   exportAttendanceSheet,
+  exportPlanning,
   exportAccountingPayments: createAccountingExportHandler('payments'),
   exportAccountingUnpaid: createAccountingExportHandler('unpaid'),
   exportAccountingTransactions: createAccountingExportHandler('transactions'),

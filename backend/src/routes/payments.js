@@ -17,6 +17,8 @@ const {
   handleGoCardlessCancel,
   handleStripeWebhook,
   handleGoCardlessWebhook,
+  downloadInvoice,
+  getPaymentInvoice,
 } = require('../controllers/paymentController');
 
 const router = express.Router();
@@ -35,6 +37,10 @@ router.use(authenticate);
 
 router.get('/history/family', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), requireApproved, getFamilyPaymentHistory);
 router.post('/family-enrollment', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), requireApproved, createFamilyEnrollmentPayment);
+
+// Invoice routes
+router.get('/:paymentId/invoice', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), getPaymentInvoice);
+router.get('/:paymentId/invoice/download', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), downloadInvoice);
 
 router.post('/online-intent', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), createPaymentIntent);
 router.post('/offline', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), recordOfflinePayment);

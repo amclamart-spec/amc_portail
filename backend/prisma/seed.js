@@ -61,11 +61,12 @@ async function main() {
 
   const year = await prisma.schoolYear.upsert({
     where: { label: '2025-2026' },
-    update: { isCurrent: true },
+    update: { isCurrent: true, period: 'TRIMESTRIEL' },
     create: {
       label: '2025-2026',
       startDate: new Date('2025-09-01'),
       endDate: new Date('2026-06-30'),
+      period: 'TRIMESTRIEL',
       isCurrent: true,
     },
   });
