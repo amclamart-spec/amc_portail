@@ -1,6 +1,12 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const API_BASE_URL = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_URL || 'http://localhost:4000/api')
+  : (import.meta.env.VITE_API_URL || '/api');
+
+console.log('🔧 [Axios] API Base URL:', API_BASE_URL);
+console.log('🔧 [Axios] DEV mode:', import.meta.env.DEV);
+console.log('🔧 [Axios] VITE_API_URL:', import.meta.env.VITE_API_URL);
 
 const api = axios.create({
   baseURL: API_BASE_URL,

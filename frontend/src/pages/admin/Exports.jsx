@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 
@@ -27,6 +27,8 @@ export default function AdminExports() {
   const [poles, setPoles] = useState([]);
   const [levels, setLevels] = useState([]);
   const [classes, setClasses] = useState([]);
+  const [rooms, setRooms] = useState([]);
+  const [teachers, setTeachers] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const [studentForm, setStudentForm] = useState({
@@ -42,6 +44,13 @@ export default function AdminExports() {
     classId: '',
     startDate: '',
     endDate: '',
+  });
+
+  const [planningForm, setPlanningForm] = useState({
+    type: 'global',
+    poleId: '',
+    roomId: '',
+    teacherId: '',
   });
 
   const [accountingForm, setAccountingForm] = useState({
@@ -67,19 +76,23 @@ export default function AdminExports() {
   useEffect(() => {
     async function load() {
       try {
-        const [yearsRes, polesRes, levelsRes, classesRes] = await Promise.all([
+        const [yearsRes, polesRes, levelsRes, classesRes, roomsRes, teachersRes] = await Promise.all([
           api.get('/admin/school-years'),
           api.get('/admin/poles'),
           api.get('/admin/niveaux'),
           api.get('/admin/classes'),
+          api.get('/admin/salles'),
+          api.get('/admin/professeurs'),
         ]);
 
         setSchoolYears(yearsRes.data.schoolYears || []);
         setPoles(polesRes.data.poles || []);
         setLevels(levelsRes.data.levels || []);
         setClasses(classesRes.data.classes || []);
+        setRooms(roomsRes.data.rooms || []);
+        setTeachers(teachersRes.data.teachers || []);
       } catch (error) {
-        toast.error(error?.response?.data?.error || 'Impossible de charger les données d’export');
+        toast.error(error?.response?.data?.error || 'Impossible de charger les données d\'export');
       }
     }
 
@@ -132,6 +145,34 @@ export default function AdminExports() {
     }
   }
 
+  async function handlePlanningExport() {
+    if (!planningForm.type) {
+      toast.error('Veuillez sélectionner un type de planning');
+      return;
+    }
+
+    if (planningForm.type === 'room' && !planningForm.roomId) {
+      toast.error('Veuillez choisir la salle pour l\'export par salle');
+      return;
+    }
+
+    if (planningForm.type === 'teacher' && !planningForm.teacherId) {
+      toast.error('Veuillez choisir le professeur pour l\'export par professeur');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await api.post('/admin/exports/planning', planningForm, { responseType: 'blob' });
+      downloadBlob(response.data, `planning-${planningForm.type}.pdf`);
+      toast.success('Planning généré');
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'Erreur export planning');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleAccountingExport(type) {
     setLoading(true);
     try {
@@ -157,9 +198,10 @@ export default function AdminExports() {
     <div>
       <h2 style={{ color: 'var(--amc-primary)', marginBottom: 16 }}>Exports administratifs</h2>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <button className={`btn ${activeTab === 'students' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('students')}>Listes élèves</button>
         <button className={`btn ${activeTab === 'attendance' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('attendance')}>Feuilles présence</button>
+        <button className={`btn ${activeTab === 'planning' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('planning')}>Planning</button>
         <button className={`btn ${activeTab === 'accounting' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('accounting')}>Comptabilité</button>
       </div>
 
@@ -246,6 +288,65 @@ export default function AdminExports() {
             </div>
           </div>
           <button className="btn btn-primary" onClick={handleAttendanceExport} disabled={loading}>{loading ? 'Génération...' : 'Générer PDF présence'}</button>
+        </div>
+      )}
+
+      {activeTab === 'planning' && (
+        <div className="card">
+          <div className="card-header"><h3>Export planning hebdomadaire</h3></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
+            <div className="form-group">
+              <label>Type de planning</label>
+              <select
+                className="form-control"
+                value={planningForm.type}
+                onChange={(e) => {
+                  const type = e.target.value;
+                  setPlanningForm((p) => ({
+                    ...p,
+                    type,
+                    roomId: type === 'room' ? p.roomId : '',
+                    teacherId: type === 'teacher' ? p.teacherId : '',
+                  }));
+                }}
+              >
+                <option value="global">Planning globale</option>
+                <option value="room">Planning par salle</option>
+                <option value="teacher">Planning par professeur</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Pôle</label>
+              <select className="form-control" value={planningForm.poleId} onChange={(e) => setPlanningForm((p) => ({ ...p, poleId: e.target.value }))}>
+                <option value="">Tous</option>
+                {poles.map((pole) => <option key={pole.id} value={pole.id}>{pole.name}</option>)}
+              </select>
+            </div>
+            {planningForm.type === 'room' && (
+              <div className="form-group">
+                <label>Salle</label>
+                <select className="form-control" value={planningForm.roomId} onChange={(e) => setPlanningForm((p) => ({ ...p, roomId: e.target.value }))}>
+                  <option value="">Choisir une salle</option>
+                  {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
+                </select>
+              </div>
+            )}
+            {planningForm.type === 'teacher' && (
+              <div className="form-group">
+                <label>Professeur</label>
+                <select className="form-control" value={planningForm.teacherId} onChange={(e) => setPlanningForm((p) => ({ ...p, teacherId: e.target.value }))}>
+                  <option value="">Choisir un professeur</option>
+                  {teachers.map((teacher) => (
+                    <option key={teacher.id} value={teacher.id}>{`${teacher.firstName || ''} ${teacher.lastName || ''}`.trim()}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          <p style={{ color: '#555', marginBottom: 12 }}>
+            Génère un planning hebdomadaire en PDF. Les classes sont colorées en fonction du type sélectionné.
+          </p>
+          <button className="btn btn-primary" onClick={handlePlanningExport} disabled={loading}>{loading ? 'Génération...' : 'Générer planning PDF'}</button>
         </div>
       )}
 

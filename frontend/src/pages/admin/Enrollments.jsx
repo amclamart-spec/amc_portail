@@ -39,6 +39,15 @@ export default function AdminEnrollments() {
     return <span className={`badge ${s.cls}`}>{s.label}</span>;
   };
 
+  const BACKEND_ORIGIN = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace(/\/api$/, '')
+    : (import.meta.env.DEV ? 'http://localhost:4000' : '');
+
+  const getPhotoSource = (photoUrl) => {
+    if (!photoUrl) return null;
+    return photoUrl.startsWith('http') ? photoUrl : `${BACKEND_ORIGIN}${photoUrl}`;
+  };
+
   const handleStatusChange = (enrollmentId, value) => {
     setStatusUpdates((prev) => ({ ...prev, [enrollmentId]: value }));
   };
@@ -71,8 +80,14 @@ export default function AdminEnrollments() {
     return forms.find((form) => form.schoolYearId === enrollment.schoolYearId) || forms[0] || null;
   };
 
+  const getActiveConsent = (enrollment) => {
+    const consents = enrollment.student?.enrollmentConsents || [];
+    return consents.find((c) => c.schoolYearId === enrollment.schoolYearId && c.consentType === 'SANITARY_FORM') || consents.find((c) => c.consentType === 'SANITARY_FORM') || null;
+  };
+
   const openEditModal = (enrollment) => {
     const healthForm = getActiveHealthForm(enrollment) || {};
+    const consent = getActiveConsent(enrollment) || {};
     setEditingEnrollment(enrollment);
     setEditForm({
       status: enrollment.status,
@@ -86,6 +101,7 @@ export default function AdminEnrollments() {
         gender: enrollment.student?.gender || 'GARCON',
         allergies: enrollment.student?.allergies || '',
         currentTreatments: enrollment.student?.currentTreatments || '',
+        photoUrl: enrollment.student?.photoUrl || '',
       },
       family: {
         familyName: enrollment.student?.family?.familyName || '',
@@ -111,9 +127,9 @@ export default function AdminEnrollments() {
           healthForm.canLeaveAloneAfterClass === undefined || healthForm.canLeaveAloneAfterClass === null
             ? null
             : healthForm.canLeaveAloneAfterClass,
-        legalRepresentativeFullName: healthForm.legalRepresentativeFullName || '',
-        citySigned: healthForm.citySigned || '',
-        signedAt: healthForm.signedAt ? healthForm.signedAt.slice(0, 10) : '',
+        legalRepresentativeFullName: consent.acceptedByFullName || '',
+        citySigned: consent.citySigned || '',
+        signedAt: consent.signedAt ? consent.signedAt.slice(0, 10) : '',
         confidentialityAccepted: Boolean(healthForm.confidentialityAccepted),
         noMedicationPolicyAccepted: Boolean(healthForm.noMedicationPolicyAccepted),
         emergencyContacts: healthForm.emergencyContacts?.length > 0
@@ -209,7 +225,7 @@ export default function AdminEnrollments() {
         : form.canLeaveAloneAfterClass,
       legalRepresentativeFullName: form.legalRepresentativeFullName?.trim() || null,
       citySigned: form.citySigned?.trim() || null,
-      signedAt: form.signedAt ? form.signedAt : null,
+      signedAt: form.signedAt?.trim() || null,
       confidentialityAccepted: Boolean(form.confidentialityAccepted),
       noMedicationPolicyAccepted: Boolean(form.noMedicationPolicyAccepted),
       emergencyContacts,
@@ -306,6 +322,7 @@ export default function AdminEnrollments() {
             <table>
               <thead>
                 <tr>
+                  <th>Réf. inscription</th>
                   <th>Élève</th>
                   <th>Pôle</th>
                   <th>Niveau</th>
@@ -322,6 +339,7 @@ export default function AdminEnrollments() {
                   const selectedStatus = statusUpdates[e.id] || e.status;
                   return (
                     <tr key={e.id}>
+                      <td style={{ fontWeight: 700 }}>{e.registrationCode || '—'}</td>
                       <td style={{ fontWeight: 700 }}>{e.student.lastName} {e.student.firstName}</td>
                       <td>{e.class?.level?.pole?.name}</td>
                       <td>{e.class?.level?.name}</td>
@@ -363,12 +381,21 @@ export default function AdminEnrollments() {
       {modalOpen && editForm && (
         <div className="modal-overlay">
           <div className="card modal-card">
-            <div className="card-header">
-              <div>
+            <div className="card-header" style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 16 }}>
+              <div style={{ minWidth: 0 }}>
                 <h3>Modifier l’inscription</h3>
                 <p style={{ margin: '6px 0 0', color: '#6B7280' }}>Mettre à jour les informations d’inscription, famille, élève et fiche sanitaire.</p>
               </div>
-              <button type="button" className="btn btn-outline btn-sm" onClick={closeModal}>Fermer</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {editForm.student?.photoUrl && (
+                  <img
+                    src={getPhotoSource(editForm.student.photoUrl)}
+                    alt={`${editForm.student.firstName} ${editForm.student.lastName}`}
+                    style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 12, border: '1px solid #E2E8F0' }}
+                  />
+                )}
+                <button type="button" className="btn btn-outline btn-sm" onClick={closeModal}>Fermer</button>
+              </div>
             </div>
 
             <div className="form-section">

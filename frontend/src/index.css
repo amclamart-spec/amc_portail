@@ -337,6 +337,13 @@ table tbody tr:hover {
 .flex-between { display: flex; justify-content: space-between; align-items: center; }
 .gap-1 { gap: 8px; }
 .gap-2 { gap: 16px; }
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 /* ============================================
    Responsive

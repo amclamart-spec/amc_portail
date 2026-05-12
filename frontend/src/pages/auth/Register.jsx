@@ -22,6 +22,7 @@ export default function Register() {
     password: '',
     confirmPassword: '',
     profile: 'FAMILLE',
+    accountOnly: false,
   });
   const [errors, setErrors] = useState({});
 
@@ -42,7 +43,7 @@ export default function Register() {
     e.preventDefault();
     if (!validate()) return;
 
-    if (form.profile === 'FAMILLE') {
+    if (form.profile === 'FAMILLE' && !form.accountOnly) {
       navigate('/register/famille-wizard', {
         state: {
           prefill: {
@@ -58,14 +59,19 @@ export default function Register() {
     }
 
     try {
-      await register({
+      const payload = {
         firstName: form.firstName,
         lastName: form.lastName,
         email: form.email,
         phone: form.phone,
         password: form.password,
-        role: form.profile,
-      });
+      };
+
+      if (!(form.profile === 'FAMILLE' && form.accountOnly)) {
+        payload.role = form.profile;
+      }
+
+      await register(payload);
       setSuccess(true);
     } catch {
       // géré dans le contexte
@@ -171,13 +177,34 @@ export default function Register() {
             </div>
 
             {form.profile === 'FAMILLE' && (
+              <div className="form-group" style={{ marginTop: 14 }}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={form.accountOnly}
+                    onChange={(e) => setForm((prev) => ({ ...prev, accountOnly: e.target.checked }))}
+                    style={{ marginRight: 8 }}
+                  />
+                  Option compte seul
+                </label>
+                <div style={{ marginTop: 8, background: '#EEF2FF', borderRadius: 8, padding: 12, fontSize: 13, color: 'var(--amc-primary)' }}>
+                  Créez uniquement le compte AMC maintenant et complétez l'inscription plus tard.
+                </div>
+              </div>
+            )}
+
+            {form.profile === 'FAMILLE' && !form.accountOnly && (
               <div style={{ background: '#EEF2FF', borderRadius: 8, padding: 12, fontSize: 13, color: 'var(--amc-primary)', marginBottom: 8 }}>
                 Le profil <strong>Famille</strong> déclenche l'assistant complet d'inscription en 6 étapes.
               </div>
             )}
 
             <button type="submit" className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 8 }} disabled={loading}>
-              {loading ? 'Traitement...' : form.profile === 'FAMILLE' ? 'Suivant' : "S'inscrire"}
+              {loading
+                ? 'Traitement...'
+                : form.profile === 'FAMILLE'
+                  ? form.accountOnly ? 'Créer le compte' : 'Suivant'
+                  : "S'inscrire"}
             </button>
           </form>
 

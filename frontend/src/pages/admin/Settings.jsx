@@ -20,7 +20,7 @@ const defaultPricing = {
 export default function AdminSettings() {
   const [schoolYears, setSchoolYears] = useState([]);
   const [poles, setPoles] = useState([]);
-  const [newYear, setNewYear] = useState({ label: '', startDate: '', endDate: '', isCurrent: false });
+  const [newYear, setNewYear] = useState({ label: '', startDate: '', endDate: '', period: 'ANNUEL', isCurrent: false });
   const [pricing, setPricing] = useState(defaultPricing);
 
   const load = async () => {
@@ -65,7 +65,7 @@ export default function AdminSettings() {
     try {
       await api.post('/admin/school-years', newYear);
       toast.success('Année scolaire créée');
-      setNewYear({ label: '', startDate: '', endDate: '', isCurrent: false });
+      setNewYear({ label: '', startDate: '', endDate: '', period: 'ANNUEL', isCurrent: false });
       const { data } = await api.get('/admin/school-years');
       setSchoolYears(data.schoolYears);
     } catch {
@@ -95,7 +95,7 @@ export default function AdminSettings() {
         <div className="table-container mb-2">
           <table>
             <thead>
-              <tr><th>Label</th><th>Début</th><th>Fin</th><th>Active</th></tr>
+              <tr><th>Label</th><th>Début</th><th>Fin</th><th>Période</th><th>Active</th></tr>
             </thead>
             <tbody>
               {schoolYears.map((y) => (
@@ -103,6 +103,7 @@ export default function AdminSettings() {
                   <td style={{ fontWeight: 700 }}>{y.label}</td>
                   <td>{new Date(y.startDate).toLocaleDateString('fr-FR')}</td>
                   <td>{new Date(y.endDate).toLocaleDateString('fr-FR')}</td>
+                  <td>{y.period === 'MENSUEL' ? 'Mensuel' : y.period === 'TRIMESTRIEL' ? 'Trimestriel' : y.period === 'SEMESTRIEL' ? 'Semestriel' : 'Annuel'}</td>
                   <td>{y.isCurrent ? <span className="badge badge-success">Active</span> : <span className="badge badge-gray">Non</span>}</td>
                 </tr>
               ))}
@@ -121,6 +122,15 @@ export default function AdminSettings() {
           <div className="form-group" style={{ margin: 0 }}>
             <label>Fin</label>
             <input type="date" className="form-control" value={newYear.endDate} onChange={(e) => setNewYear({ ...newYear, endDate: e.target.value })} required />
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label>Période scolaire</label>
+            <select className="form-control" value={newYear.period} onChange={(e) => setNewYear({ ...newYear, period: e.target.value })}>
+              <option value="MENSUEL">Mensuel</option>
+              <option value="TRIMESTRIEL">Trimestriel</option>
+              <option value="SEMESTRIEL">Semestriel</option>
+              <option value="ANNUEL">Annuel</option>
+            </select>
           </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
             <input type="checkbox" checked={newYear.isCurrent} onChange={(e) => setNewYear({ ...newYear, isCurrent: e.target.checked })} />

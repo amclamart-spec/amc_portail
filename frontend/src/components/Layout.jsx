@@ -31,7 +31,6 @@ const navSectionsByRole = {
       items: [
         { path: '/admin/users', icon: FiUsers, label: 'Familles' },
         { path: '/admin/enrollments', icon: FiClipboard, label: 'Élèves' },
-        { path: '/admin/users', icon: FiUsers, label: 'Parents' },
       ],
     },
     {
@@ -85,10 +84,10 @@ const navSectionsByRole = {
     {
       title: 'Exports',
       items: [
-        { path: '/admin/enrollments', icon: FiBookOpen, label: 'Listes élèves' },
-        { path: '/admin/classes', icon: FiBookOpen, label: 'Listes par classe' },
-        { icon: FiBookOpen, label: 'Feuilles d\'émargement', disabled: true },
-        { icon: FiBookOpen, label: 'Exports comptables', disabled: true },
+        { path: '/admin/exports', icon: FiBookOpen, label: 'Listes élèves' },
+        { path: '/admin/exports', icon: FiClipboard, label: 'Feuilles présence' },
+        { path: '/admin/exports', icon: FiCalendar, label: 'Planning' },
+        { path: '/admin/exports', icon: FiBarChart2, label: 'Comptabilité' },
       ],
     },
   ],
@@ -104,7 +103,6 @@ const navSectionsByRole = {
       items: [
         { path: '/admin/users', icon: FiUsers, label: 'Familles' },
         { path: '/admin/enrollments', icon: FiClipboard, label: 'Élèves' },
-        { path: '/admin/users', icon: FiUsers, label: 'Parents' },
       ],
     },
     {
@@ -158,10 +156,10 @@ const navSectionsByRole = {
     {
       title: 'Exports',
       items: [
-        { path: '/admin/enrollments', icon: FiBookOpen, label: 'Listes élèves' },
-        { path: '/admin/classes', icon: FiBookOpen, label: 'Listes par classe' },
-        { icon: FiBookOpen, label: 'Feuilles d\'émargement', disabled: true },
-        { icon: FiBookOpen, label: 'Exports comptables', disabled: true },
+        { path: '/admin/exports', icon: FiBookOpen, label: 'Listes élèves' },
+        { path: '/admin/exports', icon: FiClipboard, label: 'Feuilles présence' },
+        { path: '/admin/exports', icon: FiCalendar, label: 'Planning' },
+        { path: '/admin/exports', icon: FiBarChart2, label: 'Comptabilité' },
       ],
     },
   ],
@@ -177,7 +175,10 @@ const navSectionsByRole = {
   PROFESSEUR: [
     {
       title: 'Pédagogie',
-      items: [{ path: '/professeur', icon: FiHome, label: 'Mes classes' }],
+      items: [
+        { path: '/professeur', icon: FiHome, label: 'Mes classes' },
+        { path: '/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
+      ],
     },
   ],
   FAMILLE: [
@@ -186,6 +187,7 @@ const navSectionsByRole = {
       items: [
         { path: '/famille', icon: FiHome, label: 'Tableau de bord' },
         { path: '/famille/inscription', icon: FiBookOpen, label: 'Inscriptions' },
+        { path: '/famille/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
         { path: '/famille/paiements', icon: FiCreditCard, label: 'Paiements' },
         { path: '/famille/profil', icon: FiUser, label: 'Profil' },
       ],

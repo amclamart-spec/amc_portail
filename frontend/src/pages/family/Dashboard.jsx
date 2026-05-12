@@ -7,12 +7,17 @@ import { FiUsers, FiBookOpen, FiPlus, FiDollarSign } from 'react-icons/fi';
 export default function FamilyDashboard() {
   const { user } = useAuth();
   const [dashboard, setDashboard] = useState(null);
+  const [homeworkMessages, setHomeworkMessages] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.get('/family/dashboard').then(({ data }) => {
       setDashboard(data);
     }).catch(() => {}).finally(() => setLoading(false));
+
+    api.get('/homework/family').then(({ data }) => {
+      setHomeworkMessages(data.messages || []);
+    }).catch(() => {});
   }, []);
 
   if (loading) return <p>Chargement...</p>;
@@ -24,6 +29,11 @@ export default function FamilyDashboard() {
   const currentEnrollments = students.flatMap((s) =>
     (s.enrollments || []).filter((e) => e.schoolYear?.isCurrent && e.status !== 'CANCELLED')
   );
+
+  const familyEnrollments = students.flatMap((s) => s.enrollments || []);
+  const latestEnrollment = familyEnrollments
+    .filter((e) => e.registrationCode)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
 
   return (
     <div>
@@ -45,6 +55,19 @@ export default function FamilyDashboard() {
 
       {family && (
         <>
+          <div className="card" style={{ marginBottom: 20, padding: 18 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <div>
+                <h3 style={{ margin: 0 }}>{family.familyName}</h3>
+                {latestEnrollment?.registrationCode && (
+                  <p style={{ margin: '6px 0 0', color: '#6B7280' }}>
+                    Réf. inscription : <strong>{latestEnrollment.registrationCode}</strong>
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="stats-grid">
             <div className="stat-card">
               <div className="stat-icon primary"><FiUsers /></div>
@@ -71,6 +94,37 @@ export default function FamilyDashboard() {
               <Link to="/famille/inscription/nouveau" className="btn btn-primary">
                 <FiPlus /> Inscrire un nouveau membre
               </Link>
+              <Link to="/famille/suivi-pedagogique" className="btn btn-outline">
+                Voir le suivi pédagogique
+              </Link>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <h3>Messages de devoirs</h3>
+            </div>
+            <div style={{ display: 'grid', gap: 14, padding: 16 }}>
+              {homeworkMessages.length === 0 ? (
+                <div style={{ padding: 20, color: '#6B7280' }}>
+                  Aucun message de devoirs disponible pour vos enfants actuellement.
+                </div>
+              ) : (
+                homeworkMessages.map((message) => (
+                  <div key={message.id} className="card" style={{ padding: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <strong>Classe ID : {message.classId}</strong>
+                      <span>{new Date(message.date).toLocaleDateString()}</span>
+                    </div>
+                    <p style={{ whiteSpace: 'pre-wrap', marginBottom: 12 }}>{message.body}</p>
+                    {message.attachmentUrl && (
+                      <a href={message.attachmentUrl} target="_blank" rel="noreferrer" className="btn btn-outline-secondary btn-sm">
+                        Voir la pièce jointe{message.attachmentFilename ? ` (${message.attachmentFilename})` : ''}
+                      </a>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
 

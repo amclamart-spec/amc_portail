@@ -1,20 +1,31 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { FiCheckCircle, FiXCircle } from 'react-icons/fi';
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [status, setStatus] = useState('loading'); // loading, success, error
 
   useEffect(() => {
     const token = searchParams.get('token');
-    if (!token) { setStatus('error'); return; }
+    const redirectPath = searchParams.get('redirect') || '/login';
+    
+    if (!token) { 
+      setStatus('error'); 
+      return; 
+    }
 
     api.get(`/auth/verify-email/${token}`)
-      .then(() => setStatus('success'))
+      .then(() => {
+        setStatus('success');
+        setTimeout(() => {
+          navigate(redirectPath);
+        }, 2000);
+      })
       .catch(() => setStatus('error'));
-  }, [searchParams]);
+  }, [searchParams, navigate]);
 
   return (
     <div style={{
@@ -30,8 +41,7 @@ export default function VerifyEmail() {
           <>
             <FiCheckCircle size={64} color="#22C55E" />
             <h2 style={{ color: 'var(--amc-primary)', margin: '16px 0 8px' }}>Email vérifié !</h2>
-            <p style={{ color: '#6B7280', marginBottom: 24 }}>Votre adresse email a été confirmée avec succès.</p>
-            <Link to="/login" className="btn btn-primary">Se connecter</Link>
+            <p style={{ color: '#6B7280', marginBottom: 24 }}>Votre adresse email a été confirmée avec succès. Redirection en cours...</p>
           </>
         )}
         {status === 'error' && (
