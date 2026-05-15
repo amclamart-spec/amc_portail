@@ -71,6 +71,80 @@ function sendExcel(res, filename, worksheetName, headers, rows) {
   return workbook.xlsx.write(res).then(() => res.end());
 }
 
+function hexToArgb(hex) {
+  const normalized = String(hex || '#FFFFFF').replace('#', '').trim();
+  return `FF${normalized.length === 6 ? normalized : normalized.padStart(6, '0')}`.toUpperCase();
+}
+
+function sendPlanningExcel(res, filename, days, uniquePeriods, schedule) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Planning hebdo');
+  sheet.properties.defaultRowHeight = 32;
+  sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+  const headers = ['Horaire', ...days];
+  const headerRow = sheet.addRow(headers);
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0E3A6C' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    };
+  });
+
+  sheet.columns = [{ width: 18 }, ...days.map(() => ({ width: 30 }))];
+
+  uniquePeriods.forEach((period) => {
+    const row = [
+      `${period.startTime} - ${period.endTime}`,
+      ...days.map((day) => {
+        const classesForDay = schedule[day][`${period.startTime}-${period.endTime}`] || [];
+        if (classesForDay.length === 0) return '-';
+        const texts = classesForDay.slice(0, 3).map((cls) => {
+          const level = `${cls.level?.pole?.name || 'Pôle'} • ${cls.level?.name || 'Niveau'}`;
+          const teacher = cls.teacher?.lastName ? `${cls.teacher.firstName || ''} ${cls.teacher.lastName}`.trim() : cls.teacherName || 'Professeur non défini';
+          const room = cls.room || cls.roomRef?.name || 'Salle non définie';
+          return `${level}\nSalle: ${room}\nProf: ${teacher}`;
+        });
+        if (classesForDay.length > 3) {
+          texts.push(`+ ${classesForDay.length - 3} autre(s)`);
+        }
+        return texts.join('\n\n');
+      }),
+    ];
+    const excelRow = sheet.addRow(row);
+    excelRow.height = 60;
+    excelRow.eachCell((cell, colNumber) => {
+      cell.alignment = { vertical: 'top', horizontal: colNumber === 1 ? 'center' : 'left', wrapText: true };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+        left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+        bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+        right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      };
+      if (colNumber > 1) {
+        const value = cell.value || '';
+        if (value !== '-') {
+          const fillColor = getPlanningColor(value);
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(fillColor) } };
+        } else {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        }
+      } else {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      }
+    });
+  });
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`);
+  return workbook.xlsx.write(res).then(() => res.end());
+}
+
 function sendCsv(res, filename, headers, rows) {
   const csv = buildCsv(headers, rows);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -494,12 +568,43 @@ function getPlanningGroupKey(cls, type) {
   return `${cls.level?.pole?.name || 'Pôle'} - ${cls.level?.name || 'Niveau'}`;
 }
 
+function getClassDay(cls) {
+  return cls.dayOfWeek || cls.timeSlot?.dayOfWeek || 'INDEFINI';
+}
+
+function getClassStartTime(cls) {
+  return cls.startTime || cls.timeSlot?.startTime || '??:??';
+}
+
+function getClassEndTime(cls) {
+  return cls.endTime || cls.timeSlot?.endTime || '??:??';
+}
+
+function getClassTeacherName(cls) {
+  if (cls.teacher?.lastName) return `${cls.teacher.firstName || ''} ${cls.teacher.lastName}`.trim();
+  if (cls.teacherName) return cls.teacherName;
+  return 'Professeur non défini';
+}
+
+function getClassRoomName(cls) {
+  return cls.room || cls.roomRef?.name || cls.timeSlot?.room?.name || 'Salle non définie';
+}
+
 async function exportPlanning(req, res) {
   try {
-    const { type, poleId, roomId, teacherId } = req.body || {};
-    const validTypes = ['global', 'room', 'teacher'];
+    const { type, poleId, roomId, teacherId, classId, format: requestedFormat } = req.body || {};
+    const validTypes = ['global', 'pole', 'class', 'room', 'teacher'];
+    const format = requestedFormat ? parseFormat(requestedFormat, ['excel', 'pdf']) : 'pdf';
     if (!type || !validTypes.includes(type)) {
       return res.status(400).json({ error: 'Type de planning invalide' });
+    }
+
+    if (type === 'pole' && !poleId) {
+      return res.status(400).json({ error: 'Pôle requis pour l\'export par pôle' });
+    }
+
+    if (type === 'class' && !classId) {
+      return res.status(400).json({ error: 'Classe requise pour l\'export par classe' });
     }
 
     if (type === 'room' && !roomId) {
@@ -515,9 +620,10 @@ async function exportPlanning(req, res) {
       return res.status(400).json({ error: 'Année scolaire en cours introuvable' });
     }
 
-    const [currentYear, pole, selectedRoom, selectedTeacher] = await Promise.all([
+    const [currentYear, pole, selectedClass, selectedRoom, selectedTeacher] = await Promise.all([
       prisma.schoolYear.findUnique({ where: { id: schoolYearId } }),
       poleId ? prisma.pole.findUnique({ where: { id: poleId } }) : null,
+      type === 'class' && classId ? prisma.class.findUnique({ where: { id: classId }, include: { level: { include: { pole: true } }, pole: true, roomRef: true, teacher: true } }) : null,
       type === 'room' && roomId ? prisma.room.findUnique({ where: { id: roomId } }) : null,
       type === 'teacher' && teacherId ? prisma.teacher.findUnique({ where: { id: teacherId } }) : null,
     ]);
@@ -525,37 +631,54 @@ async function exportPlanning(req, res) {
     const classes = await prisma.class.findMany({
       where: {
         schoolYearId,
-        ...(poleId ? { poleId } : {}),
+        ...(type === 'pole' ? { poleId } : {}),
+        ...(type === 'class' ? { id: classId } : {}),
         ...(type === 'room' ? { roomId } : {}),
         ...(type === 'teacher' ? { teacherId } : {}),
+        ...(type === 'global' && poleId ? { poleId } : {}),
       },
       include: {
         level: { include: { pole: true } },
         pole: true,
         roomRef: true,
         teacher: true,
+        timeSlot: { include: { room: true } },
       },
       orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
     });
 
-    const days = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI'];
+    const days = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI', 'DIMANCHE'];
     const uniquePeriods = Array.from(
       classes.reduce((map, cls) => {
-        const key = `${cls.startTime}-${cls.endTime}`;
+        const startTime = getClassStartTime(cls);
+        const endTime = getClassEndTime(cls);
+        const key = `${startTime}-${endTime}`;
         if (!map.has(key)) {
-          map.set(key, { startTime: cls.startTime, endTime: cls.endTime });
+          map.set(key, { startTime, endTime });
         }
         return map;
-      }, new Map()),
+      }, new Map()).values(),
     ).sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime) || parseTime(a.endTime) - parseTime(b.endTime));
 
     const schedule = days.reduce((acc, day) => ({ ...acc, [day]: {} }), {});
     classes.forEach((cls) => {
-      if (!days.includes(cls.dayOfWeek)) return;
-      const periodKey = `${cls.startTime}-${cls.endTime}`;
-      schedule[cls.dayOfWeek][periodKey] = schedule[cls.dayOfWeek][periodKey] || [];
-      schedule[cls.dayOfWeek][periodKey].push(cls);
+      const day = getClassDay(cls);
+      if (!days.includes(day)) return;
+      const periodKey = `${getClassStartTime(cls)}-${getClassEndTime(cls)}`;
+      schedule[day][periodKey] = schedule[day][periodKey] || [];
+      schedule[day][periodKey].push(cls);
     });
+
+    if (format === 'excel') {
+      await sendPlanningExcel(res, `planning-${type}-${Date.now()}`, days, uniquePeriods, schedule);
+      await createActivityLog({
+        userId: req.user?.id,
+        action: 'ADMIN_EXPORT_PLANNING',
+        entityType: 'Schedule',
+        details: { type, poleId, classId, roomId, teacherId, format, classes: classes.length },
+      });
+      return;
+    }
 
     const doc = new PDFDocument({ margin: 24, size: 'A4', layout: 'landscape' });
     res.setHeader('Content-Type', 'application/pdf');
@@ -568,7 +691,23 @@ async function exportPlanning(req, res) {
 
     doc.fontSize(18).fillColor(titleColor).text('Planning hebdomadaire');
     doc.moveDown(0.2);
-    doc.fontSize(10).fillColor(headerColor).text(`Type: ${type === 'global' ? 'Planning globale' : type === 'room' ? 'Planning par salle' : 'Planning par professeur'}`);
+    const planningLabel = type === 'global'
+      ? 'Planning global'
+      : type === 'pole'
+        ? 'Planning par pôle'
+        : type === 'class'
+          ? 'Planning par classe'
+          : type === 'room'
+            ? 'Planning par salle'
+            : 'Planning par professeur';
+    doc.fontSize(10).fillColor(headerColor).text(`Type: ${planningLabel}`);
+    if (type === 'pole') {
+      doc.text(`Pôle: ${pole?.name || 'Pôle non défini'}`);
+    }
+    if (type === 'class') {
+      const classLabel = selectedClass ? `${selectedClass.level?.pole?.name || ''} - ${selectedClass.level?.name || selectedClass.name || selectedClass.id}`.trim() : 'Classe non définie';
+      doc.text(`Classe: ${classLabel}`);
+    }
     if (type === 'room') {
       doc.text(`Salle: ${selectedRoom?.name || 'Salle non définie'}`);
     }
@@ -576,7 +715,9 @@ async function exportPlanning(req, res) {
       const teacherName = selectedTeacher ? `${selectedTeacher.firstName || ''} ${selectedTeacher.lastName || ''}`.trim() : 'Professeur non défini';
       doc.text(`Professeur: ${teacherName}`);
     }
-    doc.text(`Pôle: ${pole?.name || 'Tous'}`);
+    if (type === 'global' && pole?.name) {
+      doc.text(`Pôle: ${pole?.name}`);
+    }
     doc.text(`Année scolaire: ${currentYear?.label || 'Actuelle'}`);
     doc.moveDown(0.4);
 
@@ -610,12 +751,10 @@ async function exportPlanning(req, res) {
 
     drawTableHeader();
 
-    const legendMap = new Map();
-
     uniquePeriods.forEach((period) => {
       const classesByDay = days.map((day) => schedule[day][`${period.startTime}-${period.endTime}`] || []);
       const maxRows = Math.max(1, ...classesByDay.map((list) => Math.min(list.length, 4)));
-      const rowHeight = Math.max(32, maxRows * 14 + 12);
+      const rowHeight = Math.max(64, maxRows * 52 + 12);
 
       if (y + rowHeight > doc.page.height - 60) {
         doc.addPage();
@@ -624,7 +763,7 @@ async function exportPlanning(req, res) {
       }
 
       doc.rect(startX, y, timeColWidth, rowHeight).stroke();
-      doc.fontSize(8).text(`${period.startTime} - ${period.endTime}`, startX + 4, y + 6, { width: timeColWidth - 8 });
+      doc.fontSize(8).fillColor('#000000').text(`${period.startTime} - ${period.endTime}`, startX + 4, y + 6, { width: timeColWidth - 8 });
 
       days.forEach((day, dayIndex) => {
         const x = startX + timeColWidth + dayIndex * dayColWidth;
@@ -636,44 +775,41 @@ async function exportPlanning(req, res) {
           return;
         }
 
-        let lineY = y + 4;
+        let lineY = y + 8;
         cellClasses.slice(0, 4).forEach((cls) => {
-          const groupKey = getPlanningGroupKey(cls, type);
-          const color = getPlanningColor(groupKey);
-          const labelText = buildPlanningLabel(cls, type);
+          const teacherName = cls.teacher?.lastName
+            ? `${cls.teacher.firstName || ''} ${cls.teacher.lastName}`.trim()
+            : cls.teacherName || 'Professeur non défini';
+          const roomName = cls.room || cls.roomRef?.name || 'Salle non définie';
+          const levelName = `${cls.level?.pole?.name || 'Pôle'} • ${cls.level?.name || 'Niveau'}`;
+          const slotColor = getPlanningColor(`${levelName}-${teacherName}-${roomName}`);
+          const blockHeight = 40;
 
-          doc.rect(x + 4, lineY, 8, 8).fill(color).stroke();
-          doc.fillColor('#000000').fontSize(7).text(labelText, x + 16, lineY - 1, {
-            width: dayColWidth - 22,
-            continued: false,
-          });
-          lineY += 14;
-          legendMap.set(groupKey, { color, label: groupKey });
+          doc.save();
+          doc.fillColor(slotColor).roundedRect(x + 3, lineY - 4, dayColWidth - 6, blockHeight, 8).fill();
+          doc.restore();
+
+          doc.fontSize(8).fillColor('#0B3D91').text(levelName, x + 8, lineY, { width: dayColWidth - 16, align: 'left' });
+          lineY += 10;
+          doc.fontSize(7).fillColor('#1F2937').text(`Salle: ${roomName}`, x + 8, lineY, { width: dayColWidth - 16, align: 'left' });
+          lineY += 9;
+          doc.fontSize(7).fillColor('#1F2937').text(`Prof: ${teacherName}`, x + 8, lineY, { width: dayColWidth - 16, align: 'left' });
+          lineY += 12;
+
+          if (cls !== cellClasses[cellClasses.length - 1] && lineY + 2 < y + rowHeight) {
+            doc.save().strokeColor('#E5E7EB').moveTo(x + 4, lineY).lineTo(x + dayColWidth - 4, lineY).stroke().restore();
+            lineY += 4;
+          }
         });
 
         if (cellClasses.length > 4) {
           const remaining = cellClasses.length - 4;
-          doc.fillColor('#000000').fontSize(7).text(`+ ${remaining} autre(s)`, x + 4, lineY, { width: dayColWidth - 8, continued: false });
+          doc.fillColor('#555555').fontSize(7).text(`+ ${remaining} autre(s)`, x + 4, lineY, { width: dayColWidth - 8, continued: false });
         }
       });
 
       y += rowHeight;
     });
-
-    if (legendMap.size > 0) {
-      if (y + 80 > doc.page.height - 40) {
-        doc.addPage();
-        y = doc.page.margins.top;
-      }
-      doc.moveTo(startX, y);
-      doc.fontSize(10).text('Légende :', startX, y);
-      y += 18;
-      legendMap.forEach(({ color, label }) => {
-        doc.rect(startX + 2, y + 2, 10, 10).fill(color).stroke();
-        doc.fillColor('#000000').fontSize(8).text(label, startX + 16, y, { width: pageWidth - 18 });
-        y += 16;
-      });
-    }
 
     doc.end();
 
@@ -681,7 +817,7 @@ async function exportPlanning(req, res) {
       userId: req.user?.id,
       action: 'ADMIN_EXPORT_PLANNING',
       entityType: 'Schedule',
-      details: { type, poleId, classes: classes.length },
+      details: { type, poleId, classId, roomId, teacherId, classes: classes.length },
     });
   } catch (error) {
     console.error('Erreur exportPlanning:', error);

@@ -46,6 +46,8 @@ model User {
   teacherProfile       Teacher?
   recordedTransactions PaymentTransaction[] @relation("RecordedByUser")
   refundsManaged       Refund[]             @relation("RefundManagedBy")
+  sentMessages         ChatMessage[]        @relation("ChatMessageSender")
+  receivedMessages     ChatMessage[]        @relation("ChatMessageRecipient")
 
   @@map("users")
 }
@@ -247,6 +249,23 @@ model Teacher {
   homeworkMessages HomeworkMessage[]
 
   @@map("teachers")
+}
+
+model ChatMessage {
+  id          String   @id @default(uuid())
+  senderId    String   @map("sender_id")
+  recipientId String   @map("recipient_id")
+  body        String
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  sender    User @relation("ChatMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User @relation("ChatMessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([senderId])
+  @@index([recipientId])
+  @@map("chat_messages")
 }
 
 model Pole {

@@ -18,7 +18,13 @@ function getTransporter() {
   return transporter;
 }
 
-async function sendWithAbacus({ to, subject, html, text }) {
+async function sendWithAbacus({ to, subject, html, text, attachments }) {
+  // L'API Abacus ne supporte pas les pièces jointes pour le moment
+  // Si des pièces jointes sont présentes, on lève une erreur pour forcer l'utilisation de SMTP
+  if (attachments && attachments.length > 0) {
+    throw new Error('Pièces jointes non supportées par Abacus - basculement vers SMTP requis');
+  }
+
   const { apiBaseUrl, endpoint, apiKey } = config.abacusEmail;
 
   if (!apiKey) {
@@ -47,26 +53,42 @@ async function sendWithAbacus({ to, subject, html, text }) {
   return response.json();
 }
 
-async function sendWithSmtp({ to, subject, html, text }) {
-  const info = await getTransporter().sendMail({
+async function sendWithSmtp({ to, subject, html, text, attachments }) {
+  const mailOptions = {
     from: `"${config.email.fromName}" <${config.email.fromEmail}>`,
     to,
     subject,
     html,
     text,
-  });
+  };
+
+  // Ajouter les pièces jointes si présentes
+  if (attachments && attachments.length > 0) {
+    mailOptions.attachments = attachments;
+  }
+
+  const info = await getTransporter().sendMail(mailOptions);
   return info;
 }
 
 async function sendMail(payload) {
   try {
+    console.log(`[EMAIL] Envoi avec provider: ${config.email.provider}`);
+    console.log(`[EMAIL] Pièces jointes: ${payload.attachments ? payload.attachments.length : 0}`);
+
+    // Si on utilise Abacus mais qu'il y a des pièces jointes, forcer SMTP
+    if (config.email.provider === 'ABACUS' && payload.attachments && payload.attachments.length > 0) {
+      console.log('[EMAIL] Basculement vers SMTP car pièces jointes détectées avec Abacus');
+      return await sendWithSmtp(payload);
+    }
+
     if (config.email.provider === 'ABACUS') {
       return await sendWithAbacus(payload);
     }
     return await sendWithSmtp(payload);
   } catch (error) {
     console.error('Erreur envoi email:', error.message);
-    return null;
+    throw error; // Re-throw pour que l'appelant puisse gérer l'erreur
   }
 }
 

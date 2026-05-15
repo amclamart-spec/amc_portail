@@ -14,6 +14,7 @@ const configurePassport = require('./config/passport');
 const app = express();
 const passport = configurePassport();
 
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({
   origin: config.corsOrigin,

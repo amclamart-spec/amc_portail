@@ -19,6 +19,7 @@ const router = Router();
 
 const registerValidation = [
   body('email').isEmail().withMessage('Email invalide').normalizeEmail(),
+  body('phone').trim().notEmpty().withMessage('Téléphone requis'),
   body('password')
     .isLength({ min: 8 }).withMessage('Minimum 8 caractères')
     .matches(/[A-Z]/).withMessage('Au moins une majuscule')

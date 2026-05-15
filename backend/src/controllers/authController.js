@@ -15,7 +15,7 @@ function getCookieOptions() {
   return {
     httpOnly: true,
     secure: config.nodeEnv === 'production',
-    sameSite: 'lax',
+    sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
     maxAge: 10 * 60 * 1000,
     path: '/',
   };
@@ -54,6 +54,10 @@ async function issueTokensForUser(user) {
 async function register(req, res) {
   try {
     const { email, password, firstName, lastName, phone, role } = req.body;
+
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ error: 'Téléphone requis' });
+    }
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -172,6 +176,8 @@ function googleAuth(req, res, next) {
     scope: ['profile', 'email'],
     session: false,
     state,
+    prompt: 'select_account',
+    accessType: 'offline',
   })(req, res, next);
 }
 
@@ -185,13 +191,15 @@ function googleCallback(req, res, next) {
   res.clearCookie(OAUTH_STATE_COOKIE, getCookieOptions());
 
   if (!expectedState || !receivedState || expectedState !== receivedState) {
-    return redirectWithError(res, 'Échec de vérification de sécurité OAuth. Veuillez réessayer.');
+    console.warn('OAuth state validation failed', { expectedState, receivedState });
+    return redirectWithError(res, 'Échec de vérification de sécurité OAuth. Vérifiez que les cookies sont activés et réessayez.');
   }
 
   return passport.authenticate('google', { session: false }, async (error, user, info) => {
     if (error) {
       console.error('Erreur OAuth Google:', error);
-      return redirectWithError(res, 'Erreur lors de l’authentification Google.');
+      const message = error?.message || 'Erreur lors de l’authentification Google.';
+      return redirectWithError(res, message);
     }
 
     if (!user) {

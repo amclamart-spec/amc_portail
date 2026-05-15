@@ -35,8 +35,8 @@ router.get('/gocardless/cancel', handleGoCardlessCancel);
 
 router.use(authenticate);
 
-router.get('/history/family', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), requireApproved, getFamilyPaymentHistory);
-router.post('/family-enrollment', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), requireApproved, createFamilyEnrollmentPayment);
+router.get('/history/family', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), getFamilyPaymentHistory);
+router.post('/family-enrollment', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), createFamilyEnrollmentPayment);
 
 // Invoice routes
 router.get('/:paymentId/invoice', authorizePermission(PERMISSIONS.FAMILY_SELF_PAYMENTS), getPaymentInvoice);

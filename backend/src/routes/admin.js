@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const multer = require('multer');
 const { authenticate, authorizePermission } = require('../middleware/auth');
 const { PERMISSIONS } = require('../config/permissions');
 const {
@@ -8,6 +9,7 @@ const {
   rejectUser,
   getStats,
   getEnrollments,
+  getStudentAcademicRecord,
   getSchoolYears,
   createSchoolYear,
 
@@ -59,6 +61,37 @@ const {
   exportAccountingAnnualSummary,
 } = require('../controllers/adminAdvancedController');
 const { getPricingConfig, updatePricingConfig } = require('../controllers/pricingController');
+const {
+  getMailingStructure,
+  sendMailing,
+  getMailingPreview,
+} = require('../controllers/adminMailController');
+
+// Configuration multer pour les pièces jointes
+const upload = multer({
+  dest: 'uploads/mailing/',
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/plain',
+      'image/jpeg',
+      'image/png',
+    ];
+
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Format de fichier non autorisé'));
+    }
+  },
+});
 
 const router = Router();
 router.use(authenticate);
@@ -71,6 +104,7 @@ router.put('/users/:id/approve', authorizePermission(PERMISSIONS.USERS_APPROVE),
 router.put('/users/:id/reject', authorizePermission(PERMISSIONS.USERS_APPROVE), rejectUser);
 
 router.get('/enrollments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollments);
+router.get('/students/:studentId/record', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getStudentAcademicRecord);
 router.put('/enrollments/:id', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), updateEnrollment);
 
 router.get('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getSchoolYears);
@@ -140,5 +174,10 @@ router.delete('/professeurs/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE
 
 // Alias historique
 router.get('/teachers', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTeachers);
+
+// Mailing
+router.get('/mailing/structure', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingStructure);
+router.post('/mailing/preview', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingPreview);
+router.post('/mailing/send', authorizePermission(PERMISSIONS.CLASSES_MANAGE), upload.single('attachment'), sendMailing);
 
 module.exports = router;

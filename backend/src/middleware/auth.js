@@ -6,6 +6,7 @@ const prisma = new PrismaClient();
 
 async function authenticate(req, res, next) {
   try {
+    console.log('authenticate ->', req.method, req.originalUrl, 'hasAuth=', !!req.headers.authorization);
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Token d\'authentification requis' });

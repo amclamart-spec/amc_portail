@@ -4,6 +4,7 @@ const PDFDocument = require('pdfkit');
 const { PrismaClient } = require('@prisma/client');
 const { v4: uuidv4 } = require('uuid');
 const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendMail } = require('../services/emailService');
+const { savePhotoBase64 } = require('../utils/photoUtils');
 
 const prisma = new PrismaClient();
 
@@ -312,6 +313,126 @@ async function getEnrollments(req, res) {
   }
 }
 
+function formatClassLabel(cls) {
+  if (!cls) return null;
+  const poleName = cls.level?.pole?.name;
+  const levelName = cls.level?.name;
+  return [poleName, levelName].filter(Boolean).join(' - ');
+}
+
+async function getStudentAcademicRecord(req, res) {
+  try {
+    const { studentId } = req.params;
+    if (!studentId) {
+      return res.status(400).json({ error: 'studentId est requis' });
+    }
+
+    const student = await prisma.student.findUnique({
+      where: { id: studentId },
+      include: {
+        enrollments: {
+          where: { status: 'CONFIRMED' },
+          include: {
+            class: {
+              include: {
+                level: { include: { pole: true } },
+                schoolYear: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({ error: 'Élève introuvable' });
+    }
+
+    const classIds = student.enrollments.map((enrollment) => enrollment.classId).filter(Boolean);
+
+    const absences = classIds.length > 0
+      ? await prisma.evaluation.findMany({
+          where: {
+            studentId,
+            status: 'missing',
+            lesson: { classId: { in: classIds } },
+          },
+          include: {
+            lesson: {
+              include: {
+                class: {
+                  include: {
+                    level: { include: { pole: true } },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: [{ lesson: { date: 'desc' } }],
+        })
+      : [];
+
+    const notes = classIds.length > 0
+      ? await prisma.evaluation.findMany({
+          where: {
+            studentId,
+            NOT: { status: 'missing' },
+            lesson: { classId: { in: classIds } },
+          },
+          include: {
+            lesson: {
+              include: {
+                class: {
+                  include: {
+                    level: { include: { pole: true } },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: [{ lesson: { date: 'desc' } }],
+        })
+      : [];
+
+    const formattedAbsences = absences.map((evaluation) => ({
+      id: evaluation.id,
+      date: evaluation.lesson?.date || null,
+      lessonTitle: evaluation.lesson?.title || null,
+      classLabel: formatClassLabel(evaluation.lesson?.class),
+      status: evaluation.status,
+      justification: evaluation.justification,
+      grade: evaluation.grade,
+      appreciation: evaluation.appreciation,
+    }));
+
+    const formattedNotes = notes
+      .filter((evaluation) => evaluation.grade !== null || evaluation.appreciation !== null)
+      .map((evaluation) => ({
+        id: evaluation.id,
+        date: evaluation.lesson?.date || null,
+        lessonTitle: evaluation.lesson?.title || null,
+        classLabel: formatClassLabel(evaluation.lesson?.class),
+        status: evaluation.status,
+        grade: evaluation.grade,
+        appreciation: evaluation.appreciation,
+      }));
+
+    return res.json({
+      student: {
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        photoUrl: student.photoUrl || null,
+      },
+      absences: formattedAbsences,
+      notes: formattedNotes,
+    });
+  } catch (error) {
+    console.error('Erreur getStudentAcademicRecord:', error);
+    res.status(500).json({ error: 'Impossible de charger la fiche élève' });
+  }
+}
+
 async function updateEnrollment(req, res) {
   try {
     const { id } = req.params;
@@ -372,6 +493,9 @@ async function updateEnrollment(req, res) {
       if (student.gender !== undefined) studentUpdates.gender = student.gender;
       if (student.allergies !== undefined) studentUpdates.allergies = student.allergies;
       if (student.currentTreatments !== undefined) studentUpdates.currentTreatments = student.currentTreatments;
+      if (student.photoBase64 !== undefined) {
+        studentUpdates.photoUrl = student.photoBase64 ? savePhotoBase64(student.photoBase64) : null;
+      }
     }
 
     const familyUpdates = {};
@@ -1748,5 +1872,6 @@ module.exports = {
   updateTeacher,
   resetTeacherPassword,
   deleteTeacher,
+  getStudentAcademicRecord,
   updateEnrollment,
 };
