@@ -250,6 +250,33 @@ table td {
   font-size: 14px;
 }
 
+table td:last-child {
+  white-space: nowrap;
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.table-actions select.form-control {
+  width: auto;
+  min-width: 140px;
+  max-width: 160px;
+}
+
+.table-actions .btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.table-actions .btn-sm.btn-primary {
+  min-width: 88px;
+}
+
 table tbody tr:hover {
   background-color: var(--amc-light-bg-2);
 }

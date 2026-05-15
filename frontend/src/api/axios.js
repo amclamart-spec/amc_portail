@@ -1,7 +1,15 @@
 import axios from 'axios';
 
+const getDevApiUrl = () => {
+  const viteUrl = import.meta.env.VITE_API_URL;
+  if (!viteUrl || viteUrl === '/api') {
+    return 'http://localhost:4000/api';
+  }
+  return viteUrl;
+};
+
 const API_BASE_URL = import.meta.env.DEV
-  ? (import.meta.env.VITE_API_URL || 'http://localhost:4000/api')
+  ? getDevApiUrl()
   : (import.meta.env.VITE_API_URL || '/api');
 
 console.log('🔧 [Axios] API Base URL:', API_BASE_URL);

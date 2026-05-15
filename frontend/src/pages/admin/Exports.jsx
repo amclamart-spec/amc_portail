@@ -49,8 +49,10 @@ export default function AdminExports() {
   const [planningForm, setPlanningForm] = useState({
     type: 'global',
     poleId: '',
+    classId: '',
     roomId: '',
     teacherId: '',
+    format: 'pdf',
   });
 
   const [accountingForm, setAccountingForm] = useState({
@@ -71,6 +73,11 @@ export default function AdminExports() {
       return true;
     }),
     [classes, studentForm.schoolYearId, studentForm.poleId, studentForm.levelId],
+  );
+
+  const filteredPlanningClasses = useMemo(
+    () => classes.filter((cls) => !planningForm.poleId || cls.poleId === planningForm.poleId),
+    [classes, planningForm.poleId],
   );
 
   useEffect(() => {
@@ -151,6 +158,16 @@ export default function AdminExports() {
       return;
     }
 
+    if (planningForm.type === 'pole' && !planningForm.poleId) {
+      toast.error('Veuillez choisir le pôle pour l\'export par pôle');
+      return;
+    }
+
+    if (planningForm.type === 'class' && !planningForm.classId) {
+      toast.error('Veuillez choisir la classe pour l\'export par classe');
+      return;
+    }
+
     if (planningForm.type === 'room' && !planningForm.roomId) {
       toast.error('Veuillez choisir la salle pour l\'export par salle');
       return;
@@ -164,7 +181,8 @@ export default function AdminExports() {
     setLoading(true);
     try {
       const response = await api.post('/admin/exports/planning', planningForm, { responseType: 'blob' });
-      downloadBlob(response.data, `planning-${planningForm.type}.pdf`);
+      const extension = planningForm.format === 'excel' ? 'xlsx' : 'pdf';
+      downloadBlob(response.data, `planning-${planningForm.type}.${extension}`);
       toast.success('Planning généré');
     } catch (error) {
       toast.error(error?.response?.data?.error || 'Erreur export planning');
@@ -310,7 +328,9 @@ export default function AdminExports() {
                   }));
                 }}
               >
-                <option value="global">Planning globale</option>
+                <option value="global">Planning global</option>
+                <option value="pole">Planning par pôle</option>
+                <option value="class">Planning par classe</option>
                 <option value="room">Planning par salle</option>
                 <option value="teacher">Planning par professeur</option>
               </select>
@@ -322,6 +342,24 @@ export default function AdminExports() {
                 {poles.map((pole) => <option key={pole.id} value={pole.id}>{pole.name}</option>)}
               </select>
             </div>
+            <div className="form-group">
+              <label>Format</label>
+              <select className="form-control" value={planningForm.format} onChange={(e) => setPlanningForm((p) => ({ ...p, format: e.target.value }))}>
+                <option value="pdf">PDF</option>
+                <option value="excel">Excel</option>
+              </select>
+            </div>
+            {planningForm.type === 'class' && (
+              <div className="form-group">
+                <label>Classe</label>
+                <select className="form-control" value={planningForm.classId} onChange={(e) => setPlanningForm((p) => ({ ...p, classId: e.target.value }))}>
+                  <option value="">Choisir une classe</option>
+                  {filteredPlanningClasses.map((cls) => (
+                    <option key={cls.id} value={cls.id}>{`${cls.level?.name || 'Classe'} • ${cls.dayOfWeek} ${cls.startTime}-${cls.endTime}`}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             {planningForm.type === 'room' && (
               <div className="form-group">
                 <label>Salle</label>
@@ -344,9 +382,9 @@ export default function AdminExports() {
             )}
           </div>
           <p style={{ color: '#555', marginBottom: 12 }}>
-            Génère un planning hebdomadaire en PDF. Les classes sont colorées en fonction du type sélectionné.
+            Génère un planning hebdomadaire avec le thème coloré du planning. Choisissez PDF ou Excel.
           </p>
-          <button className="btn btn-primary" onClick={handlePlanningExport} disabled={loading}>{loading ? 'Génération...' : 'Générer planning PDF'}</button>
+          <button className="btn btn-primary" onClick={handlePlanningExport} disabled={loading}>{loading ? 'Génération...' : `Générer planning ${planningForm.format === 'excel' ? 'Excel' : 'PDF'}`}</button>
         </div>
       )}
 

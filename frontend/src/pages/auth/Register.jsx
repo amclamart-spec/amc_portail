@@ -31,6 +31,7 @@ export default function Register() {
     if (!form.firstName.trim()) e.firstName = 'Prénom requis';
     if (!form.lastName.trim()) e.lastName = 'Nom requis';
     if (!form.email.trim()) e.email = 'Email requis';
+    if (!form.phone.trim()) e.phone = 'Téléphone requis';
     if (form.password.length < 8) e.password = 'Minimum 8 caractères';
     if (!/[A-Z]/.test(form.password)) e.password = 'Au moins une majuscule requise';
     if (!/[0-9]/.test(form.password)) e.password = 'Au moins un chiffre requis';
@@ -160,8 +161,9 @@ export default function Register() {
             </div>
 
             <div className="form-group">
-              <label>Téléphone</label>
-              <input type="tel" className="form-control" placeholder="06 XX XX XX XX" value={form.phone} onChange={handleChange('phone')} />
+              <label>Téléphone <span className="required">*</span></label>
+              <input type="tel" className={`form-control ${errors.phone ? 'error' : ''}`} placeholder="06 XX XX XX XX" value={form.phone} onChange={handleChange('phone')} required />
+              {errors.phone && <div className="form-error">{errors.phone}</div>}
             </div>
 
             <div className="form-group">

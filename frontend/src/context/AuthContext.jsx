@@ -12,6 +12,7 @@ export function AuthProvider({ children }) {
     return stored ? JSON.parse(stored) : null;
   });
   const [loading, setLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   const navigate = useNavigate();
 
   const isAuthenticated = !!user;
@@ -105,10 +106,19 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    if (localStorage.getItem('amc_access_token') && !user) {
-      fetchUser();
-    }
+    const initialize = async () => {
+      if (localStorage.getItem('amc_access_token') && !user) {
+        await fetchUser();
+      }
+      setInitialized(true);
+    };
+
+    initialize();
   }, [fetchUser, user]);
+
+  if (!initialized) {
+    return null;
+  }
 
   return (
     <AuthContext.Provider value={{

@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import FloatingChatbot from './FloatingChatbot';
 import {
   FiHome,
   FiUsers,
@@ -14,6 +15,7 @@ import {
   FiCreditCard,
   FiShield,
   FiCalendar,
+  FiMessageSquare,
 } from 'react-icons/fi';
 import { useState } from 'react';
 import { ROLE_LABEL } from '../utils/roles';
@@ -41,6 +43,7 @@ const navSectionsByRole = {
         { path: '/admin/professeurs', icon: FiUser, label: 'Professeurs' },
         { path: '/admin/salles', icon: FiHome, label: 'Salles' },
         { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
+        { path: '/admin/planning', icon: FiCalendar, label: 'Planning' },
       ],
     },
     {
@@ -56,7 +59,8 @@ const navSectionsByRole = {
     {
       title: 'Communication',
       items: [
-        { icon: FiClipboard, label: 'Envoyer un message', disabled: true },
+        { path: '/admin/mailing', icon: FiClipboard, label: 'Mailing' },
+        { path: '/admin/chat', icon: FiMessageSquare, label: 'Chat' },
         { icon: FiClipboard, label: 'Messages envoyés', disabled: true },
         { icon: FiClipboard, label: 'Templates d\'emails', disabled: true },
         { icon: FiClipboard, label: 'Statistiques SMS', disabled: true },
@@ -86,7 +90,6 @@ const navSectionsByRole = {
       items: [
         { path: '/admin/exports', icon: FiBookOpen, label: 'Listes élèves' },
         { path: '/admin/exports', icon: FiClipboard, label: 'Feuilles présence' },
-        { path: '/admin/exports', icon: FiCalendar, label: 'Planning' },
         { path: '/admin/exports', icon: FiBarChart2, label: 'Comptabilité' },
       ],
     },
@@ -113,6 +116,7 @@ const navSectionsByRole = {
         { path: '/admin/professeurs', icon: FiUser, label: 'Professeurs' },
         { path: '/admin/salles', icon: FiHome, label: 'Salles' },
         { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
+        { path: '/admin/planning', icon: FiCalendar, label: 'Planning' },
       ],
     },
     {
@@ -128,7 +132,8 @@ const navSectionsByRole = {
     {
       title: 'Communication',
       items: [
-        { icon: FiClipboard, label: 'Envoyer un message', disabled: true },
+        { path: '/admin/mailing', icon: FiClipboard, label: 'Mailing' },
+        { path: '/admin/chat', icon: FiMessageSquare, label: 'Chat' },
         { icon: FiClipboard, label: 'Messages envoyés', disabled: true },
         { icon: FiClipboard, label: 'Templates d\'emails', disabled: true },
         { icon: FiClipboard, label: 'Statistiques SMS', disabled: true },
@@ -158,7 +163,6 @@ const navSectionsByRole = {
       items: [
         { path: '/admin/exports', icon: FiBookOpen, label: 'Listes élèves' },
         { path: '/admin/exports', icon: FiClipboard, label: 'Feuilles présence' },
-        { path: '/admin/exports', icon: FiCalendar, label: 'Planning' },
         { path: '/admin/exports', icon: FiBarChart2, label: 'Comptabilité' },
       ],
     },
@@ -241,7 +245,7 @@ export default function Layout({ children }) {
                 {section.title}
               </div>
 
-              {section.items.map((item) => {
+              {section.items.map((item, idx) => {
                 const Icon = item.icon;
                 const isActive = item.path && (location.pathname === item.path || location.pathname.startsWith(`${item.path}/`));
                 const itemStyles = {
@@ -256,10 +260,11 @@ export default function Layout({ children }) {
                   cursor: item.disabled ? 'default' : 'pointer',
                   opacity: item.disabled ? 0.65 : 1,
                 };
+                const itemKey = `${section.title}-${item.path || item.label}-${idx}`;
 
                 if (item.disabled || !item.path) {
                   return (
-                    <div key={`${item.label}-${item.icon?.name || 'item'}`} style={itemStyles}>
+                    <div key={itemKey} style={itemStyles}>
                       <Icon size={18} />
                       {item.label}
                     </div>
@@ -268,7 +273,7 @@ export default function Layout({ children }) {
 
                 return (
                   <Link
-                    key={item.path}
+                    key={itemKey}
                     to={item.path}
                     onClick={() => setSidebarOpen(false)}
                     style={itemStyles}
@@ -326,6 +331,8 @@ export default function Layout({ children }) {
           .menu-toggle { display: none !important; }
         }
       `}</style>
+      
+      {user && user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN' && <FloatingChatbot />}
     </div>
   );
 }

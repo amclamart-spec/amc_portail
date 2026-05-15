@@ -10,6 +10,11 @@ export default function AdminEnrollments() {
   const [editingEnrollment, setEditingEnrollment] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [recordModalOpen, setRecordModalOpen] = useState(false);
+  const [recordStudent, setRecordStudent] = useState(null);
+  const [recordData, setRecordData] = useState({ absences: [], notes: [] });
+  const [recordTab, setRecordTab] = useState('absences');
+  const [recordLoading, setRecordLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,7 +50,15 @@ export default function AdminEnrollments() {
 
   const getPhotoSource = (photoUrl) => {
     if (!photoUrl) return null;
-    return photoUrl.startsWith('http') ? photoUrl : `${BACKEND_ORIGIN}${photoUrl}`;
+    if (photoUrl.startsWith('http')) return photoUrl;
+    const normalizedPhotoUrl = photoUrl.startsWith('/uploads') ? photoUrl : `/uploads/${photoUrl}`;
+    return `${BACKEND_ORIGIN}${normalizedPhotoUrl}`;
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '—';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('fr-FR', { year: 'numeric', month: '2-digit', day: '2-digit' });
   };
 
   const handleStatusChange = (enrollmentId, value) => {
@@ -102,6 +115,7 @@ export default function AdminEnrollments() {
         allergies: enrollment.student?.allergies || '',
         currentTreatments: enrollment.student?.currentTreatments || '',
         photoUrl: enrollment.student?.photoUrl || '',
+        photoBase64: '',
       },
       family: {
         familyName: enrollment.student?.family?.familyName || '',
@@ -159,6 +173,19 @@ export default function AdminEnrollments() {
         [field]: value,
       },
     }));
+  };
+
+  const handlePhotoChange = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        updateEditForm('student', 'photoBase64', e.target.result);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      updateEditForm('student', 'photoBase64', '');
+    }
   };
 
   const updateHealthFormArray = (arrayField, index, field, value) => {
@@ -288,6 +315,33 @@ export default function AdminEnrollments() {
     setEditForm(null);
   };
 
+  const closeRecordModal = () => {
+    setRecordModalOpen(false);
+    setRecordStudent(null);
+    setRecordData({ absences: [], notes: [] });
+    setRecordTab('absences');
+  };
+
+  const openRecordModal = async (student) => {
+    if (!student?.id) return;
+    setRecordLoading(true);
+    setRecordModalOpen(true);
+    setRecordStudent(student);
+    setRecordData({ absences: [], notes: [] });
+    setRecordTab('absences');
+
+    try {
+      const { data } = await api.get(`/admin/students/${student.id}/record`);
+      setRecordStudent(data.student || student);
+      setRecordData({ absences: data.absences || [], notes: data.notes || [] });
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Impossible de charger la fiche élève');
+      closeRecordModal();
+    } finally {
+      setRecordLoading(false);
+    }
+  };
+
   const overlayStyle = {
     position: 'fixed',
     top: 0,
@@ -346,8 +400,13 @@ export default function AdminEnrollments() {
                       <td>{e.class?.dayOfWeek} {e.class?.startTime}-{e.class?.endTime}</td>
                       <td>{e.schoolYear?.label}</td>
                       <td>{statusBadge(selectedStatus)}</td>
-                      <td style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <select value={selectedStatus} onChange={(event) => handleStatusChange(e.id, event.target.value)}>
+                      <td className="table-actions" style={{ justifyContent: 'flex-end' }}>
+                        <select
+                          className="form-control"
+                          value={selectedStatus}
+                          onChange={(event) => handleStatusChange(e.id, event.target.value)}
+                          style={{ minWidth: 140, maxWidth: 160 }}
+                        >
                           <option value="PENDING">En attente</option>
                           <option value="CONFIRMED">Confirmée</option>
                           <option value="CANCELLED">Annulée</option>
@@ -358,13 +417,23 @@ export default function AdminEnrollments() {
                           type="button"
                           disabled={selectedStatus === e.status}
                           onClick={() => saveStatus(e)}
+                          style={{ minWidth: 90 }}
                         >
                           Enregistrer
                         </button>
                         <button
                           className="btn btn-outline btn-sm"
                           type="button"
+                          onClick={() => openRecordModal(e.student)}
+                          style={{ minWidth: 72 }}
+                        >
+                          Fiche
+                        </button>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          type="button"
                           onClick={() => openEditModal(e)}
+                          style={{ minWidth: 88 }}
                         >
                           Modifier
                         </button>
@@ -387,9 +456,9 @@ export default function AdminEnrollments() {
                 <p style={{ margin: '6px 0 0', color: '#6B7280' }}>Mettre à jour les informations d’inscription, famille, élève et fiche sanitaire.</p>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                {editForm.student?.photoUrl && (
+                {(editForm.student?.photoBase64 || editForm.student?.photoUrl) && (
                   <img
-                    src={getPhotoSource(editForm.student.photoUrl)}
+                    src={editForm.student.photoBase64 || getPhotoSource(editForm.student.photoUrl)}
                     alt={`${editForm.student.firstName} ${editForm.student.lastName}`}
                     style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 12, border: '1px solid #E2E8F0' }}
                   />
@@ -572,6 +641,20 @@ export default function AdminEnrollments() {
                     value={editForm.student.currentTreatments}
                     onChange={(event) => updateEditForm('student', 'currentTreatments', event.target.value)}
                   />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Photo</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="form-control"
+                    onChange={handlePhotoChange}
+                  />
+                  {editForm.student.photoBase64 && (
+                    <small style={{ color: '#6B7280', marginTop: 4, display: 'block' }}>
+                      Nouvelle photo sélectionnée
+                    </small>
+                  )}
                 </div>
               </div>
             </div>
@@ -807,6 +890,118 @@ export default function AdminEnrollments() {
               <button type="button" className="btn btn-outline" onClick={closeModal}>Annuler</button>
               <button type="button" className="btn btn-primary" onClick={saveEnrollment}>Enregistrer</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {recordModalOpen && (
+        <div className="modal-overlay">
+          <div className="card modal-card">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 16 }}>
+              <div>
+                <h3>Fiche élève</h3>
+                <p style={{ margin: '6px 0 0', color: '#6B7280' }}>{recordStudent?.firstName} {recordStudent?.lastName}</p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {recordStudent?.photoUrl && (
+                  <img
+                    src={getPhotoSource(recordStudent.photoUrl)}
+                    alt={`${recordStudent.firstName} ${recordStudent.lastName}`}
+                    style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 12, border: '1px solid #E2E8F0' }}
+                  />
+                )}
+                <button type="button" className="btn btn-outline btn-sm" onClick={closeRecordModal}>Fermer</button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${recordTab === 'absences' ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setRecordTab('absences')}
+              >
+                Absences
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${recordTab === 'notes' ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setRecordTab('notes')}
+              >
+                Notes
+              </button>
+              {recordTab === 'absences' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', backgroundColor: '#FEF3C7', borderRadius: 8, border: '1px solid #FCD34D', marginLeft: 'auto' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--amc-primary)' }}>
+                      {recordData.absences.length}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>
+                      absences année en cours
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {recordLoading ? (
+              <p style={{ marginTop: 20 }}>Chargement de la fiche...</p>
+            ) : (
+              <div style={{ marginTop: 20 }}>
+                {recordTab === 'absences' ? (
+                  <div>
+                    <h4>Absences</h4>
+                    {recordData.absences.length === 0 ? (
+                      <p>Aucune absence enregistrée.</p>
+                    ) : (
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Date</th>
+                            <th>Motif</th>
+                            <th>Statut</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {recordData.absences.map((absence) => (
+                            <tr key={absence.id}>
+                              <td>{formatDate(absence.date)}</td>
+                              <td>{absence.reason || '—'}</td>
+                              <td>{absence.status || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <h4>Notes</h4>
+                    {recordData.notes.length === 0 ? (
+                      <p>Aucune note enregistrée.</p>
+                    ) : (
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Date</th>
+                            <th>Classe</th>
+                            <th>Note / appréciation</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {recordData.notes.map((note) => (
+                            <tr key={note.id}>
+                              <td>{formatDate(note.date)}</td>
+                              <td>{note.classLabel || '—'}</td>
+                              <td>{note.grade != null ? note.grade : note.appreciation || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

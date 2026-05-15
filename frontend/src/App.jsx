@@ -24,6 +24,9 @@ import AdminClasses from './pages/admin/Classes';
 import AdminClassDetails from './pages/admin/ClassDetails';
 import AdminTeachers from './pages/admin/Teachers';
 import AdminExports from './pages/admin/Exports';
+import AdminMailing from './pages/admin/Mailing';
+import AdminPlanning from './pages/admin/Planning';
+import AdminChat from './pages/admin/Chat';
 
 import TresorierDashboard from './pages/tresorier/Dashboard';
 import TresorierPayments from './pages/tresorier/Payments';
@@ -37,6 +40,7 @@ import FamilyEnrollment from './pages/family/Enrollment';
 import FamilyProfile from './pages/family/Profile';
 import FamilyPayments from './pages/family/Payments';
 import FamilyPedagogy from './pages/family/SuiviPedagogique';
+import FamilyChat from './pages/family/Chat';
 
 function App() {
   const { isAuthenticated, user } = useAuth();
@@ -65,6 +69,9 @@ function App() {
       <Route path="/admin/classes/:id" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminClassDetails /></Layout></PrivateRoute>} />
       <Route path="/admin/professeurs" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminTeachers /></Layout></PrivateRoute>} />
       <Route path="/admin/exports" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminExports /></Layout></PrivateRoute>} />
+      <Route path="/admin/planning" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminPlanning /></Layout></PrivateRoute>} />
+      <Route path="/admin/chat" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminChat /></Layout></PrivateRoute>} />
+      <Route path="/admin/mailing" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminMailing /></Layout></PrivateRoute>} />
 
       {/* Alias historiques */}
       <Route path="/admin/rooms" element={<Navigate to="/admin/salles" replace />} />
@@ -78,6 +85,7 @@ function App() {
       <Route path="/suivi-pedagogique" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><SuiviPedagogique /></Layout></PrivateRoute>} />
 
       <Route path="/famille" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyDashboard /></Layout></PrivateRoute>} />
+      <Route path="/famille/chat" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyChat /></Layout></PrivateRoute>} />
       <Route path="/famille/enfants" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyChildren /></Layout></PrivateRoute>} />
       <Route path="/famille/inscription" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyEnrollment /></Layout></PrivateRoute>} />
       <Route path="/famille/inscription/nouveau" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyRegistrationWizard existingFamily /></Layout></PrivateRoute>} />

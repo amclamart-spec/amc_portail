@@ -149,6 +149,37 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   }, [existingFamily, user, wizard.account.email]);
 
   useEffect(() => {
+    if (!prefill?.email) return;
+
+    setWizard((prev) => {
+      const account = {
+        ...prev.account,
+        firstName: prev.account.firstName || prefill.firstName || '',
+        lastName: prev.account.lastName || prefill.lastName || '',
+        email: prev.account.email || prefill.email || '',
+        phone: prev.account.phone || prefill.phone || '',
+        password: prev.account.password || prefill.password || '',
+      };
+
+      const address = {
+        ...prev.address,
+        familyName: prev.address.familyName || prefill.lastName || '',
+        phonePrimary: prev.address.phonePrimary || prefill.phone || '',
+      };
+
+      if (account === prev.account && address === prev.address) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        account,
+        address,
+      };
+    });
+  }, [prefill]);
+
+  useEffect(() => {
     api.get('/enrollments/poles').then(({ data }) => setPoles(data.poles || [])).catch(() => {});
     setLoadingClasses(true);
     api.get('/enrollments/classes')
@@ -201,12 +232,16 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     if (!existingFamily && step === 0) {
       const a = wizard.address;
       const account = wizard.account;
-      if (!account.firstName || !account.lastName || !account.email || !account.password) {
-        toast.error('Veuillez compléter les informations de compte (nom, email, mot de passe)');
+      if (!account.firstName || !account.lastName || !account.email || !account.phone || !account.password) {
+        toast.error('Veuillez compléter les informations de compte (nom, email, téléphone, mot de passe)');
         return false;
       }
       if (!isEmailValid(account.email)) {
         toast.error('Veuillez saisir un email valide');
+        return false;
+      }
+      if (!account.phone.trim()) {
+        toast.error('Le téléphone est obligatoire');
         return false;
       }
       if (account.password.length < 8 || !/[A-Z]/.test(account.password) || !/[0-9]/.test(account.password)) {
@@ -217,8 +252,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         toast.error('Les mots de passe ne correspondent pas');
         return false;
       }
-      if (!a.addressLine1 || !a.postalCode || !a.city || !a.country || !a.phonePrimary) {
-        toast.error('Veuillez compléter adresse, pays et téléphone principal');
+      if (!a.addressLine1 || !a.postalCode || !a.city || !a.country) {
+        toast.error('Veuillez compléter l’adresse et le pays');
         return false;
       }
     }
@@ -493,16 +528,6 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             </div>
 
             <h3 style={{ marginTop: 24 }}>Adresse et téléphones</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div className="form-group">
-                <label>Nom de famille *</label>
-                <input className="form-control" value={wizard.address.familyName} onChange={(e) => updateWizard('address', { familyName: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Téléphone principal *</label>
-                <input className="form-control" value={wizard.address.phonePrimary} onChange={(e) => updateWizard('address', { phonePrimary: e.target.value })} />
-              </div>
-            </div>
             <div className="form-group"><label>Adresse *</label><input className="form-control" value={wizard.address.addressLine1} onChange={(e) => updateWizard('address', { addressLine1: e.target.value })} /></div>
             <div className="form-group"><label>Complément</label><input className="form-control" value={wizard.address.addressLine2} onChange={(e) => updateWizard('address', { addressLine2: e.target.value })} /></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', gap: 12 }}>
