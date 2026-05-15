@@ -1,0 +1,1877 @@
+const bcrypt = require('bcryptjs');
+const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
+const { PrismaClient } = require('@prisma/client');
+const { v4: uuidv4 } = require('uuid');
+const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendMail } = require('../services/emailService');
+const { savePhotoBase64 } = require('../utils/photoUtils');
+
+const prisma = new PrismaClient();
+
+const DAYS = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI', 'DIMANCHE'];
+
+function parseTimeToMinutes(value) {
+  if (!value || !/^\d{2}:\d{2}$/.test(value)) return null;
+  const [hours, minutes] = value.split(':').map((v) => Number(v));
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function overlaps(startA, endA, startB, endB) {
+  return startA < endB && endA > startB;
+}
+
+function classFillIndicator(enrolledCount, capacity) {
+  if (!capacity) return { color: 'green', label: '🟢' };
+  const ratio = enrolledCount / capacity;
+  if (ratio >= 1) return { color: 'red', label: '🔴' };
+  if (ratio >= 0.75) return { color: 'orange', label: '🟠' };
+  return { color: 'green', label: '🟢' };
+}
+
+async function validateTimeSlotOverlap({ dayOfWeek, startTime, endTime, roomId, excludeId }) {
+  const start = parseTimeToMinutes(startTime);
+  const end = parseTimeToMinutes(endTime);
+
+  if (!DAYS.includes(dayOfWeek)) {
+    return 'Le jour est invalide';
+  }
+
+  if (start === null || end === null || start >= end) {
+    return "L'horaire est invalide (heure de début/fin)";
+  }
+
+  const existing = await prisma.timeSlot.findMany({
+    where: {
+      roomId,
+      dayOfWeek,
+      ...(excludeId ? { NOT: { id: excludeId } } : {}),
+    },
+    select: { id: true, startTime: true, endTime: true },
+  });
+
+  for (const slot of existing) {
+    const currentStart = parseTimeToMinutes(slot.startTime);
+    const currentEnd = parseTimeToMinutes(slot.endTime);
+    if (currentStart === null || currentEnd === null) continue;
+    if (overlaps(start, end, currentStart, currentEnd)) {
+      return 'Chevauchement détecté : la salle est déjà occupée sur ce créneau';
+    }
+  }
+
+  return null;
+}
+
+async function validateClassConflicts({ classId, schoolYearId, teacherId, roomId, dayOfWeek, startTime, endTime }) {
+  const start = parseTimeToMinutes(startTime);
+  const end = parseTimeToMinutes(endTime);
+
+  const whereBase = {
+    schoolYearId,
+    dayOfWeek,
+    ...(classId ? { NOT: { id: classId } } : {}),
+  };
+
+  if (roomId) {
+    const roomClasses = await prisma.class.findMany({
+      where: { ...whereBase, roomId },
+      select: { id: true, startTime: true, endTime: true },
+    });
+
+    for (const cls of roomClasses) {
+      const clsStart = parseTimeToMinutes(cls.startTime);
+      const clsEnd = parseTimeToMinutes(cls.endTime);
+      if (clsStart !== null && clsEnd !== null && overlaps(start, end, clsStart, clsEnd)) {
+        return 'Chevauchement détecté : la salle est déjà utilisée pour ce créneau';
+      }
+    }
+  }
+
+  if (teacherId) {
+    const teacherClasses = await prisma.class.findMany({
+      where: { ...whereBase, teacherId },
+      select: { id: true, startTime: true, endTime: true },
+    });
+
+    for (const cls of teacherClasses) {
+      const clsStart = parseTimeToMinutes(cls.startTime);
+      const clsEnd = parseTimeToMinutes(cls.endTime);
+      if (clsStart !== null && clsEnd !== null && overlaps(start, end, clsStart, clsEnd)) {
+        return 'Chevauchement détecté : le professeur est déjà affecté à ce créneau';
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * GET /api/admin/users/pending
+ */
+async function getPendingUsers(req, res) {
+  try {
+    const users = await prisma.user.findMany({
+      where: { validationStatus: 'PENDING' },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        role: true,
+        createdAt: true,
+        emailVerified: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ users });
+  } catch (error) {
+    console.error('Erreur getPendingUsers:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * GET /api/admin/users
+ */
+async function getAllUsers(req, res) {
+  try {
+    const { status, role, page = 1, limit = 20 } = req.query;
+    const where = {};
+    if (status) where.validationStatus = status;
+    if (role) where.role = role;
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          role: true,
+          validationStatus: true,
+          emailVerified: true,
+          createdAt: true,
+          lastLogin: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (parseInt(page, 10) - 1) * parseInt(limit, 10),
+        take: parseInt(limit, 10),
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    res.json({ users, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
+  } catch (error) {
+    console.error('Erreur getAllUsers:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/users/:id/approve
+ */
+async function approveUser(req, res) {
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: { id: req.params.id },
+        data: { validationStatus: 'APPROVED' },
+      });
+
+      let teacher = null;
+      if (user.role === 'PROFESSEUR') {
+        teacher = await tx.teacher.findUnique({ where: { userId: user.id } });
+        if (!teacher) {
+          teacher = await tx.teacher.create({
+            data: {
+              userId: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              email: user.email,
+              phone: user.phone,
+            },
+          });
+        }
+      }
+
+      return { user, teacher };
+    });
+
+    await sendAccountApprovedEmail(result.user);
+    res.json({
+      message: 'Compte validé avec succès',
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        validationStatus: result.user.validationStatus,
+      },
+    });
+  } catch (error) {
+    console.error('Erreur approveUser:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/users/:id/reject
+ */
+async function rejectUser(req, res) {
+  try {
+    const { reason } = req.body;
+    const user = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { validationStatus: 'REJECTED' },
+    });
+    await sendAccountRejectedEmail(user, reason);
+    res.json({ message: 'Compte refusé', user: { id: user.id, email: user.email, validationStatus: user.validationStatus } });
+  } catch (error) {
+    console.error('Erreur rejectUser:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * GET /api/admin/stats
+ */
+async function getStats(req, res) {
+  try {
+    const [totalUsers, pendingUsers, totalFamilies, totalStudents, totalEnrollments, schoolYears] = await Promise.all([
+      prisma.user.count(),
+      prisma.user.count({ where: { validationStatus: 'PENDING' } }),
+      prisma.family.count(),
+      prisma.student.count(),
+      prisma.enrollment.count(),
+      prisma.schoolYear.findMany({ orderBy: { startDate: 'desc' }, take: 5 }),
+    ]);
+
+    res.json({
+      stats: {
+        totalUsers,
+        pendingUsers,
+        totalFamilies,
+        totalStudents,
+        totalEnrollments,
+      },
+      schoolYears,
+    });
+  } catch (error) {
+    console.error('Erreur getStats:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * GET /api/admin/enrollments
+ */
+async function getEnrollments(req, res) {
+  try {
+    const { schoolYearId, status, page = 1, limit = 20 } = req.query;
+    const where = {};
+    if (schoolYearId) where.schoolYearId = schoolYearId;
+    if (status) where.status = status;
+
+    const studentHealthFormsInclude = schoolYearId
+      ? { where: { schoolYearId }, include: { emergencyContacts: true, pickupAuthorizations: true } }
+      : { include: { emergencyContacts: true, pickupAuthorizations: true } };
+
+    const studentConsentsInclude = schoolYearId
+      ? { where: { schoolYearId, consentType: 'SANITARY_FORM' } }
+      : { where: { consentType: 'SANITARY_FORM' } };
+
+    const [enrollments, total] = await Promise.all([
+      prisma.enrollment.findMany({
+        where,
+        include: {
+          student: {
+            include: {
+              family: true,
+              healthForms: studentHealthFormsInclude,
+              enrollmentConsents: studentConsentsInclude,
+            },
+          },
+          class: {
+            include: {
+              level: { include: { pole: true } },
+            },
+          },
+          schoolYear: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (parseInt(page, 10) - 1) * parseInt(limit, 10),
+        take: parseInt(limit, 10),
+      }),
+      prisma.enrollment.count({ where }),
+    ]);
+
+    res.json({ enrollments, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
+  } catch (error) {
+    console.error('Erreur getEnrollments:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+function formatClassLabel(cls) {
+  if (!cls) return null;
+  const poleName = cls.level?.pole?.name;
+  const levelName = cls.level?.name;
+  return [poleName, levelName].filter(Boolean).join(' - ');
+}
+
+async function getStudentAcademicRecord(req, res) {
+  try {
+    const { studentId } = req.params;
+    if (!studentId) {
+      return res.status(400).json({ error: 'studentId est requis' });
+    }
+
+    const student = await prisma.student.findUnique({
+      where: { id: studentId },
+      include: {
+        enrollments: {
+          where: { status: 'CONFIRMED' },
+          include: {
+            class: {
+              include: {
+                level: { include: { pole: true } },
+                schoolYear: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({ error: 'Élève introuvable' });
+    }
+
+    const classIds = student.enrollments.map((enrollment) => enrollment.classId).filter(Boolean);
+
+    const absences = classIds.length > 0
+      ? await prisma.evaluation.findMany({
+          where: {
+            studentId,
+            status: 'missing',
+            lesson: { classId: { in: classIds } },
+          },
+          include: {
+            lesson: {
+              include: {
+                class: {
+                  include: {
+                    level: { include: { pole: true } },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: [{ lesson: { date: 'desc' } }],
+        })
+      : [];
+
+    const notes = classIds.length > 0
+      ? await prisma.evaluation.findMany({
+          where: {
+            studentId,
+            NOT: { status: 'missing' },
+            lesson: { classId: { in: classIds } },
+          },
+          include: {
+            lesson: {
+              include: {
+                class: {
+                  include: {
+                    level: { include: { pole: true } },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: [{ lesson: { date: 'desc' } }],
+        })
+      : [];
+
+    const formattedAbsences = absences.map((evaluation) => ({
+      id: evaluation.id,
+      date: evaluation.lesson?.date || null,
+      lessonTitle: evaluation.lesson?.title || null,
+      classLabel: formatClassLabel(evaluation.lesson?.class),
+      status: evaluation.status,
+      justification: evaluation.justification,
+      grade: evaluation.grade,
+      appreciation: evaluation.appreciation,
+    }));
+
+    const formattedNotes = notes
+      .filter((evaluation) => evaluation.grade !== null || evaluation.appreciation !== null)
+      .map((evaluation) => ({
+        id: evaluation.id,
+        date: evaluation.lesson?.date || null,
+        lessonTitle: evaluation.lesson?.title || null,
+        classLabel: formatClassLabel(evaluation.lesson?.class),
+        status: evaluation.status,
+        grade: evaluation.grade,
+        appreciation: evaluation.appreciation,
+      }));
+
+    return res.json({
+      student: {
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        photoUrl: student.photoUrl || null,
+      },
+      absences: formattedAbsences,
+      notes: formattedNotes,
+    });
+  } catch (error) {
+    console.error('Erreur getStudentAcademicRecord:', error);
+    res.status(500).json({ error: 'Impossible de charger la fiche élève' });
+  }
+}
+
+async function updateEnrollment(req, res) {
+  try {
+    const { id } = req.params;
+    const { status, classId, schoolYearId, student, family, healthForm, comment } = req.body;
+    const allowedStatuses = ['PENDING', 'CONFIRMED', 'CANCELLED', 'ARCHIVED'];
+
+    if (status && !allowedStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Statut d’inscription invalide' });
+    }
+
+    const enrollment = await prisma.enrollment.findUnique({
+      where: { id },
+      include: {
+        class: true,
+        student: { include: { family: true, healthForms: true } },
+      },
+    });
+    if (!enrollment) {
+      return res.status(404).json({ error: 'Inscription introuvable' });
+    }
+
+    const currentStatus = enrollment.status;
+    const targetStatus = status || currentStatus;
+    const classChanged = classId && classId !== enrollment.classId;
+    const enrollmentUpdates = {};
+
+    if (status) {
+      enrollmentUpdates.status = status;
+      if (status === 'CONFIRMED') {
+        enrollmentUpdates.confirmedAt = new Date();
+        enrollmentUpdates.cancelledAt = null;
+      } else if (status === 'CANCELLED') {
+        enrollmentUpdates.cancelledAt = new Date();
+        enrollmentUpdates.confirmedAt = null;
+      } else {
+        enrollmentUpdates.confirmedAt = null;
+        enrollmentUpdates.cancelledAt = null;
+      }
+    }
+
+    if (classChanged) {
+      enrollmentUpdates.classId = classId;
+    }
+    if (schoolYearId && schoolYearId !== enrollment.schoolYearId) {
+      enrollmentUpdates.schoolYearId = schoolYearId;
+    }
+    if (comment !== undefined) {
+      enrollmentUpdates.comment = comment;
+    }
+
+    const studentUpdates = {};
+    if (student) {
+      if (student.firstName !== undefined) studentUpdates.firstName = student.firstName;
+      if (student.lastName !== undefined) studentUpdates.lastName = student.lastName;
+      if (student.dateOfBirth !== undefined) {
+        studentUpdates.dateOfBirth = student.dateOfBirth ? new Date(student.dateOfBirth) : null;
+      }
+      if (student.gender !== undefined) studentUpdates.gender = student.gender;
+      if (student.allergies !== undefined) studentUpdates.allergies = student.allergies;
+      if (student.currentTreatments !== undefined) studentUpdates.currentTreatments = student.currentTreatments;
+      if (student.photoBase64 !== undefined) {
+        studentUpdates.photoUrl = student.photoBase64 ? savePhotoBase64(student.photoBase64) : null;
+      }
+    }
+
+    const familyUpdates = {};
+    if (family) {
+      if (family.familyName !== undefined) familyUpdates.familyName = family.familyName;
+      if (family.addressLine1 !== undefined) familyUpdates.addressLine1 = family.addressLine1;
+      if (family.addressLine2 !== undefined) familyUpdates.addressLine2 = family.addressLine2;
+      if (family.postalCode !== undefined) familyUpdates.postalCode = family.postalCode;
+      if (family.city !== undefined) familyUpdates.city = family.city;
+      if (family.country !== undefined) familyUpdates.country = family.country;
+      if (family.phonePrimary !== undefined) familyUpdates.phonePrimary = family.phonePrimary;
+      if (family.phoneSecondary !== undefined) familyUpdates.phoneSecondary = family.phoneSecondary;
+    }
+
+    let newClass = null;
+    if (classChanged) {
+      newClass = await prisma.class.findUnique({ where: { id: classId } });
+      if (!newClass) {
+        return res.status(404).json({ error: 'Classe introuvable' });
+      }
+    }
+
+    const classTransactions = [];
+    const shouldIncrementNewClass = targetStatus === 'CONFIRMED' && (currentStatus !== 'CONFIRMED' || classChanged);
+    const shouldDecrementOldClass = currentStatus === 'CONFIRMED' && (targetStatus !== 'CONFIRMED' || classChanged);
+
+    if (shouldIncrementNewClass) {
+      const targetClass = classChanged ? newClass : enrollment.class;
+      if (targetClass.enrolledCount >= targetClass.capacity) {
+        return res.status(400).json({ error: 'Impossible de confirmer l’inscription : la classe est complète' });
+      }
+      classTransactions.push({
+        where: { id: targetClass.id },
+        data: {
+          enrolledCount: { increment: 1 },
+          status: targetClass.enrolledCount + 1 >= targetClass.capacity ? 'FULL' : 'OPEN',
+        },
+      });
+    }
+
+    if (shouldDecrementOldClass) {
+      classTransactions.push({
+        where: { id: enrollment.classId },
+        data: {
+          enrolledCount: { decrement: 1 },
+          status: 'OPEN',
+        },
+      });
+    }
+
+    const targetSchoolYearId = schoolYearId || enrollment.schoolYearId;
+    const healthFormData = healthForm || null;
+    let healthFormAction = null;
+    let healthFormId = null;
+
+    if (healthFormData) {
+      const existingHealthForm = await prisma.studentHealthForm.findFirst({
+        where: { studentId: enrollment.studentId, schoolYearId: targetSchoolYearId },
+      });
+
+      const signedAt = healthFormData.signedAt ? new Date(healthFormData.signedAt) : null;
+      if (healthFormData.signedAt && Number.isNaN(signedAt.getTime())) {
+        return res.status(400).json({ error: 'Date de signature de la fiche sanitaire invalide' });
+      }
+
+      const healthFormPayload = {
+        studentId: enrollment.studentId,
+        schoolYearId: targetSchoolYearId,
+        hasChronicDisease: Boolean(healthFormData.hasChronicDisease),
+        chronicDiseaseDetails: healthFormData.chronicDiseaseDetails || null,
+        hasMedicalTreatment: Boolean(healthFormData.hasMedicalTreatment),
+        medicalTreatmentDetails: healthFormData.medicalTreatmentDetails || null,
+        hasAllergy: Boolean(healthFormData.hasAllergy),
+        allergyDetails: healthFormData.allergyDetails || null,
+        hasDisability: Boolean(healthFormData.hasDisability),
+        disabilityDetails: healthFormData.disabilityDetails || null,
+        otherUsefulHealthInfo: healthFormData.otherUsefulHealthInfo || null,
+        canLeaveAloneAfterClass: healthFormData.canLeaveAloneAfterClass,
+        confidentialityAccepted: Boolean(healthFormData.confidentialityAccepted),
+        noMedicationPolicyAccepted: Boolean(healthFormData.noMedicationPolicyAccepted),
+      };
+
+      const emergencyContactsData = Array.isArray(healthFormData.emergencyContacts)
+        ? healthFormData.emergencyContacts
+          .filter((contact) => contact.firstName?.trim() && contact.lastName?.trim() && contact.phone?.trim())
+          .map((contact) => ({
+            firstName: contact.firstName.trim(),
+            lastName: contact.lastName.trim(),
+            relationship: contact.relationship?.trim() || 'Proche',
+            phone: contact.phone.trim(),
+          }))
+        : [];
+
+      const pickupAuthorizedPersonsData = Array.isArray(healthFormData.pickupAuthorizedPersons)
+        ? healthFormData.pickupAuthorizedPersons
+          .filter((person) => person.fullName?.trim() && person.phone?.trim())
+          .map((person) => ({
+            fullName: person.fullName.trim(),
+            relationship: person.relationship?.trim() || 'Proche',
+            phone: person.phone.trim(),
+          }))
+        : [];
+
+      if (existingHealthForm) {
+        healthFormAction = async () => {
+          await prisma.studentHealthForm.update({
+            where: { id: existingHealthForm.id },
+            data: healthFormPayload,
+          });
+          await prisma.emergencyContact.deleteMany({ where: { healthFormId: existingHealthForm.id } });
+          await prisma.pickupAuthorization.deleteMany({ where: { healthFormId: existingHealthForm.id } });
+          if (emergencyContactsData.length > 0) {
+            await prisma.emergencyContact.createMany({ data: emergencyContactsData.map((contact) => ({ ...contact, healthFormId: existingHealthForm.id })) });
+          }
+          if (pickupAuthorizedPersonsData.length > 0) {
+            await prisma.pickupAuthorization.createMany({ data: pickupAuthorizedPersonsData.map((person) => ({ ...person, healthFormId: existingHealthForm.id })) });
+          }
+        };
+      } else {
+        healthFormAction = async () => {
+          const created = await prisma.studentHealthForm.create({
+            data: healthFormPayload,
+          });
+          if (emergencyContactsData.length > 0) {
+            await prisma.emergencyContact.createMany({ data: emergencyContactsData.map((contact) => ({ ...contact, healthFormId: created.id })) });
+          }
+          if (pickupAuthorizedPersonsData.length > 0) {
+            await prisma.pickupAuthorization.createMany({ data: pickupAuthorizedPersonsData.map((person) => ({ ...person, healthFormId: created.id })) });
+          }
+        };
+      }
+    }
+
+    const actions = [];
+    if (Object.keys(studentUpdates).length > 0) {
+      actions.push(prisma.student.update({ where: { id: enrollment.studentId }, data: studentUpdates }));
+    }
+    if (Object.keys(familyUpdates).length > 0) {
+      actions.push(prisma.family.update({ where: { id: enrollment.student.familyId }, data: familyUpdates }));
+    }
+    if (Object.keys(enrollmentUpdates).length > 0) {
+      actions.push(prisma.enrollment.update({ where: { id }, data: enrollmentUpdates }));
+    }
+    classTransactions.forEach((tx) => actions.push(prisma.class.update(tx)));
+
+    if (healthFormAction) {
+      await healthFormAction();
+    }
+
+    // Update EnrollmentConsent for SANITARY_FORM if relevant fields are provided
+    if (healthFormData && (healthFormData.legalRepresentativeFullName || healthFormData.citySigned || healthFormData.signedAt)) {
+      const consentUpdateData = {};
+      if (healthFormData.legalRepresentativeFullName !== undefined) {
+        consentUpdateData.acceptedByFullName = healthFormData.legalRepresentativeFullName.trim() || null;
+      }
+      if (healthFormData.citySigned !== undefined) {
+        consentUpdateData.citySigned = healthFormData.citySigned.trim() || null;
+      }
+      if (healthFormData.signedAt !== undefined) {
+        const signedAt = healthFormData.signedAt ? new Date(healthFormData.signedAt) : null;
+        if (healthFormData.signedAt && Number.isNaN(signedAt.getTime())) {
+          return res.status(400).json({ error: 'Date de signature invalide' });
+        }
+        consentUpdateData.signedAt = signedAt;
+      }
+
+      if (Object.keys(consentUpdateData).length > 0) {
+        await prisma.enrollmentConsent.updateMany({
+          where: {
+            familyId: enrollment.student.familyId,
+            studentId: enrollment.studentId,
+            schoolYearId: targetSchoolYearId,
+            consentType: 'SANITARY_FORM',
+          },
+          data: consentUpdateData,
+        });
+      }
+    }
+    if (Object.keys(studentUpdates).length > 0) {
+      actions.push(prisma.student.update({ where: { id: enrollment.studentId }, data: studentUpdates }));
+    }
+    if (Object.keys(familyUpdates).length > 0) {
+      actions.push(prisma.family.update({ where: { id: enrollment.student.familyId }, data: familyUpdates }));
+    }
+    if (Object.keys(enrollmentUpdates).length > 0) {
+      actions.push(prisma.enrollment.update({ where: { id }, data: enrollmentUpdates }));
+    }
+    classTransactions.forEach((tx) => actions.push(prisma.class.update(tx)));
+
+    if (actions.length > 0) {
+      await prisma.$transaction(actions);
+    }
+
+    const updated = await prisma.enrollment.findUnique({
+      where: { id },
+      include: {
+        student: {
+          include: {
+            family: true,
+            healthForms: { include: { emergencyContacts: true, pickupAuthorizations: true } },
+            enrollmentConsents: { where: { consentType: 'SANITARY_FORM' } },
+          },
+        },
+        class: { include: { level: { include: { pole: true } } } },
+        schoolYear: true,
+      },
+    });
+
+    res.json({ enrollment: updated });
+  } catch (error) {
+    console.error('Erreur updateEnrollment:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * CRUD Années scolaires
+ */
+async function getSchoolYears(req, res) {
+  try {
+    const years = await prisma.schoolYear.findMany({ orderBy: { startDate: 'desc' } });
+    res.json({ schoolYears: years });
+  } catch (error) {
+    console.error('Erreur getSchoolYears:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createSchoolYear(req, res) {
+  try {
+    const { label, startDate, endDate, isCurrent } = req.body;
+    if (!label || !startDate || !endDate) {
+      return res.status(400).json({ error: 'label, startDate et endDate sont requis' });
+    }
+
+    if (isCurrent) {
+      await prisma.schoolYear.updateMany({ data: { isCurrent: false } });
+    }
+
+    const year = await prisma.schoolYear.create({
+      data: { label, startDate: new Date(startDate), endDate: new Date(endDate), isCurrent: !!isCurrent },
+    });
+    res.status(201).json({ schoolYear: year });
+  } catch (error) {
+    console.error('Erreur createSchoolYear:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * CRUD Poles
+ */
+async function getPoles(req, res) {
+  try {
+    const poles = await prisma.pole.findMany({
+      include: { levels: { orderBy: { sortOrder: 'asc' } }, _count: { select: { classes: true, levels: true } } },
+      orderBy: { sortOrder: 'asc' },
+    });
+    res.json({ poles });
+  } catch (error) {
+    console.error('Erreur getPoles:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createPole(req, res) {
+  try {
+    const { name, description, sortOrder = 0 } = req.body;
+    if (!name) return res.status(400).json({ error: 'Le nom du pôle est requis' });
+
+    const pole = await prisma.pole.create({ data: { name: name.trim(), description, sortOrder: Number(sortOrder) } });
+    res.status(201).json({ pole });
+  } catch (error) {
+    console.error('Erreur createPole:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updatePole(req, res) {
+  try {
+    const { id } = req.params;
+    const { name, description, sortOrder } = req.body;
+
+    const pole = await prisma.pole.update({
+      where: { id },
+      data: {
+        ...(name !== undefined ? { name: String(name).trim() } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
+      },
+    });
+
+    res.json({ pole });
+  } catch (error) {
+    console.error('Erreur updatePole:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deletePole(req, res) {
+  try {
+    const { id } = req.params;
+    const classesCount = await prisma.class.count({ where: { poleId: id } });
+    if (classesCount > 0) {
+      return res.status(400).json({ error: 'Impossible de supprimer un pôle utilisé par des classes' });
+    }
+
+    await prisma.pole.delete({ where: { id } });
+    return res.json({ message: 'Pôle supprimé avec succès' });
+  } catch (error) {
+    console.error('Erreur deletePole:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * CRUD Niveaux
+ */
+async function getLevels(req, res) {
+  try {
+    const { poleId } = req.query;
+    const levels = await prisma.level.findMany({
+      where: poleId ? { poleId } : {},
+      include: { pole: true, _count: { select: { classes: true } } },
+      orderBy: [{ pole: { sortOrder: 'asc' } }, { sortOrder: 'asc' }],
+    });
+
+    res.json({ levels });
+  } catch (error) {
+    console.error('Erreur getLevels:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createLevel(req, res) {
+  try {
+    const { poleId, code, name, description, sortOrder = 0, minAge } = req.body;
+    if (!poleId || !name) {
+      return res.status(400).json({ error: 'poleId et name sont requis' });
+    }
+
+    const levelCode = code && String(code).trim()
+      ? String(code).trim().toUpperCase()
+      : name.normalize('NFD').replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').toUpperCase();
+
+    const level = await prisma.level.create({
+      data: {
+        poleId,
+        code: levelCode,
+        name: String(name).trim(),
+        description,
+        sortOrder: Number(sortOrder),
+        minAge: minAge !== undefined && minAge !== null && minAge !== '' ? Number(minAge) : null,
+      },
+    });
+
+    res.status(201).json({ level });
+  } catch (error) {
+    console.error('Erreur createLevel:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateLevel(req, res) {
+  try {
+    const { id } = req.params;
+    const { poleId, code, name, description, sortOrder, minAge } = req.body;
+
+    const level = await prisma.level.update({
+      where: { id },
+      data: {
+        ...(poleId !== undefined ? { poleId } : {}),
+        ...(code !== undefined ? { code: String(code).trim().toUpperCase() } : {}),
+        ...(name !== undefined ? { name: String(name).trim() } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
+        ...(minAge !== undefined ? { minAge: minAge === '' ? null : Number(minAge) } : {}),
+      },
+      include: { pole: true },
+    });
+
+    res.json({ level });
+  } catch (error) {
+    console.error('Erreur updateLevel:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteLevel(req, res) {
+  try {
+    const { id } = req.params;
+    const classesCount = await prisma.class.count({ where: { levelId: id } });
+    if (classesCount > 0) {
+      return res.status(400).json({ error: 'Impossible de supprimer un niveau déjà utilisé par des classes' });
+    }
+
+    await prisma.level.delete({ where: { id } });
+    return res.json({ message: 'Niveau supprimé avec succès' });
+  } catch (error) {
+    console.error('Erreur deleteLevel:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * CRUD Salles
+ */
+async function getRooms(req, res) {
+  try {
+    const rooms = await prisma.room.findMany({
+      include: {
+        _count: { select: { timeSlots: true, classes: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json({ rooms });
+  } catch (error) {
+    console.error('Erreur getRooms:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createRoom(req, res) {
+  try {
+    const { name, capacity, equipments = [], location, status = 'ACTIVE' } = req.body;
+    if (!name || !capacity) {
+      return res.status(400).json({ error: 'Nom et capacité sont requis' });
+    }
+
+    const room = await prisma.room.create({
+      data: {
+        name: String(name).trim(),
+        capacity: Number(capacity),
+        equipments: Array.isArray(equipments) ? equipments : [],
+        location,
+        status,
+      },
+    });
+
+    res.status(201).json({ room });
+  } catch (error) {
+    console.error('Erreur createRoom:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateRoom(req, res) {
+  try {
+    const { id } = req.params;
+    const { name, capacity, equipments, location, status } = req.body;
+
+    const room = await prisma.room.update({
+      where: { id },
+      data: {
+        ...(name !== undefined ? { name: String(name).trim() } : {}),
+        ...(capacity !== undefined ? { capacity: Number(capacity) } : {}),
+        ...(equipments !== undefined ? { equipments: Array.isArray(equipments) ? equipments : [] } : {}),
+        ...(location !== undefined ? { location } : {}),
+        ...(status !== undefined ? { status } : {}),
+      },
+    });
+
+    await prisma.class.updateMany({
+      where: { roomId: id },
+      data: { room: room.name },
+    });
+
+    return res.json({ room });
+  } catch (error) {
+    console.error('Erreur updateRoom:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteRoom(req, res) {
+  try {
+    const { id } = req.params;
+    const [classesCount, slotsCount] = await Promise.all([
+      prisma.class.count({ where: { roomId: id } }),
+      prisma.timeSlot.count({ where: { roomId: id } }),
+    ]);
+
+    if (classesCount > 0 || slotsCount > 0) {
+      return res.status(400).json({ error: 'Impossible de supprimer une salle utilisée par des classes/créneaux' });
+    }
+
+    await prisma.room.delete({ where: { id } });
+    return res.json({ message: 'Salle supprimée avec succès' });
+  } catch (error) {
+    console.error('Erreur deleteRoom:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * CRUD Créneaux
+ */
+async function getTimeSlots(req, res) {
+  try {
+    const { dayOfWeek, roomId } = req.query;
+    const where = {
+      ...(dayOfWeek ? { dayOfWeek } : {}),
+      ...(roomId ? { roomId } : {}),
+    };
+
+    const timeSlots = await prisma.timeSlot.findMany({
+      where,
+      include: {
+        room: true,
+        _count: { select: { classes: true } },
+      },
+      orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+    });
+
+    res.json({ timeSlots });
+  } catch (error) {
+    console.error('Erreur getTimeSlots:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createTimeSlot(req, res) {
+  try {
+    const { dayOfWeek, startTime, endTime, roomId, recurring = true } = req.body;
+
+    if (!dayOfWeek || !startTime || !endTime || !roomId) {
+      return res.status(400).json({ error: 'dayOfWeek, startTime, endTime et roomId sont requis' });
+    }
+
+    const overlapError = await validateTimeSlotOverlap({ dayOfWeek, startTime, endTime, roomId });
+    if (overlapError) {
+      return res.status(400).json({ error: overlapError });
+    }
+
+    const timeSlot = await prisma.timeSlot.create({
+      data: {
+        dayOfWeek,
+        startTime,
+        endTime,
+        roomId,
+        recurring: !!recurring,
+      },
+      include: { room: true },
+    });
+
+    res.status(201).json({ timeSlot });
+  } catch (error) {
+    console.error('Erreur createTimeSlot:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateTimeSlot(req, res) {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.timeSlot.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Créneau non trouvé' });
+
+    const dayOfWeek = req.body.dayOfWeek ?? existing.dayOfWeek;
+    const startTime = req.body.startTime ?? existing.startTime;
+    const endTime = req.body.endTime ?? existing.endTime;
+    const roomId = req.body.roomId ?? existing.roomId;
+
+    const overlapError = await validateTimeSlotOverlap({ dayOfWeek, startTime, endTime, roomId, excludeId: id });
+    if (overlapError) {
+      return res.status(400).json({ error: overlapError });
+    }
+
+    const timeSlot = await prisma.timeSlot.update({
+      where: { id },
+      data: {
+        ...(req.body.dayOfWeek !== undefined ? { dayOfWeek: req.body.dayOfWeek } : {}),
+        ...(req.body.startTime !== undefined ? { startTime: req.body.startTime } : {}),
+        ...(req.body.endTime !== undefined ? { endTime: req.body.endTime } : {}),
+        ...(req.body.roomId !== undefined ? { roomId: req.body.roomId } : {}),
+        ...(req.body.recurring !== undefined ? { recurring: !!req.body.recurring } : {}),
+      },
+      include: { room: true },
+    });
+
+    await prisma.class.updateMany({
+      where: { timeSlotId: id },
+      data: {
+        dayOfWeek: timeSlot.dayOfWeek,
+        startTime: timeSlot.startTime,
+        endTime: timeSlot.endTime,
+        roomId: timeSlot.roomId,
+        room: timeSlot.room.name,
+      },
+    });
+
+    return res.json({ timeSlot });
+  } catch (error) {
+    console.error('Erreur updateTimeSlot:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteTimeSlot(req, res) {
+  try {
+    const { id } = req.params;
+    const classesCount = await prisma.class.count({ where: { timeSlotId: id } });
+    if (classesCount > 0) {
+      return res.status(400).json({ error: 'Impossible de supprimer un créneau utilisé par des classes' });
+    }
+
+    await prisma.timeSlot.delete({ where: { id } });
+    return res.json({ message: 'Créneau supprimé avec succès' });
+  } catch (error) {
+    console.error('Erreur deleteTimeSlot:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * CRUD Classes
+ */
+async function getClasses(req, res) {
+  try {
+    const { schoolYearId, poleId, levelId } = req.query;
+    const where = {};
+    if (schoolYearId) where.schoolYearId = schoolYearId;
+    if (poleId) where.poleId = poleId;
+    if (levelId) where.levelId = levelId;
+
+    const classes = await prisma.class.findMany({
+      where,
+      include: {
+        level: { include: { pole: true } },
+        pole: true,
+        schoolYear: true,
+        timeSlot: true,
+        roomRef: true,
+        teacher: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } },
+        _count: { select: { enrollments: true } },
+      },
+      orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+    });
+
+    const formatted = classes.map((cls) => ({
+      ...cls,
+      fillIndicator: classFillIndicator(cls.enrolledCount, cls.capacity),
+    }));
+
+    res.json({ classes: formatted });
+  } catch (error) {
+    console.error('Erreur getClasses:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function getClassDetails(req, res) {
+  try {
+    const { id } = req.params;
+    const cls = await prisma.class.findUnique({
+      where: { id },
+      include: {
+        schoolYear: true,
+        pole: true,
+        level: { include: { pole: true } },
+        timeSlot: { include: { room: true } },
+        roomRef: true,
+        teacher: { include: { user: { select: { firstName: true, lastName: true, email: true, phone: true } } } },
+        enrollments: {
+          where: { status: { in: ['PENDING', 'CONFIRMED'] } },
+          include: {
+            student: {
+              include: {
+                family: {
+                  include: {
+                    user: { select: { email: true, phone: true, firstName: true, lastName: true } },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { enrolledAt: 'desc' },
+        },
+      },
+    });
+
+    if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
+
+    res.json({
+      class: {
+        ...cls,
+        fillIndicator: classFillIndicator(cls.enrolledCount, cls.capacity),
+      },
+    });
+  } catch (error) {
+    console.error('Erreur getClassDetails:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createClass(req, res) {
+  try {
+    const {
+      schoolYearId,
+      poleId,
+      levelId,
+      timeSlotId,
+      roomId,
+      teacherId,
+      capacity,
+      status = 'OPEN',
+    } = req.body;
+
+    if (!schoolYearId || !poleId || !levelId || !timeSlotId || !roomId || !teacherId) {
+      return res.status(400).json({ error: 'schoolYearId, poleId, levelId, timeSlotId, roomId et teacherId sont requis' });
+    }
+
+    const [year, pole, level, timeSlot, room, teacher] = await Promise.all([
+      prisma.schoolYear.findUnique({ where: { id: schoolYearId } }),
+      prisma.pole.findUnique({ where: { id: poleId } }),
+      prisma.level.findUnique({ where: { id: levelId } }),
+      prisma.timeSlot.findUnique({ where: { id: timeSlotId }, include: { room: true } }),
+      prisma.room.findUnique({ where: { id: roomId } }),
+      prisma.teacher.findUnique({ where: { id: teacherId }, include: { user: true } }),
+    ]);
+
+    if (!year || !pole || !level || !timeSlot || !room || !teacher) {
+      return res.status(404).json({ error: 'Référence invalide (année/pôle/niveau/créneau/salle/professeur)' });
+    }
+
+    if (level.poleId !== poleId) {
+      return res.status(400).json({ error: 'Le niveau sélectionné ne correspond pas au pôle choisi' });
+    }
+
+    if (timeSlot.roomId !== roomId) {
+      return res.status(400).json({ error: 'La salle doit être cohérente avec la salle du créneau sélectionné' });
+    }
+
+    const classCapacity = Number(capacity ?? room.capacity);
+    if (classCapacity > room.capacity) {
+      return res.status(400).json({ error: 'La capacité de classe ne peut pas dépasser la capacité de la salle' });
+    }
+
+    const conflictError = await validateClassConflicts({
+      schoolYearId,
+      teacherId,
+      roomId,
+      dayOfWeek: timeSlot.dayOfWeek,
+      startTime: timeSlot.startTime,
+      endTime: timeSlot.endTime,
+    });
+
+    if (conflictError) return res.status(400).json({ error: conflictError });
+
+    const cls = await prisma.class.create({
+      data: {
+        schoolYearId,
+        poleId,
+        levelId,
+        timeSlotId,
+        roomId,
+        teacherId,
+        teacherUserId: teacher.userId,
+        teacherName: `${teacher.firstName} ${teacher.lastName}`,
+        dayOfWeek: timeSlot.dayOfWeek,
+        startTime: timeSlot.startTime,
+        endTime: timeSlot.endTime,
+        room: room.name,
+        capacity: classCapacity,
+        status,
+      },
+      include: {
+        schoolYear: true,
+        pole: true,
+        level: { include: { pole: true } },
+        timeSlot: true,
+        roomRef: true,
+        teacher: { include: { user: true } },
+      },
+    });
+
+    res.status(201).json({ class: { ...cls, fillIndicator: classFillIndicator(cls.enrolledCount, cls.capacity) } });
+  } catch (error) {
+    console.error('Erreur createClass:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateClass(req, res) {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.class.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Classe non trouvée' });
+
+    const next = {
+      schoolYearId: req.body.schoolYearId ?? existing.schoolYearId,
+      poleId: req.body.poleId ?? existing.poleId,
+      levelId: req.body.levelId ?? existing.levelId,
+      timeSlotId: req.body.timeSlotId ?? existing.timeSlotId,
+      roomId: req.body.roomId ?? existing.roomId,
+      teacherId: req.body.teacherId ?? existing.teacherId,
+      capacity: req.body.capacity !== undefined ? Number(req.body.capacity) : existing.capacity,
+      status: req.body.status ?? existing.status,
+    };
+
+    const [level, timeSlot, room, teacher] = await Promise.all([
+      prisma.level.findUnique({ where: { id: next.levelId } }),
+      next.timeSlotId ? prisma.timeSlot.findUnique({ where: { id: next.timeSlotId }, include: { room: true } }) : null,
+      next.roomId ? prisma.room.findUnique({ where: { id: next.roomId } }) : null,
+      next.teacherId ? prisma.teacher.findUnique({ where: { id: next.teacherId }, include: { user: true } }) : null,
+    ]);
+
+    if (!level) return res.status(400).json({ error: 'Niveau invalide' });
+    if (next.poleId && level.poleId !== next.poleId) {
+      return res.status(400).json({ error: 'Le niveau sélectionné ne correspond pas au pôle choisi' });
+    }
+
+    if (next.timeSlotId && !timeSlot) return res.status(400).json({ error: 'Créneau invalide' });
+    if (next.roomId && !room) return res.status(400).json({ error: 'Salle invalide' });
+    if (next.teacherId && !teacher) return res.status(400).json({ error: 'Professeur invalide' });
+
+    if (timeSlot && room && timeSlot.roomId !== room.id) {
+      return res.status(400).json({ error: 'La salle doit être cohérente avec la salle du créneau sélectionné' });
+    }
+
+    if (room && next.capacity > room.capacity) {
+      return res.status(400).json({ error: 'La capacité de classe ne peut pas dépasser la capacité de la salle' });
+    }
+
+    const dayOfWeek = timeSlot ? timeSlot.dayOfWeek : existing.dayOfWeek;
+    const startTime = timeSlot ? timeSlot.startTime : existing.startTime;
+    const endTime = timeSlot ? timeSlot.endTime : existing.endTime;
+
+    const conflictError = await validateClassConflicts({
+      classId: id,
+      schoolYearId: next.schoolYearId,
+      teacherId: next.teacherId,
+      roomId: next.roomId,
+      dayOfWeek,
+      startTime,
+      endTime,
+    });
+    if (conflictError) return res.status(400).json({ error: conflictError });
+
+    const updated = await prisma.class.update({
+      where: { id },
+      data: {
+        schoolYearId: next.schoolYearId,
+        poleId: next.poleId,
+        levelId: next.levelId,
+        timeSlotId: next.timeSlotId,
+        roomId: next.roomId,
+        teacherId: next.teacherId,
+        teacherUserId: teacher ? teacher.userId : null,
+        teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : null,
+        dayOfWeek,
+        startTime,
+        endTime,
+        room: room ? room.name : existing.room,
+        capacity: next.capacity,
+        status: next.status,
+      },
+      include: {
+        schoolYear: true,
+        pole: true,
+        level: { include: { pole: true } },
+        timeSlot: true,
+        roomRef: true,
+        teacher: { include: { user: true } },
+      },
+    });
+
+    res.json({ class: { ...updated, fillIndicator: classFillIndicator(updated.enrolledCount, updated.capacity) } });
+  } catch (error) {
+    console.error('Erreur updateClass:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteClass(req, res) {
+  try {
+    const { id } = req.params;
+    await prisma.class.delete({ where: { id } });
+    res.json({ message: 'Classe supprimée avec succès' });
+  } catch (error) {
+    console.error('Erreur deleteClass:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function removeStudentFromClass(req, res) {
+  try {
+    const { classId, enrollmentId } = req.params;
+
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        id: enrollmentId,
+        classId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      },
+    });
+
+    if (!enrollment) return res.status(404).json({ error: 'Inscription élève introuvable' });
+
+    await prisma.$transaction([
+      prisma.enrollment.update({
+        where: { id: enrollment.id },
+        data: { status: 'CANCELLED', cancelledAt: new Date() },
+      }),
+      prisma.class.update({
+        where: { id: classId },
+        data: {
+          enrolledCount: { decrement: 1 },
+          status: 'OPEN',
+        },
+      }),
+    ]);
+
+    res.json({ message: 'Élève retiré de la classe' });
+  } catch (error) {
+    console.error('Erreur removeStudentFromClass:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function exportClassStudentsExcel(req, res) {
+  try {
+    const { id } = req.params;
+    const cls = await prisma.class.findUnique({
+      where: { id },
+      include: {
+        schoolYear: true,
+        pole: true,
+        level: true,
+        roomRef: true,
+        teacher: true,
+        enrollments: {
+          where: { status: { in: ['PENDING', 'CONFIRMED'] } },
+          include: {
+            student: {
+              include: {
+                family: { include: { user: true } },
+              },
+            },
+          },
+          orderBy: { enrolledAt: 'asc' },
+        },
+      },
+    });
+
+    if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Classe');
+
+    worksheet.addRow(['Classe', `${cls.pole?.name || '-'} / ${cls.level?.name || '-'}`]);
+    worksheet.addRow(['Année scolaire', cls.schoolYear?.label || '-']);
+    worksheet.addRow(['Créneau', `${cls.dayOfWeek} ${cls.startTime} - ${cls.endTime}`]);
+    worksheet.addRow(['Salle', cls.roomRef?.name || cls.room || '-']);
+    worksheet.addRow(['Professeur', cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : '-']);
+    worksheet.addRow(['Effectif', `${cls.enrolledCount}/${cls.capacity}`]);
+    worksheet.addRow([]);
+
+    worksheet.addRow(['Nom élève', 'Prénom', 'Date inscription', 'Email famille', 'Téléphone famille']);
+
+    cls.enrollments.forEach((enrollment) => {
+      worksheet.addRow([
+        enrollment.student.lastName,
+        enrollment.student.firstName,
+        new Date(enrollment.enrolledAt).toLocaleDateString('fr-FR'),
+        enrollment.student.family?.user?.email || '-',
+        enrollment.student.family?.user?.phone || '-',
+      ]);
+    });
+
+    worksheet.columns.forEach((column) => {
+      column.width = 24;
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="classe-${id}.xlsx"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Erreur exportClassStudentsExcel:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function exportClassStudentsPdf(req, res) {
+  try {
+    const { id } = req.params;
+    const cls = await prisma.class.findUnique({
+      where: { id },
+      include: {
+        schoolYear: true,
+        pole: true,
+        level: true,
+        roomRef: true,
+        teacher: true,
+        enrollments: {
+          where: { status: { in: ['PENDING', 'CONFIRMED'] } },
+          include: {
+            student: {
+              include: {
+                family: { include: { user: true } },
+              },
+            },
+          },
+          orderBy: { enrolledAt: 'asc' },
+        },
+      },
+    });
+
+    if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="classe-${id}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    doc.pipe(res);
+
+    doc.fontSize(16).text('Export classe AMC', { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(11).text(`Classe: ${cls.pole?.name || '-'} / ${cls.level?.name || '-'}`);
+    doc.text(`Année: ${cls.schoolYear?.label || '-'}`);
+    doc.text(`Créneau: ${cls.dayOfWeek} ${cls.startTime} - ${cls.endTime}`);
+    doc.text(`Salle: ${cls.roomRef?.name || cls.room || '-'}`);
+    doc.text(`Professeur: ${cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : '-'}`);
+    doc.text(`Effectif: ${cls.enrolledCount}/${cls.capacity}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text('Liste des élèves', { underline: true });
+    doc.moveDown(0.4);
+
+    cls.enrollments.forEach((enrollment, index) => {
+      const student = enrollment.student;
+      const family = student.family;
+      doc
+        .fontSize(10)
+        .text(
+          `${index + 1}. ${student.lastName} ${student.firstName} | Inscrit le ${new Date(enrollment.enrolledAt).toLocaleDateString('fr-FR')} | ${family?.user?.email || '-'} | ${family?.user?.phone || '-'}`,
+          { lineGap: 2 }
+        );
+    });
+
+    doc.end();
+  } catch (error) {
+    console.error('Erreur exportClassStudentsPdf:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function sendMessageToClassFamilies(req, res) {
+  try {
+    const { id } = req.params;
+    const { subject, message } = req.body;
+
+    if (!subject || !message) {
+      return res.status(400).json({ error: 'subject et message sont requis' });
+    }
+
+    const cls = await prisma.class.findUnique({
+      where: { id },
+      include: {
+        level: { include: { pole: true } },
+        enrollments: {
+          where: { status: { in: ['PENDING', 'CONFIRMED'] } },
+          include: {
+            student: {
+              include: {
+                family: {
+                  include: {
+                    user: { select: { email: true, firstName: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
+
+    const emails = [...new Set(cls.enrollments.map((e) => e.student.family?.user?.email).filter(Boolean))];
+
+    if (emails.length === 0) {
+      return res.status(400).json({ error: 'Aucune adresse email famille trouvée pour cette classe' });
+    }
+
+    await Promise.all(
+      emails.map((email) => sendMail({
+        to: email,
+        subject,
+        html: `<p>${message.replace(/\n/g, '<br />')}</p><hr/><p><strong>Classe:</strong> ${cls.level.pole.name} / ${cls.level.name}</p>`,
+      }))
+    );
+
+    return res.json({ message: 'Message envoyé aux familles', recipients: emails.length });
+  } catch (error) {
+    console.error('Erreur sendMessageToClassFamilies:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * CRUD Professeurs
+ */
+async function getTeachers(req, res) {
+  try {
+    const teachers = await prisma.teacher.findMany({
+      include: {
+        user: { select: { id: true, validationStatus: true, emailVerified: true, createdAt: true } },
+        _count: { select: { classes: true } },
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
+
+    res.json({ teachers });
+  } catch (error) {
+    console.error('Erreur getTeachers:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function getTeacherById(req, res) {
+  try {
+    const { id } = req.params;
+    const teacher = await prisma.teacher.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, email: true, validationStatus: true, emailVerified: true } },
+        classes: {
+          include: {
+            schoolYear: true,
+            level: { include: { pole: true } },
+            roomRef: true,
+          },
+          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+        },
+      },
+    });
+
+    if (!teacher) return res.status(404).json({ error: 'Professeur introuvable' });
+
+    const totalStudents = teacher.classes.reduce((sum, cls) => sum + cls.enrolledCount, 0);
+    return res.json({ teacher, stats: { totalClasses: teacher.classes.length, totalStudents } });
+  } catch (error) {
+    console.error('Erreur getTeacherById:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createTeacher(req, res) {
+  try {
+    const {
+      civility = 'M',
+      lastName,
+      firstName,
+      email,
+      phone,
+      specialties = [],
+      status = 'ACTIVE',
+    } = req.body;
+
+    if (!lastName || !firstName || !email) {
+      return res.status(400).json({ error: 'lastName, firstName et email sont requis' });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ error: 'Un compte utilisateur existe déjà avec cet email' });
+    }
+
+    const temporaryPassword = `AMC-${uuidv4().slice(0, 10)}`;
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    const emailVerifyToken = uuidv4();
+
+    const teacher = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email,
+          passwordHash,
+          role: 'PROFESSEUR',
+          validationStatus: 'APPROVED',
+          emailVerified: false,
+          emailVerifyToken,
+          firstName,
+          lastName,
+          phone,
+        },
+      });
+
+      return tx.teacher.create({
+        data: {
+          userId: user.id,
+          civility,
+          firstName,
+          lastName,
+          email,
+          phone,
+          specialties: Array.isArray(specialties) ? specialties : [],
+          status,
+        },
+        include: { user: true },
+      });
+    });
+
+    await sendMail({
+      to: email,
+      subject: 'AMC — Création de votre compte professeur',
+      html: `
+        <h2>Bonjour ${firstName},</h2>
+        <p>Votre compte professeur AMC a été créé.</p>
+        <p><strong>Email:</strong> ${email}<br />
+        <strong>Mot de passe temporaire:</strong> ${temporaryPassword}</p>
+        <p>Veuillez vous connecter puis modifier ce mot de passe dès la première connexion.</p>
+      `,
+    });
+
+    res.status(201).json({ teacher });
+  } catch (error) {
+    console.error('Erreur createTeacher:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateTeacher(req, res) {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.teacher.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Professeur introuvable' });
+
+    const {
+      civility,
+      lastName,
+      firstName,
+      email,
+      phone,
+      specialties,
+      status,
+    } = req.body;
+
+    const teacher = await prisma.$transaction(async (tx) => {
+      const updatedTeacher = await tx.teacher.update({
+        where: { id },
+        data: {
+          ...(civility !== undefined ? { civility } : {}),
+          ...(lastName !== undefined ? { lastName: String(lastName).trim() } : {}),
+          ...(firstName !== undefined ? { firstName: String(firstName).trim() } : {}),
+          ...(email !== undefined ? { email: String(email).trim() } : {}),
+          ...(phone !== undefined ? { phone } : {}),
+          ...(specialties !== undefined ? { specialties: Array.isArray(specialties) ? specialties : [] } : {}),
+          ...(status !== undefined ? { status } : {}),
+        },
+      });
+
+      await tx.user.update({
+        where: { id: existing.userId },
+        data: {
+          ...(lastName !== undefined ? { lastName: String(lastName).trim() } : {}),
+          ...(firstName !== undefined ? { firstName: String(firstName).trim() } : {}),
+          ...(email !== undefined ? { email: String(email).trim() } : {}),
+          ...(phone !== undefined ? { phone } : {}),
+          ...(status !== undefined ? { validationStatus: status === 'ACTIVE' ? 'APPROVED' : 'REJECTED' } : {}),
+        },
+      });
+
+      return updatedTeacher;
+    });
+
+    res.json({ teacher });
+  } catch (error) {
+    console.error('Erreur updateTeacher:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function resetTeacherPassword(req, res) {
+  try {
+    const { id } = req.params;
+    const teacher = await prisma.teacher.findUnique({ where: { id } });
+    if (!teacher) return res.status(404).json({ error: 'Professeur introuvable' });
+
+    const temporaryPassword = `AMC-${uuidv4().slice(0, 10)}`;
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+
+    await prisma.user.update({
+      where: { id: teacher.userId },
+      data: {
+        passwordHash,
+        resetPasswordToken: null,
+        resetPasswordExpires: null,
+      },
+    });
+
+    await sendMail({
+      to: teacher.email,
+      subject: 'AMC — Réinitialisation de mot de passe',
+      html: `<p>Bonjour ${teacher.firstName},</p><p>Votre mot de passe temporaire est: <strong>${temporaryPassword}</strong></p>`,
+    });
+
+    res.json({ message: 'Mot de passe réinitialisé et envoyé par email' });
+  } catch (error) {
+    console.error('Erreur resetTeacherPassword:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteTeacher(req, res) {
+  try {
+    const { id } = req.params;
+    const teacher = await prisma.teacher.findUnique({ where: { id } });
+    if (!teacher) return res.status(404).json({ error: 'Professeur introuvable' });
+
+    const assignedClasses = await prisma.class.count({ where: { teacherId: id } });
+    if (assignedClasses > 0) {
+      return res.status(400).json({ error: 'Impossible de supprimer un professeur avec des classes assignées' });
+    }
+
+    await prisma.$transaction([
+      prisma.teacher.delete({ where: { id } }),
+      prisma.user.update({ where: { id: teacher.userId }, data: { validationStatus: 'REJECTED' } }),
+    ]);
+
+    res.json({ message: 'Professeur désactivé/supprimé avec succès' });
+  } catch (error) {
+    console.error('Erreur deleteTeacher:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+module.exports = {
+  getPendingUsers,
+  getAllUsers,
+  approveUser,
+  rejectUser,
+  getStats,
+  getEnrollments,
+  getSchoolYears,
+  createSchoolYear,
+
+  getPoles,
+  createPole,
+  updatePole,
+  deletePole,
+
+  getLevels,
+  createLevel,
+  updateLevel,
+  deleteLevel,
+
+  getRooms,
+  createRoom,
+  updateRoom,
+  deleteRoom,
+
+  getTimeSlots,
+  createTimeSlot,
+  updateTimeSlot,
+  deleteTimeSlot,
+
+  getClasses,
+  getClassDetails,
+  createClass,
+  updateClass,
+  deleteClass,
+  removeStudentFromClass,
+  exportClassStudentsExcel,
+  exportClassStudentsPdf,
+  sendMessageToClassFamilies,
+
+  getTeachers,
+  getTeacherById,
+  createTeacher,
+  updateTeacher,
+  resetTeacherPassword,
+  deleteTeacher,
+  getStudentAcademicRecord,
+  updateEnrollment,
+};

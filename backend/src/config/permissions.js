@@ -1,0 +1,51 @@
+const PERMISSIONS = {
+  SYSTEM_CONFIG: 'system:config',
+  USERS_MANAGE: 'users:manage',
+  USERS_APPROVE: 'users:approve',
+  ENROLLMENTS_MANAGE: 'enrollments:manage',
+  CLASSES_MANAGE: 'classes:manage',
+  PAYMENTS_MANAGE: 'payments:manage',
+  PAYMENTS_REFUND: 'payments:refund',
+  FINANCE_VIEW: 'finance:view',
+  FINANCE_MANAGE: 'finance:manage',
+  FAMILY_SELF_MANAGE: 'family:self:manage',
+  FAMILY_SELF_PAYMENTS: 'family:self:payments',
+  TEACHER_CLASSES_VIEW: 'teacher:classes:view',
+  TEACHER_COMMUNICATE: 'teacher:communicate',
+};
+
+const ROLE_PERMISSIONS = {
+  SUPER_ADMIN: Object.values(PERMISSIONS),
+  ADMIN: [
+    PERMISSIONS.USERS_MANAGE,
+    PERMISSIONS.USERS_APPROVE,
+    PERMISSIONS.ENROLLMENTS_MANAGE,
+    PERMISSIONS.CLASSES_MANAGE,
+    PERMISSIONS.FINANCE_VIEW,
+    PERMISSIONS.FAMILY_SELF_MANAGE,
+  ],
+  TRESORIER: [
+    PERMISSIONS.PAYMENTS_MANAGE,
+    PERMISSIONS.PAYMENTS_REFUND,
+    PERMISSIONS.FINANCE_VIEW,
+    PERMISSIONS.FINANCE_MANAGE,
+  ],
+  PROFESSEUR: [
+    PERMISSIONS.TEACHER_CLASSES_VIEW,
+    PERMISSIONS.TEACHER_COMMUNICATE,
+  ],
+  FAMILLE: [
+    PERMISSIONS.FAMILY_SELF_MANAGE,
+    PERMISSIONS.FAMILY_SELF_PAYMENTS,
+  ],
+};
+
+function hasPermission(role, permission) {
+  return (ROLE_PERMISSIONS[role] || []).includes(permission);
+}
+
+module.exports = {
+  PERMISSIONS,
+  ROLE_PERMISSIONS,
+  hasPermission,
+};
