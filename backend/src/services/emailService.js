@@ -71,6 +71,10 @@ async function sendWithSmtp({ to, subject, html, text, attachments }) {
   return info;
 }
 
+function isSmtpConfigured() {
+  return Boolean(config.smtp.host && config.smtp.port && config.smtp.user && config.smtp.pass);
+}
+
 async function sendMail(payload) {
   try {
     console.log(`[EMAIL] Envoi avec provider: ${config.email.provider}`);
@@ -83,8 +87,22 @@ async function sendMail(payload) {
     }
 
     if (config.email.provider === 'ABACUS') {
-      return await sendWithAbacus(payload);
+      try {
+        return await sendWithAbacus(payload);
+      } catch (error) {
+        const fallbackAllowed = isSmtpConfigured();
+        if (fallbackAllowed) {
+          console.warn('[EMAIL] Abacus non disponible, basculement vers SMTP:', error.message);
+          return await sendWithSmtp(payload);
+        }
+        throw error;
+      }
     }
+
+    if (!isSmtpConfigured()) {
+      throw new Error('SMTP non configuré pour l’envoi d’email');
+    }
+
     return await sendWithSmtp(payload);
   } catch (error) {
     console.error('Erreur envoi email:', error.message);

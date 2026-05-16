@@ -82,9 +82,15 @@ async function register(req, res) {
       },
     });
 
-    await sendVerificationEmail(user, emailVerifyToken);
+    let emailWarning = null;
+    try {
+      await sendVerificationEmail(user, emailVerifyToken);
+    } catch (emailError) {
+      console.error('Erreur envoi email de vérification:', emailError);
+      emailWarning = 'Verification email could not be sent. Contactez l’administrateur pour activer le compte.';
+    }
 
-    res.status(201).json({
+    const responsePayload = {
       message: 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes famille sont validés après vérification de l’email.',
       user: {
         id: user.id,
@@ -94,7 +100,13 @@ async function register(req, res) {
         role: user.role,
         validationStatus: user.validationStatus,
       },
-    });
+    };
+
+    if (emailWarning) {
+      responsePayload.warning = emailWarning;
+    }
+
+    res.status(201).json(responsePayload);
   } catch (error) {
     console.error('Erreur inscription:', error);
     res.status(500).json({ error: 'Erreur serveur lors de l\'inscription' });
