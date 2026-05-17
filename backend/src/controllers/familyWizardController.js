@@ -586,7 +586,7 @@ async function completeExistingFamilyRegistration(req, res) {
       };
     });
 
-    // Envoi du mail d'inscription enregistrée
+    // Envoi du mail d'inscription enregistrée en arrière-plan pour ne pas bloquer la réponse API
     const childrenSummaryHtml = `<strong>Enfant(s) enregistré(s) :</strong><br/>${result.students.map((s) => `• ${s.firstName} ${s.lastName}`).join('<br/>')}`;
     const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
       <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
@@ -594,7 +594,8 @@ async function completeExistingFamilyRegistration(req, res) {
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    await sendEnrollmentConfirmationEmail(req.user, `${childrenSummaryHtml}${paymentDetailsHtml}`);
+    void sendEnrollmentConfirmationEmail(req.user, `${childrenSummaryHtml}${paymentDetailsHtml}`)
+      .catch((emailError) => console.error('Erreur envoi email d’inscription existante:', emailError));
 
     return res.status(201).json({
       message: 'Inscription du nouveau membre enregistrée. Les inscriptions seront confirmées après paiement réussi.',
@@ -1109,7 +1110,8 @@ async function completeFamilyRegistration(req, res) {
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    await sendEnrollmentConfirmationEmail(result.user, `${familySummary}${paymentDetailsHtml}${activationHtml}`);
+    void sendEnrollmentConfirmationEmail(result.user, `${familySummary}${paymentDetailsHtml}${activationHtml}`)
+      .catch((emailError) => console.error('Erreur envoi email d’inscription famille:', emailError));
 
     return res.status(201).json({
       message: 'Inscription famille enregistrée. Vérifiez votre email pour activer votre compte. Les inscriptions des membres seront confirmées après paiement réussi.',
