@@ -51,7 +51,7 @@ app.get('/', (req, res) => {
   res.json({
     name: 'AMC Portail API',
     version: '1.0.0',
-    description: 'Portail d\'Inscription Scolaire — Association des Musulmans de Clamart',
+    description: 'Portail d\'Inscription Scolaire — Association Partage et des Musulmans de Clamart',
   });
 });
 

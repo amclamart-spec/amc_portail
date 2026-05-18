@@ -112,6 +112,7 @@ async function sendMail(payload) {
 
 function renderEmailHtml({ title, subtitle, contentHtml }) {
   const logoUrl = `${config.frontendUrl.replace(/\/$/, '')}/amc_logo.png`;
+  const partnerLogoUrl = `${config.frontendUrl.replace(/\/$/, '')}/amc_logo_partner.png`;
   return `<!DOCTYPE html>
 <html lang="fr">
   <head>
@@ -126,7 +127,10 @@ function renderEmailHtml({ title, subtitle, contentHtml }) {
           <table role="presentation" width="600" style="background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 24px 80px rgba(15,23,42,0.12);">
             <tr>
               <td style="background:#213B88;padding:28px 24px;text-align:center;color:#ffffff;">
-                <img src="${logoUrl}" alt="AMC" width="120" style="display:block;margin:0 auto 16px;" />
+                <div style="display:flex;justify-content:center;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:16px;">
+                  <img src="${logoUrl}" alt="AMC" width="120" style="display:block;" />
+                  <img src="${partnerLogoUrl}" alt="PARTAGE" width="120" style="display:block;" />
+                </div>
                 <h1 style="margin:0;font-size:28px;font-weight:700;letter-spacing:-0.02em;">${title}</h1>
                 ${subtitle ? `<p style="margin:12px 0 0;font-size:16px;opacity:0.88;line-height:1.5;">${subtitle}</p>` : ''}
               </td>
@@ -138,7 +142,7 @@ function renderEmailHtml({ title, subtitle, contentHtml }) {
             </tr>
             <tr>
               <td style="background:#f8fafc;padding:20px 28px;color:#475569;font-size:14px;text-align:center;">
-                Association des Musulmans de Clamart • Portail AMC
+                Association PARTAGE • Portail AMC
               </td>
             </tr>
           </table>
@@ -215,72 +219,107 @@ async function sendEnrollmentConfirmationEmail(user, enrollmentSummary = '') {
 }
 
 async function sendPaymentConfirmationEmail(user, payment) {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Nous confirmons la réception de votre paiement.</p>
+    <ul>
+      <li><strong>Référence:</strong> ${payment.id}</li>
+      <li><strong>Montant:</strong> ${Number(payment.amount || payment.totalAmount || 0).toFixed(2)} €</li>
+      <li><strong>Méthode:</strong> ${payment.method || payment.paymentMethod}</li>
+    </ul>
+  `;
+
   return sendMail({
     to: user.email,
     subject: 'AMC — Confirmation de paiement',
-    html: `<h2>Paiement confirmé</h2><p>Bonjour ${user.firstName}, nous confirmons la réception de votre paiement.</p><ul><li>Référence: ${payment.id}</li><li>Montant: ${payment.amount || payment.totalAmount} €</li><li>Méthode: ${payment.method || payment.paymentMethod}</li></ul>`,
+    html: renderEmailHtml({
+      title: 'Paiement confirmé',
+      subtitle: 'Merci, votre paiement a bien été reçu',
+      contentHtml,
+    }),
   });
 }
 
 async function sendAccountApprovedEmail(user) {
   const loginUrl = `${config.frontendUrl}/login`;
+  const contentHtml = `
+    <p>Bonne nouvelle ${user.firstName},</p>
+    <p>Votre compte a été validé.</p>
+    <p style="text-align:center;"><a href="${loginUrl}" style="display:inline-block;padding:10px 18px;background:#213B88;color:#fff;border-radius:6px;text-decoration:none;">Se connecter</a></p>
+  `;
+
   return sendMail({
     to: user.email,
     subject: 'AMC — Votre compte a été validé',
-    html: `<h2>Bonne nouvelle ${user.firstName}</h2><p>Votre compte a été validé.</p><p><a href="${loginUrl}">Se connecter</a></p>`,
+    html: renderEmailHtml({ title: 'Compte validé', subtitle: '', contentHtml }),
   });
 }
 
 async function sendAccountRejectedEmail(user, reason) {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Votre compte n'a pas été validé.</p>
+    ${reason ? `<p><strong>Motif:</strong> ${reason}</p>` : ''}
+  `;
+
   return sendMail({
     to: user.email,
     subject: 'AMC — Votre demande de compte',
-    html: `<h2>Bonjour ${user.firstName}</h2><p>Votre compte n'a pas été validé.</p>${reason ? `<p>Motif: ${reason}</p>` : ''}`,
+    html: renderEmailHtml({ title: 'Demande de compte', subtitle: 'Statut: refusé', contentHtml }),
   });
 }
 
 async function sendFamilyRegistrationConfirmationEmail(user, familySummary = '') {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Votre inscription famille a bien été enregistrée. Nous avons reçu votre dossier complet.</p>
+    ${familySummary ? `<div style="margin:12px 0;padding:12px;background:#eef2ff;border-radius:8px;">${familySummary}</div>` : ''}
+    <p>Prochaines étapes :</p>
+    <ul>
+      <li>Vérifiez votre email pour activer votre compte</li>
+      <li>Effectuez le paiement selon l'échéancier fourni</li>
+      <li>Les inscriptions de vos enfants seront confirmées après paiement</li>
+    </ul>
+  `;
+
   return sendMail({
     to: user.email,
     subject: 'AMC — Inscription famille enregistrée',
-    html: `<h2>Inscription famille confirmée</h2>
-      <p>Bonjour ${user.firstName},</p>
-      <p>Votre inscription famille a bien été enregistrée. Nous avons reçu votre dossier complet.</p>
-      ${familySummary ? `<div>${familySummary}</div>` : ''}
-      <p>Prochaines étapes :</p>
-      <ul>
-        <li>Vérifiez votre email pour activer votre compte</li>
-        <li>Effectuez le paiement selon l'échéancier fourni</li>
-        <li>Les inscriptions de vos enfants seront confirmées après paiement</li>
-      </ul>`,
+    html: renderEmailHtml({ title: 'Inscription famille enregistrée', subtitle: '', contentHtml }),
   });
 }
 
 async function sendChildRegistrationConfirmationEmail(user, childName, enrollmentSummary = '') {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>L'inscription de <strong>${childName}</strong> a bien été enregistrée.</p>
+    ${enrollmentSummary ? `<div style="margin:12px 0;padding:12px;background:#eef2ff;border-radius:8px;">${enrollmentSummary}</div>` : ''}
+    <p>Effectuez le paiement selon l'échéancier pour finaliser l'inscription.</p>
+  `;
+
   return sendMail({
     to: user.email,
     subject: `AMC — Inscription de ${childName} confirmée`,
-    html: `<h2>Inscription confirmée</h2>
-      <p>Bonjour ${user.firstName},</p>
-      <p>L'inscription de <strong>${childName}</strong> a bien été enregistrée.</p>
-      ${enrollmentSummary ? `<div>${enrollmentSummary}</div>` : ''}
-      <p>Effectuez le paiement selon l'échéancier pour finaliser l'inscription.</p>`,
+    html: renderEmailHtml({ title: 'Inscription confirmée', subtitle: '', contentHtml }),
   });
 }
 
 async function sendOfflinePaymentConfirmationEmail(user, paymentData) {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Nous avons bien enregistré votre demande de paiement par <strong>${paymentData.method || 'chèque/espèces'}</strong>.</p>
+    <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">
+      <strong>Montant total :</strong> ${Number(paymentData.totalAmount || 0).toFixed(2)} €<br/>
+      <strong>Nombre d'échéances :</strong> ${paymentData.numberOfInstallments || 1}<br/>
+      <strong>Méthode :</strong> ${paymentData.method || 'Chèque/Espèces'}
+    </div>
+    <p>${paymentData.instructions || 'Suivez les instructions communiquées pour finaliser votre paiement.'}</p>
+  `;
+
   return sendMail({
     to: user.email,
     subject: 'AMC — Confirmation de paiement en attente',
-    html: `<h2>Paiement en attente</h2>
-      <p>Bonjour ${user.firstName},</p>
-      <p>Nous avons bien enregistré votre demande de paiement par ${paymentData.method || 'chèque/espèces'}.</p>
-      <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">
-        <strong>Montant total :</strong> ${Number(paymentData.totalAmount || 0).toFixed(2)} €<br/>
-        <strong>Nombre d'échéances :</strong> ${paymentData.numberOfInstallments || 1}<br/>
-        <strong>Méthode :</strong> ${paymentData.method || 'Chèque/Espèces'}
-      </div>
-      <p>${paymentData.instructions || 'Suivez les instructions communiquées pour finaliser votre paiement.'}</p>`,
+    html: renderEmailHtml({ title: 'Paiement en attente', subtitle: '', contentHtml }),
   });
 }
 

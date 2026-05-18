@@ -1,7 +1,10 @@
 const { PrismaClient, Prisma } = require('@prisma/client');
+const ExcelJS = require('exceljs');
 const {
   createOnlineCheckout,
   completeGoCardlessRedirectFlow,
+  captureStripePaymentIntent,
+  getStripeCheckoutSession,
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,
 } = require('../services/paymentProviders');
@@ -15,9 +18,26 @@ const { generateInvoicePDF, getInvoiceFilePath } = require('../utils/invoiceUtil
 const config = require('../config');
 
 const prisma = new PrismaClient();
+const frontendLoginUrl = `${config.frontendUrl.replace(/\/$/, '')}/login`;
+const REGISTRATION_PENDING_VALIDATION_MESSAGE = 'Votre inscription a bien été prise en compte, une validation par le service secrétériat interviendra sous peu.';
 
 function toDecimal(value) {
   return new Prisma.Decimal(value || 0);
+}
+
+async function hasPendingEnrollmentsForPayment(payment) {
+  if (!payment?.metadata?.enrollmentIds?.length) {
+    return false;
+  }
+
+  const pendingCount = await prisma.enrollment.count({
+    where: {
+      id: { in: payment.metadata.enrollmentIds },
+      status: 'PENDING',
+    },
+  });
+
+  return pendingCount > 0;
 }
 
 async function generateInvoiceForPayment(paymentId) {
@@ -49,7 +69,7 @@ async function generateInvoiceForPayment(paymentId) {
         where: {
           familyId: payment.familyId,
           schoolYearId: payment.schoolYearId,
-          status: 'CONFIRMED',
+          status: { in: ['PENDING', 'CONFIRMED'] },
         },
         include: {
           class: {
@@ -91,7 +111,7 @@ async function generateInvoiceForPayment(paymentId) {
   }
 }
 
-async function confirmEnrollmentsForPayment(paymentId) {
+async function handlePaymentCompletionForEnrollment(paymentId) {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     include: {
@@ -99,33 +119,19 @@ async function confirmEnrollmentsForPayment(paymentId) {
     },
   });
 
-  if (!payment?.metadata?.enrollmentIds || !Array.isArray(payment.metadata.enrollmentIds)) {
+  if (!payment?.family?.user || !Array.isArray(payment.metadata?.enrollmentIds) || payment.metadata.enrollmentIds.length === 0) {
     return;
   }
 
-  const result = await prisma.enrollment.updateMany({
-    where: {
-      id: { in: payment.metadata.enrollmentIds },
-      status: 'PENDING',
-    },
-    data: {
-      status: 'CONFIRMED',
-      confirmedAt: new Date(),
-    },
-  });
+  const paymentData = {
+    id: payment.id,
+    totalAmount: payment.totalAmount,
+    method: payment.paymentMethod,
+  };
+  await sendPaymentValidationEmail(payment.family.user, paymentData);
 
-  if (result.count > 0 && payment.family?.user) {
-    const paymentData = {
-      id: payment.id,
-      totalAmount: payment.totalAmount,
-      method: payment.paymentMethod,
-    };
-    await sendPaymentValidationEmail(payment.family.user, paymentData);
-
-    // Generate invoice after payment confirmation
-    if (payment.status === 'COMPLETED') {
-      await generateInvoiceForPayment(paymentId);
-    }
+  if (payment.status === 'COMPLETED') {
+    await generateInvoiceForPayment(paymentId);
   }
 }
 
@@ -187,7 +193,7 @@ function normalizeInstallmentsByMethod(method, installmentsCount) {
 
 async function createFamilyEnrollmentPayment(req, res) {
   try {
-    const { method, installmentsCount = 1, scheduleDay = 10 } = req.body;
+    const { method, installmentsCount = 1, scheduleDay = 10, payerName } = req.body;
 
     const normalizedMethod = method || 'CHEQUE';
     const count = normalizeInstallmentsByMethod(normalizedMethod, Number(installmentsCount));
@@ -363,9 +369,10 @@ async function createFamilyEnrollmentPayment(req, res) {
           method: 'CHEQUE',
           amount: toDecimal(paymentTotal),
           status: 'INITIATED',
+          payerName: payerName || null,
           description: 'Paiement par chèque en attente de réception',
           metadata: {
-            paymentInstructions: 'Déposez les chèques au bureau AMC selon l\'échéancier fourni.',
+            paymentInstructions: 'Déposez les chèques au bureau PARTAGE selon l\'échéancier fourni.',
           },
         },
       });
@@ -434,7 +441,7 @@ async function createPaymentIntent(req, res) {
 
 async function recordOfflinePayment(req, res) {
   try {
-    const { paymentId, amount, method, description, transactionRef } = req.body;
+    const { paymentId, amount, method, description, transactionRef, payerName } = req.body;
 
     const payment = await prisma.payment.findUnique({
       where: { id: paymentId },
@@ -463,6 +470,7 @@ async function recordOfflinePayment(req, res) {
           amount: toDecimal(amount),
           status: 'SUCCEEDED',
           externalRef: transactionRef || null,
+          payerName: payerName || null,
           description: description || 'Paiement hors ligne',
           recordedById: req.user.id,
           processedAt: new Date(),
@@ -478,7 +486,7 @@ async function recordOfflinePayment(req, res) {
     }
 
     if (isCompleted) {
-      await confirmEnrollmentsForPayment(paymentId);
+      await handlePaymentCompletionForEnrollment(paymentId);
     }
 
     await prisma.financialEntry.create({
@@ -575,10 +583,62 @@ async function getChequePaymentPlans(_req, res) {
   }
 }
 
+function buildTransactionQuery(query = {}) {
+  const {
+    familyId,
+    payerName,
+    status,
+    startDate,
+    endDate,
+    minAmount,
+    maxAmount,
+  } = query;
+
+  const where = {};
+
+  if (familyId) {
+    where.payment = { familyId };
+  }
+
+  if (payerName) {
+    where.payerName = { contains: payerName, mode: 'insensitive' };
+  }
+
+  if (status) {
+    where.status = status;
+  }
+
+  if (startDate || endDate) {
+    where.createdAt = {};
+    if (startDate) {
+      const from = new Date(startDate);
+      from.setHours(0, 0, 0, 0);
+      where.createdAt.gte = from;
+    }
+    if (endDate) {
+      const to = new Date(endDate);
+      to.setHours(23, 59, 59, 999);
+      where.createdAt.lte = to;
+    }
+  }
+
+  if (minAmount || maxAmount) {
+    const amountFilter = {};
+    if (minAmount) {
+      amountFilter.gte = new Prisma.Decimal(minAmount);
+    }
+    if (maxAmount) {
+      amountFilter.lte = new Prisma.Decimal(maxAmount);
+    }
+    where.amount = amountFilter;
+  }
+
+  return where;
+}
+
 async function getTransactions(req, res) {
   try {
-    const { familyId } = req.query;
-    const where = familyId ? { payment: { familyId } } : {};
+    const where = buildTransactionQuery(req.query);
 
     const transactions = await prisma.paymentTransaction.findMany({
       where,
@@ -595,6 +655,64 @@ async function getTransactions(req, res) {
     return res.json({ transactions });
   } catch (error) {
     console.error('Erreur getTransactions:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function exportTransactions(req, res) {
+  try {
+    const where = buildTransactionQuery(req.query);
+    const transactions = await prisma.paymentTransaction.findMany({
+      where,
+      include: {
+        payment: {
+          include: {
+            family: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Transactions');
+
+    sheet.columns = [
+      { header: 'Date', key: 'createdAt', width: 20 },
+      { header: 'Paiement', key: 'paymentId', width: 36 },
+      { header: 'Payeur', key: 'payerName', width: 30 },
+      { header: 'Famille', key: 'familyName', width: 30 },
+      { header: 'Méthode', key: 'method', width: 15 },
+      { header: 'Montant', key: 'amount', width: 15 },
+      { header: 'Devise', key: 'currency', width: 10 },
+      { header: 'Statut', key: 'status', width: 15 },
+      { header: 'Référence externe', key: 'externalRef', width: 30 },
+      { header: 'Description', key: 'description', width: 40 },
+    ];
+
+    transactions.forEach((tx) => {
+      sheet.addRow({
+        createdAt: tx.createdAt ? new Date(tx.createdAt).toLocaleString('fr-FR') : '',
+        paymentId: tx.paymentId,
+        payerName: tx.payerName || '',
+        familyName: tx.payment?.family?.familyName || '',
+        method: tx.method,
+        amount: Number(tx.amount).toFixed(2),
+        currency: tx.currency,
+        status: tx.status,
+        externalRef: tx.externalRef || '',
+        description: tx.description || '',
+      });
+    });
+
+    const filename = `paiements-${Date.now()}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Erreur exportTransactions:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -703,6 +821,14 @@ function formatStripeReturnPage(title, message, paymentId) {
 </html>`;
 }
 
+function getStripeSessionPayerName(session, fallback = null) {
+  return session?.customer_details?.name
+    || session?.customer_details?.email
+    || session?.customer_email
+    || fallback
+    || null;
+}
+
 async function finalizeStripePayment(paymentId) {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
@@ -713,12 +839,49 @@ async function finalizeStripePayment(paymentId) {
     return payment;
   }
 
+  const shouldHold = payment.provider === 'STRIPE' && await hasPendingEnrollmentsForPayment(payment);
+  if (shouldHold) {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: {
+        externalPaymentId: payment.externalPaymentId || paymentId,
+      },
+    });
+    return payment;
+  }
+
+  let paymentIntentId = payment.metadata?.paymentIntentId;
+  let payerName = payment.metadata?.payerName || null;
+  if (payment.provider === 'STRIPE' && !payerName && payment.externalPaymentId) {
+    try {
+      const session = await getStripeCheckoutSession(payment.externalPaymentId);
+      paymentIntentId = paymentIntentId || session.payment_intent || null;
+      payerName = getStripeSessionPayerName(session, payerName);
+    } catch (sessionError) {
+      console.error(`Impossible de récupérer la session Stripe pour ${paymentId}:`, sessionError);
+    }
+  }
+
+  if (payment.provider === 'STRIPE' && paymentIntentId) {
+    try {
+      await captureStripePaymentIntent(paymentIntentId);
+    } catch (captureError) {
+      console.error(`Erreur capture Stripe pour le paiement ${paymentId}:`, captureError);
+      throw captureError;
+    }
+  }
+
   await prisma.payment.update({
     where: { id: paymentId },
     data: {
       status: 'COMPLETED',
       paidAmount: payment.totalAmount,
       externalPaymentId: payment.externalPaymentId || paymentId,
+      metadata: {
+        ...(payment.metadata || {}),
+        paymentIntentId: paymentIntentId || payment.metadata?.paymentIntentId,
+        payerName: payerName || payment.metadata?.payerName || null,
+      },
     },
   });
 
@@ -737,7 +900,7 @@ async function finalizeStripePayment(paymentId) {
     });
   }
 
-  await confirmEnrollmentsForPayment(paymentId);
+  await handlePaymentCompletionForEnrollment(paymentId);
 
   await prisma.paymentTransaction.create({
     data: {
@@ -747,6 +910,7 @@ async function finalizeStripePayment(paymentId) {
       amount: payment.totalAmount,
       status: 'SUCCEEDED',
       externalRef: payment.externalPaymentId || paymentId,
+      payerName,
       processedAt: new Date(),
       metadata: {
         source: 'stripe-return-confirm',
@@ -767,22 +931,32 @@ async function finalizeStripePayment(paymentId) {
 
 async function handleStripeConfirm(req, res) {
   const paymentId = req.query.payment_id || null;
+  let payment = null;
   if (paymentId) {
     try {
-      await finalizeStripePayment(paymentId);
+      payment = await finalizeStripePayment(paymentId);
     } catch (error) {
       console.error('Erreur finalisation paiement Stripe sur page de retour:', error);
     }
   }
 
+  const isEnrollmentPayment = payment?.metadata?.enrollmentIds?.length > 0;
+  const isPending = payment?.status !== 'COMPLETED';
+  const title = isEnrollmentPayment && isPending ? 'Paiement en cours' : 'Paiement réussi';
+  const message = isEnrollmentPayment && isPending
+    ? 'Votre paiement Stripe a bien été enregistré. Il restera en attente pendant la validation de votre inscription.'
+    : 'Merci, votre paiement Stripe a bien été enregistré. Vous pouvez fermer cette page ou retourner à l’application.';
+
   return res.send(formatPaymentReturnPage(
-    'Paiement réussi',
-    'Merci, votre paiement Stripe a bien été enregistré. Vous pouvez fermer cette page ou retourner à l’application.',
+    title,
+    message,
     paymentId,
+    '',
+    `${frontendLoginUrl}?registration_message=${encodeURIComponent(REGISTRATION_PENDING_VALIDATION_MESSAGE)}`,
   ));
 }
 
-function formatPaymentReturnPage(title, message, paymentId, extraMessage = '') {
+function formatPaymentReturnPage(title, message, paymentId, extraMessage = '', returnUrl = frontendLoginUrl) {
   return `<!DOCTYPE html>
 <html lang="fr">
   <head>
@@ -796,7 +970,7 @@ function formatPaymentReturnPage(title, message, paymentId, extraMessage = '') {
     <p>${message}</p>
     ${paymentId ? `<p>ID du paiement : <strong>${paymentId}</strong></p>` : ''}
     ${extraMessage ? `<p>${extraMessage}</p>` : ''}
-    <p><a href="${config.frontendUrl}">Retour à l’application</a></p>
+    <p><a href="${returnUrl}">Retour à l’application</a></p>
   </body>
 </html>`;
 }
@@ -884,6 +1058,7 @@ async function handleGoCardlessReturn(req, res) {
       'Le mandat GoCardless a bien été finalisé. Le paiement restera en attente de confirmation via webhook.',
       paymentId,
       'Vous serez redirigé vers l’application dès que le prélèvement aura été confirmé.',
+      `${frontendLoginUrl}?registration_message=${encodeURIComponent(REGISTRATION_PENDING_VALIDATION_MESSAGE)}`,
     ));
   } catch (error) {
     console.error('Erreur handleGoCardlessReturn:', error);
@@ -917,48 +1092,88 @@ async function handleStripeWebhook(req, res) {
         });
 
         if (payment) {
-          await prisma.payment.update({
-            where: { id: paymentId },
-            data: {
-              status: 'COMPLETED',
-              paidAmount: payment.totalAmount,
-              externalPaymentId: session.id,
+          const paymentIntentId = session.payment_intent || null;
+          const shouldHold = payment.provider === 'STRIPE' && await hasPendingEnrollmentsForPayment(payment);
+          const payerName = getStripeSessionPayerName(session, payment.metadata?.payerName);
+
+          const updateData = {
+            externalPaymentId: payment.externalPaymentId || session.id,
+            metadata: {
+              ...(payment.metadata || {}),
+              paymentIntentId: paymentIntentId || payment.metadata?.paymentIntentId,
+              payerName,
             },
-          });
+          };
 
-          await prisma.installment.updateMany({
-            where: { paymentId },
-            data: { status: 'PAID', paidAt: new Date() },
-          });
+          await prisma.payment.update({ where: { id: paymentId }, data: updateData });
 
-          if (payment.paymentPlan) {
-            await prisma.paymentPlan.update({
-              where: { id: payment.paymentPlan.id },
-              data: { status: 'COMPLETED', providerRef: session.id },
+          if (shouldHold) {
+            await prisma.paymentTransaction.create({
+              data: {
+                paymentId,
+                provider: 'STRIPE',
+                method: payment.paymentMethod || 'CB',
+                amount: payment.totalAmount,
+                status: 'SUCCEEDED',
+                externalRef: session.id,
+                payerName,
+                description: 'Paiement Stripe en attente de validation de l’inscription',
+                metadata: event,
+              },
             });
-          }
+          } else {
+            if (paymentIntentId) {
+              try {
+                await captureStripePaymentIntent(paymentIntentId);
+              } catch (captureError) {
+                console.error(`Erreur capture Stripe pour le paiement ${paymentId}:`, captureError);
+                throw captureError;
+              }
+            }
 
-          await confirmEnrollmentsForPayment(paymentId);
-
-          await prisma.paymentTransaction.create({
-            data: {
-              paymentId,
-              provider: 'STRIPE',
-              method: payment.paymentMethod || 'CB',
-              amount: payment.totalAmount,
-              status: 'SUCCEEDED',
-              externalRef: session.id,
-              processedAt: new Date(),
-              metadata: event,
-            },
-          });
-
-          if (!payment.metadata?.enrollmentIds?.length) {
-            await sendPaymentConfirmationEmail(payment.family.user, {
-              id: payment.id,
-              totalAmount: Number(payment.totalAmount),
-              method: 'Carte bancaire Stripe',
+            await prisma.payment.update({
+              where: { id: paymentId },
+              data: {
+                status: 'COMPLETED',
+                paidAmount: payment.totalAmount,
+              },
             });
+
+            await prisma.installment.updateMany({
+              where: { paymentId },
+              data: { status: 'PAID', paidAt: new Date() },
+            });
+
+            if (payment.paymentPlan) {
+              await prisma.paymentPlan.update({
+                where: { id: payment.paymentPlan.id },
+                data: { status: 'COMPLETED', providerRef: session.id },
+              });
+            }
+
+            await handlePaymentCompletionForEnrollment(paymentId);
+
+            await prisma.paymentTransaction.create({
+              data: {
+                paymentId,
+                provider: 'STRIPE',
+                method: payment.paymentMethod || 'CB',
+                amount: payment.totalAmount,
+                status: 'SUCCEEDED',
+                externalRef: session.id,
+                payerName,
+                processedAt: new Date(),
+                metadata: event,
+              },
+            });
+
+            if (!payment.metadata?.enrollmentIds?.length) {
+              await sendPaymentConfirmationEmail(payment.family.user, {
+                id: payment.id,
+                totalAmount: Number(payment.totalAmount),
+                method: 'Carte bancaire Stripe',
+              });
+            }
           }
         }
       }
@@ -1020,7 +1235,7 @@ async function handleGoCardlessWebhook(req, res) {
           });
         }
 
-        await confirmEnrollmentsForPayment(paymentId);
+        await handlePaymentCompletionForEnrollment(paymentId);
       }
 
       if (event.action === 'failed' || event.action === 'cancelled') {
@@ -1123,6 +1338,7 @@ module.exports = {
   markChequeInstallmentStatus,
   getChequePaymentPlans,
   getTransactions,
+  exportTransactions,
   requestRefund,
   processRefund,
   getFamilyPaymentHistory,
@@ -1134,4 +1350,5 @@ module.exports = {
   handleGoCardlessWebhook,
   downloadInvoice,
   getPaymentInvoice,
+  finalizeStripePayment,
 };

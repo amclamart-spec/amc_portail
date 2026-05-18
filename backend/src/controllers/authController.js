@@ -68,6 +68,7 @@ async function register(req, res) {
     const emailVerifyToken = uuidv4();
 
     const userRole = ['FAMILLE', 'PROFESSEUR', 'ADMIN', 'TRESORIER'].includes(role) ? role : 'FAMILLE';
+    const validationStatus = userRole === 'FAMILLE' ? 'APPROVED' : 'PENDING';
     const user = await prisma.user.create({
       data: {
         email,
@@ -78,7 +79,7 @@ async function register(req, res) {
         phone,
         role: userRole,
         emailVerifyToken,
-        validationStatus: 'PENDING',
+        validationStatus,
       },
     });
 
@@ -91,7 +92,9 @@ async function register(req, res) {
     }
 
     const responsePayload = {
-      message: 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes famille sont validés après vérification de l’email.',
+      message: userRole === 'FAMILLE'
+        ? 'Inscription réussie ! Votre compte famille est activé automatiquement. Vérifiez votre email pour confirmer votre adresse.'
+        : 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes professeur, administrateur et trésorier doivent être validés par un administrateur.',
       user: {
         id: user.id,
         email: user.email,
