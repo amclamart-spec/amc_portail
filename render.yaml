@@ -49,6 +49,8 @@ services:
         value: "AMC - École de Langue Arabe"
       - key: SMTP_FROM_EMAIL
         value: "noreply@musulmansdeclamart.fr"
+      - key: EMAIL_PROVIDER
+        value: SMTP
 
   # --- Frontend (Static Site) ---
   - type: web

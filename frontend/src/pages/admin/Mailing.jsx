@@ -532,7 +532,7 @@ export default function AdminMailing() {
                 }}
               >
                 <p style={{ margin: 0, marginBottom: 4 }}>
-                  Association des Musulmans de Clamart (AMC)
+                  Association Partage et des Musulmans de Clamart (AMC)
                 </p>
                 <p style={{ margin: 0, opacity: 0.7 }}>
                   École de Langue Arabe et Sciences Islamiques
