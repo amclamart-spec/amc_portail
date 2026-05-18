@@ -33,7 +33,10 @@ export default function ForgotPassword() {
       }}
     >
       <div style={{ padding: '20px 40px' }}>
-        <img src="/amc_logo.png" alt="AMC" style={{ height: 50 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img src="/amc_logo.png" alt="AMC" style={{ height: 50 }} />
+          <img src="/amc_logo_partner.png" alt="Logo ajouté" style={{ height: 50 }} />
+        </div>
       </div>
 
       <div
@@ -96,7 +99,7 @@ export default function ForgotPassword() {
       </div>
 
       <div style={{ textAlign: 'center', padding: 16, color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>
-        © {new Date().getFullYear()} Association des Musulmans de Clamart
+        © {new Date().getFullYear()} Association Partage et des Musulmans de Clamart
       </div>
     </div>
   );

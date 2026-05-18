@@ -6,8 +6,9 @@ const { sendMail } = require('./emailService');
 
 const prisma = new PrismaClient();
 
-// Charger le logo en base64 une seule fois
+// Charger les logos en base64 une seule fois
 let logoBase64 = null;
+let partnerLogoBase64 = null;
 
 function getLogoBase64() {
   if (logoBase64) {
@@ -27,7 +28,7 @@ function getLogoBase64() {
       if (fs.existsSync(logoPath)) {
         const logoBuffer = fs.readFileSync(logoPath);
         logoBase64 = `data:image/png;base64,${logoBuffer.toString('base64')}`;
-        console.log(`[MAIL] Logo chargé depuis: ${logoPath}`);
+        console.log(`[MAIL] Logo AMC chargé depuis: ${logoPath}`);
         return logoBase64;
       }
     }
@@ -40,6 +41,35 @@ function getLogoBase64() {
     console.warn('[MAIL] Erreur chargement logo:', error.message);
     logoBase64 = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzIxM0I4OCIvPjx0ZXh0IHg9IjUwIiB5PSI1MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtd2VpZ2h0PSJib2xkIiBkeT0iLjNlbSI+QU1DPC90ZXh0Pjwvc3ZnPg==';
     return logoBase64;
+  }
+}
+
+function getPartnerLogoBase64() {
+  if (partnerLogoBase64) {
+    return partnerLogoBase64;
+  }
+
+  try {
+    const possiblePaths = [
+      path.join(__dirname, '../../../frontend/public/amc_logo_partner.png'),
+      path.join(process.cwd(), 'frontend/public/amc_logo_partner.png'),
+    ];
+
+    for (const logoPath of possiblePaths) {
+      if (fs.existsSync(logoPath)) {
+        const logoBuffer = fs.readFileSync(logoPath);
+        partnerLogoBase64 = `data:image/png;base64,${logoBuffer.toString('base64')}`;
+        console.log(`[MAIL] Logo PARTAGE chargé depuis: ${logoPath}`);
+        return partnerLogoBase64;
+      }
+    }
+
+    partnerLogoBase64 = getLogoBase64();
+    return partnerLogoBase64;
+  } catch (error) {
+    console.warn('[MAIL] Erreur chargement logo PARTAGE:', error.message);
+    partnerLogoBase64 = getLogoBase64();
+    return partnerLogoBase64;
   }
 }
 
@@ -210,7 +240,10 @@ function renderMailHtml({ subject, content, attachmentInfo }) {
             <!-- Header avec logo -->
             <tr>
               <td style="background:#213B88;padding:32px 24px;text-align:center;">
-                <img src="${logoUrl}" alt="AMC" width="100" height="auto" style="display:block;margin:0 auto;max-width:100%;height:auto;" />
+                <div style="display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;">
+                  <img src="${logoUrl}" alt="AMC" width="100" height="auto" style="display:block;max-width:100%;height:auto;" />
+                  <img src="${getPartnerLogoBase64()}" alt="PARTAGE" width="100" height="auto" style="display:block;max-width:100%;height:auto;" />
+                </div>
               </td>
             </tr>
             <!-- Contenu -->
@@ -223,7 +256,7 @@ function renderMailHtml({ subject, content, attachmentInfo }) {
             <!-- Footer -->
             <tr>
               <td style="background:#f8fafc;padding:20px 28px;color:#64748b;font-size:13px;text-align:center;border-top:1px solid #e2e8f0;">
-                <p style="margin:0;">Association des Musulmans de Clamart (AMC)</p>
+                <p style="margin:0;">Association PARTAGE</p>
                 <p style="margin:6px 0 0;opacity:0.7;">École de Langue Arabe et Sciences Islamiques</p>
               </td>
             </tr>

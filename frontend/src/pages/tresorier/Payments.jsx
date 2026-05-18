@@ -9,15 +9,33 @@ const statusOptions = [
   { value: 'CANCELLED', label: 'Annulé' },
 ];
 
+const transactionStatusOptions = [
+  { value: '', label: 'Tous' },
+  { value: 'INITIATED', label: 'Initié' },
+  { value: 'SUCCEEDED', label: 'Payé' },
+  { value: 'FAILED', label: 'Échoué' },
+  { value: 'CANCELLED', label: 'Annulé' },
+];
+
 export default function TresorierPayments() {
   const [transactions, setTransactions] = useState([]);
   const [plans, setPlans] = useState([]);
-  const [form, setForm] = useState({ paymentId: '', amount: '', method: 'CHEQUE', description: '', transactionRef: '' });
+  const [form, setForm] = useState({ paymentId: '', amount: '', method: 'CHEQUE', description: '', transactionRef: '', payerName: '' });
+  const [filters, setFilters] = useState({ payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
 
-  const load = async () => {
+  const buildQueryParams = (values) => {
+    return Object.entries(values).reduce((params, [key, value]) => {
+      if (value !== '' && value !== null && value !== undefined) {
+        params[key] = value;
+      }
+      return params;
+    }, {});
+  };
+
+  const load = async (queryFilters = {}) => {
     try {
       const [txRes, plansRes] = await Promise.all([
-        api.get('/payments/transactions'),
+        api.get('/payments/transactions', { params: buildQueryParams(queryFilters) }),
         api.get('/payments/cheques/plans'),
       ]);
       setTransactions(txRes.data.transactions || []);
@@ -29,6 +47,35 @@ export default function TresorierPayments() {
 
   useEffect(() => { load(); }, []);
 
+  const applyFilters = () => load(filters);
+  const resetFilters = () => {
+    const reset = { payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
+    setFilters(reset);
+    load(reset);
+  };
+
+  const exportPayments = async () => {
+    try {
+      const response = await api.get('/payments/transactions/export', {
+        params: buildQueryParams(filters),
+        responseType: 'blob',
+      });
+
+      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'paiements.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Export téléchargé');
+    } catch {
+      toast.error('Erreur export Excel');
+    }
+  };
+
   const submitOffline = async (e) => {
     e.preventDefault();
     try {
@@ -37,7 +84,7 @@ export default function TresorierPayments() {
         amount: Number(form.amount),
       });
       toast.success('Paiement hors ligne enregistré');
-      setForm({ paymentId: '', amount: '', method: 'CHEQUE', description: '', transactionRef: '' });
+      setForm({ paymentId: '', amount: '', method: 'CHEQUE', description: '', transactionRef: '', payerName: '' });
       load();
     } catch {
       toast.error('Erreur enregistrement paiement');
@@ -69,6 +116,7 @@ export default function TresorierPayments() {
             <option value="VIREMENT">Virement</option>
           </select>
           <input className="form-control" placeholder="Référence transaction" value={form.transactionRef} onChange={(e) => setForm((p) => ({ ...p, transactionRef: e.target.value }))} />
+          <input className="form-control" placeholder="Nom du payeur" value={form.payerName} onChange={(e) => setForm((p) => ({ ...p, payerName: e.target.value }))} />
           <input className="form-control" placeholder="Description" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} style={{ gridColumn: '1 / -1' }} />
           <button className="btn btn-primary" type="submit" style={{ width: 'fit-content' }}>Enregistrer</button>
         </form>
@@ -120,12 +168,69 @@ export default function TresorierPayments() {
 
       <div className="card">
         <h3>Historique transactions</h3>
+        <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+            <input
+              className="form-control"
+              placeholder="Payeur"
+              value={filters.payerName}
+              onChange={(e) => setFilters((prev) => ({ ...prev, payerName: e.target.value }))}
+            />
+            <select
+              className="form-control"
+              value={filters.status}
+              onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
+            >
+              {transactionStatusOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <input
+              className="form-control"
+              type="date"
+              value={filters.startDate}
+              onChange={(e) => setFilters((prev) => ({ ...prev, startDate: e.target.value }))}
+            />
+            <input
+              className="form-control"
+              type="date"
+              value={filters.endDate}
+              onChange={(e) => setFilters((prev) => ({ ...prev, endDate: e.target.value }))}
+            />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
+            <input
+              className="form-control"
+              placeholder="Montant min"
+              type="number"
+              step="0.01"
+              value={filters.minAmount}
+              onChange={(e) => setFilters((prev) => ({ ...prev, minAmount: e.target.value }))}
+            />
+            <input
+              className="form-control"
+              placeholder="Montant max"
+              type="number"
+              step="0.01"
+              value={filters.maxAmount}
+              onChange={(e) => setFilters((prev) => ({ ...prev, maxAmount: e.target.value }))}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary" type="button" onClick={applyFilters}>Filtrer</button>
+              <button className="btn btn-outline" type="button" onClick={resetFilters}>Réinitialiser</button>
+            </div>
+          </div>
+          <button className="btn btn-primary" type="button" onClick={exportPayments} style={{ width: 'fit-content' }}>
+            Exporter Excel
+          </button>
+        </div>
         <div className="table-container">
           <table>
             <thead>
               <tr>
                 <th>Date</th>
                 <th>Paiement</th>
+                <th>Payeur</th>
                 <th>Méthode</th>
                 <th>Montant</th>
                 <th>Statut</th>
@@ -136,9 +241,10 @@ export default function TresorierPayments() {
                 <tr key={t.id}>
                   <td>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
                   <td>{t.paymentId}</td>
+                  <td>{t.payerName || '-'}</td>
                   <td>{t.method}</td>
                   <td>{Number(t.amount).toFixed(2)} €</td>
-                  <td>{t.status}</td>
+                  <td>{txStatusLabel(t.status)}</td>
                 </tr>
               ))}
             </tbody>
@@ -147,4 +253,15 @@ export default function TresorierPayments() {
       </div>
     </div>
   );
+}
+
+function txStatusLabel(status) {
+  if (!status) return '—';
+  switch (String(status)) {
+    case 'INITIATED': return 'Initié';
+    case 'SUCCEEDED': return 'Payé';
+    case 'FAILED': return 'Échoué';
+    case 'CANCELLED': return 'Annulé';
+    default: return status;
+  }
 }

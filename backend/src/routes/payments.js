@@ -8,6 +8,7 @@ const {
   markChequeInstallmentStatus,
   getChequePaymentPlans,
   getTransactions,
+  exportTransactions,
   requestRefund,
   processRefund,
   getFamilyPaymentHistory,
@@ -45,6 +46,7 @@ router.get('/:paymentId/invoice/download', authorizePermission(PERMISSIONS.FAMIL
 router.post('/online-intent', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), createPaymentIntent);
 router.post('/offline', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), recordOfflinePayment);
 router.get('/transactions', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getTransactions);
+router.get('/transactions/export', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), exportTransactions);
 router.get('/cheques/plans', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getChequePaymentPlans);
 router.patch('/cheques/installments/:installmentId', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), markChequeInstallmentStatus);
 router.post('/refunds', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), requestRefund);

@@ -29,7 +29,7 @@ function toFormUrlEncoded(payload = {}) {
     .join('&');
 }
 
-async function createStripeCheckout({ amount, currency = 'eur', paymentId, returnUrl, cancelUrl, installments = 1, metadata = {} }) {
+async function createStripeCheckout({ amount, currency = 'eur', paymentId, returnUrl, cancelUrl, installments = 1, metadata = {}, customer = {} }) {
   if (!hasConfigValue(config.payments.stripeSecretKey)) {
     throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
   }
@@ -42,9 +42,15 @@ async function createStripeCheckout({ amount, currency = 'eur', paymentId, retur
     'line_items[0][price_data][product_data][name]': `AMC Inscription #${paymentId}`,
     'line_items[0][price_data][unit_amount]': Math.round(Number(amount) * 100),
     'line_items[0][quantity]': 1,
+    'payment_intent_data[capture_method]': 'manual',
     'metadata[payment_id]': paymentId,
     'metadata[installments]': installments,
   };
+
+  if (customer?.email) {
+    formData['customer_email'] = customer.email;
+    formData['payment_intent_data[receipt_email]'] = customer.email;
+  }
 
   Object.entries(metadata || {}).forEach(([key, value]) => {
     formData[`metadata[${key}]`] = String(value);
@@ -150,7 +156,7 @@ async function createOnlineCheckout({
   }
 
   if (provider === 'STRIPE') {
-    return createStripeCheckout({ amount, currency, paymentId, returnUrl, cancelUrl, installments, metadata });
+    return createStripeCheckout({ amount, currency, paymentId, returnUrl, cancelUrl, installments, metadata, customer });
   }
 
   if (provider === 'GOCARDLESS') {
@@ -177,6 +183,47 @@ async function createOnlineCheckout({
     checkoutUrl: `${returnUrl}?payment_ref=${fakeExternalId}&amount=${amount}&currency=${currency}`,
     cancelUrl,
   };
+}
+
+async function captureStripePaymentIntent(paymentIntentId) {
+  if (!hasConfigValue(config.payments.stripeSecretKey)) {
+    throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
+  }
+
+  const response = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}/capture`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.payments.stripeSecretKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || 'Erreur Stripe lors de la capture du paiement');
+  }
+
+  return data;
+}
+
+async function getStripeCheckoutSession(sessionId) {
+  if (!hasConfigValue(config.payments.stripeSecretKey)) {
+    throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
+  }
+
+  const response = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${config.payments.stripeSecretKey}`,
+    },
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || 'Erreur Stripe lors de la récupération de la session Checkout');
+  }
+
+  return data;
 }
 
 async function completeGoCardlessRedirectFlow({ redirectFlowId, sessionToken }) {
@@ -245,6 +292,8 @@ function verifyGoCardlessWebhookSignature(rawBody, signatureHeader) {
 module.exports = {
   createOnlineCheckout,
   completeGoCardlessRedirectFlow,
+  captureStripePaymentIntent,
+  getStripeCheckoutSession,
   providerConfigured,
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,

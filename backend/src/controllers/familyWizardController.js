@@ -1,17 +1,19 @@
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { PrismaClient, Prisma } = require('@prisma/client');
-const { sendVerificationEmail, sendEnrollmentConfirmationEmail } = require('../services/emailService');
+const { sendVerificationEmail, sendEnrollmentConfirmationEmail, sendMail } = require('../services/emailService');
 const { resolvePricingConfig, calculateFamilyTotal, buildInstallmentSchedule } = require('../services/pricingService');
 const { createOnlineCheckout } = require('../services/paymentProviders');
 const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
 const { savePhotoBase64 } = require('../utils/photoUtils');
+const { isRegistrationBlocked } = require('../services/systemService');
 const config = require('../config');
 
 const prisma = new PrismaClient();
 
 const ENGAGEMENT_TEXT_VERSION = 'engagement-v1-2026';
 const SANITARY_TEXT_VERSION = 'fiche-sanitaire-v1-2026';
+const REGISTRATION_PENDING_VALIDATION_MESSAGE = 'Votre inscription a bien été prise en compte, une validation par le service secrétériat interviendra sous peu.';
 
 function toDecimal(value) {
   return new Prisma.Decimal(value || 0);
@@ -186,6 +188,11 @@ function validateHealthForm(healthForm = {}) {
 
 async function completeExistingFamilyRegistration(req, res) {
   try {
+    const blocked = await isRegistrationBlocked();
+    if (blocked) {
+      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquées par le secrétariat' });
+    }
+
     const payload = req.body || {};
     const address = payload.address || {};
     const members = payload.members || [];
@@ -230,6 +237,29 @@ async function completeExistingFamilyRegistration(req, res) {
       include: { level: { include: { pole: true } } },
     });
     const classById = new Map(classes.map((c) => [c.id, c]));
+
+    // ensure there is a fictive / provisional class for new students without class selection
+    let fictiveClass = await prisma.class.findFirst({
+      where: { schoolYearId: currentYear.id, teacherName: 'AFFECTATION_PROVISOIRE' },
+    });
+    if (!fictiveClass) {
+      const anyLevel = await prisma.level.findFirst();
+      if (!anyLevel) throw new Error('Niveau introuvable pour créer la classe provisoire');
+      fictiveClass = await prisma.class.create({
+        data: {
+          schoolYearId: currentYear.id,
+          levelId: anyLevel.id,
+          dayOfWeek: 'N/A',
+          startTime: '00:00',
+          endTime: '00:00',
+          room: 'AFFECTATION_PROVISOIRE',
+          teacherName: 'AFFECTATION_PROVISOIRE',
+          capacity: 1000,
+          enrolledCount: 0,
+          status: 'OPEN',
+        },
+      });
+    }
 
     const pricingConfig = await resolvePricingConfig(prisma);
     const enrollmentForPricing = courseSelections
@@ -309,28 +339,32 @@ async function completeExistingFamilyRegistration(req, res) {
         const student = students[studentIndex];
         if (!student) continue;
 
-        if (cls.enrolledCount >= cls.capacity || cls.status === 'FULL') {
-          throw new Error(`Le créneau ${cls.dayOfWeek} ${cls.startTime}-${cls.endTime} est complet`);
+        const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
+        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+        const enrollmentData = {
+          registrationCode,
+          studentId: student.id,
+          classId: cls.id,
+          schoolYearId: currentYear.id,
+          status: 'PENDING',
+        };
+
+        if (isFull) {
+          // Put on waitlist (do not increment enrolledCount)
+          enrollmentData.comment = 'Liste d\'attente';
         }
 
-        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
-        const enrollment = await tx.enrollment.create({
-          data: {
-            registrationCode,
-            studentId: student.id,
-            classId: cls.id,
-            schoolYearId: currentYear.id,
-            status: 'PENDING',
-          },
-        });
+        const enrollment = await tx.enrollment.create({ data: enrollmentData });
 
-        await tx.class.update({
-          where: { id: cls.id },
-          data: {
-            enrolledCount: { increment: 1 },
-            status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
-          },
-        });
+        if (!isFull) {
+          await tx.class.update({
+            where: { id: cls.id },
+            data: {
+              enrolledCount: { increment: 1 },
+              status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+            },
+          });
+        }
 
         createdEnrollments.push(enrollment);
       }
@@ -410,6 +444,28 @@ async function completeExistingFamilyRegistration(req, res) {
             }),
           },
         });
+      }
+
+      // Create enrollments for students that do not have one (assigned to fictive class)
+      for (let i = 0; i < students.length; i += 1) {
+        const student = students[i];
+        const already = createdEnrollments.find((e) => e.studentId === student.id);
+        if (!already) {
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollment = await tx.enrollment.create({
+            data: {
+              registrationCode,
+              studentId: student.id,
+              classId: fictiveClass.id,
+              schoolYearId: currentYear.id,
+              status: 'PENDING',
+              comment: 'Affectation provisoire — à confirmer par l’administration',
+            },
+          });
+
+          await tx.class.update({ where: { id: fictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
+          createdEnrollments.push(enrollment);
+        }
       }
 
       await tx.enrollmentConsent.create({
@@ -565,7 +621,7 @@ async function completeExistingFamilyRegistration(req, res) {
             status: 'INITIATED',
             description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
-              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par AMC.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
+              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
             },
           },
         });
@@ -596,6 +652,25 @@ async function completeExistingFamilyRegistration(req, res) {
 
     void sendEnrollmentConfirmationEmail(req.user, `${childrenSummaryHtml}${paymentDetailsHtml}`)
       .catch((emailError) => console.error('Erreur envoi email d’inscription existante:', emailError));
+
+    // Notify admins about provisional enrollments (if any were created)
+    try {
+      const adminUsers = await prisma.user.findMany({ where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } }, select: { email: true, firstName: true } });
+      const adminEmails = adminUsers.map((u) => u.email).filter(Boolean);
+      if (adminEmails.length > 0 && result.enrollments && result.enrollments.length > 0) {
+        const provisionalListHtml = result.enrollments.map((en) => `• ${en.registrationCode || en.id} — ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Élève'}`).join('<br/>');
+        const contentHtml = `
+          <p>Bonjour,</p>
+          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont été créées via l’assistant famille :</p>
+          <div style="margin:12px 0;padding:12px;background:#FEF3C7;border-radius:8px;">${provisionalListHtml}</div>
+          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces élèves :</p>
+          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">Accéder aux inscriptions</a></p>
+        `;
+        await sendMail({ to: adminEmails.join(','), subject: 'AMC — Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
+      }
+    } catch (err) {
+      console.error('Erreur notification admins pour inscriptions provisoires:', err?.message || err);
+    }
 
     return res.status(201).json({
       message: 'Inscription du nouveau membre enregistrée. Les inscriptions seront confirmées après paiement réussi.',
@@ -647,7 +722,7 @@ async function createFamilyPortalAccount(req, res) {
           lastName: account.lastName,
           phone: account.phone,
           role: 'FAMILLE',
-          validationStatus: 'PENDING',
+          validationStatus: 'APPROVED',
           emailVerifyToken,
         },
       });
@@ -688,6 +763,11 @@ async function createFamilyPortalAccount(req, res) {
 
 async function completeFamilyRegistration(req, res) {
   try {
+    const blocked = await isRegistrationBlocked();
+    if (blocked) {
+      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquées par le secrétariat' });
+    }
+
     const payload = req.body || {};
     const account = payload.account || {};
     const address = payload.address || {};
@@ -767,7 +847,7 @@ async function completeFamilyRegistration(req, res) {
           lastName: account.lastName,
           phone: account.phone || address.phonePrimary,
           role: 'FAMILLE',
-          validationStatus: 'PENDING',
+          validationStatus: 'APPROVED',
           emailVerifyToken,
         },
       });
@@ -816,28 +896,32 @@ async function completeFamilyRegistration(req, res) {
         const student = students[studentIndex];
         if (!student) continue;
 
-        if (cls.enrolledCount >= cls.capacity || cls.status === 'FULL') {
-          throw new Error(`Le créneau ${cls.dayOfWeek} ${cls.startTime}-${cls.endTime} est complet`);
+        const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
+        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+        const enrollmentData = {
+          registrationCode,
+          studentId: student.id,
+          classId: cls.id,
+          schoolYearId: currentYear.id,
+          status: 'PENDING',
+        };
+
+        if (isFull) {
+          // Put on waitlist (do not increment enrolledCount)
+          enrollmentData.comment = 'Liste d\'attente';
         }
 
-        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
-        const enrollment = await tx.enrollment.create({
-          data: {
-            registrationCode,
-            studentId: student.id,
-            classId: cls.id,
-            schoolYearId: currentYear.id,
-            status: 'PENDING',
-          },
-        });
+        const enrollment = await tx.enrollment.create({ data: enrollmentData });
 
-        await tx.class.update({
-          where: { id: cls.id },
-          data: {
-            enrolledCount: { increment: 1 },
-            status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
-          },
-        });
+        if (!isFull) {
+          await tx.class.update({
+            where: { id: cls.id },
+            data: {
+              enrolledCount: { increment: 1 },
+              status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+            },
+          });
+        }
 
         createdEnrollments.push(enrollment);
       }
@@ -1073,7 +1157,7 @@ async function completeFamilyRegistration(req, res) {
             status: 'INITIATED',
             description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
-              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par AMC.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
+              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
             },
           },
         });
@@ -1113,8 +1197,27 @@ async function completeFamilyRegistration(req, res) {
     void sendEnrollmentConfirmationEmail(result.user, `${familySummary}${paymentDetailsHtml}${activationHtml}`)
       .catch((emailError) => console.error('Erreur envoi email d’inscription famille:', emailError));
 
+    // Notify admins about provisional enrollments (if any were created)
+    try {
+      const adminUsers = await prisma.user.findMany({ where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } }, select: { email: true, firstName: true } });
+      const adminEmails = adminUsers.map((u) => u.email).filter(Boolean);
+      if (adminEmails.length > 0 && result.enrollments && result.enrollments.length > 0) {
+        const provisionalListHtml = result.enrollments.map((en) => `• ${en.registrationCode || en.id} — ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Élève'}`).join('<br/>');
+        const contentHtml = `
+          <p>Bonjour,</p>
+          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont été créées via l’assistant famille :</p>
+          <div style="margin:12px 0;padding:12px;background:#FEF3C7;border-radius:8px;">${provisionalListHtml}</div>
+          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces élèves :</p>
+          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">Accéder aux inscriptions</a></p>
+        `;
+        await sendMail({ to: adminEmails.join(','), subject: 'AMC — Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
+      }
+    } catch (err) {
+      console.error('Erreur notification admins pour inscriptions provisoires:', err?.message || err);
+    }
+
     return res.status(201).json({
-      message: 'Inscription famille enregistrée. Vérifiez votre email pour activer votre compte. Les inscriptions des membres seront confirmées après paiement réussi.',
+      message: REGISTRATION_PENDING_VALIDATION_MESSAGE,
       user: {
         id: result.user.id,
         email: result.user.email,
