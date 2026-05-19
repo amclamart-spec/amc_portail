@@ -99,6 +99,22 @@ function authorizePermission(...permissions) {
   };
 }
 
+function authorizeAnyPermission(...permissions) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Non authentifié' });
+
+    const hasAny = permissions.some((p) => hasPermission(req.user.role, p));
+    if (!hasAny) {
+      return res.status(403).json({
+        error: 'Permission insuffisante',
+        required: permissions,
+      });
+    }
+
+    next();
+  };
+}
+
 function requireApproved(req, res, next) {
   if (req.user.validationStatus !== 'APPROVED' && req.user.role !== 'SUPER_ADMIN') {
     return res.status(403).json({
@@ -114,5 +130,6 @@ module.exports = {
   authenticateOptional,
   authorize,
   authorizePermission,
+  authorizeAnyPermission,
   requireApproved,
 };

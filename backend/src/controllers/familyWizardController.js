@@ -5,6 +5,7 @@ const { sendVerificationEmail, sendEnrollmentConfirmationEmail, sendMail } = req
 const { resolvePricingConfig, calculateFamilyTotal, buildInstallmentSchedule } = require('../services/pricingService');
 const { createOnlineCheckout } = require('../services/paymentProviders');
 const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
+const { getProvisionalClassFilter, PROVISIONAL_CLASS_NAME } = require('../utils/provisionalClassUtils');
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { isRegistrationBlocked } = require('../services/systemService');
 const config = require('../config');
@@ -240,7 +241,10 @@ async function completeExistingFamilyRegistration(req, res) {
 
     // ensure there is a fictive / provisional class for new students without class selection
     let fictiveClass = await prisma.class.findFirst({
-      where: { schoolYearId: currentYear.id, teacherName: 'AFFECTATION_PROVISOIRE' },
+      where: {
+        schoolYearId: currentYear.id,
+        ...getProvisionalClassFilter(),
+      },
     });
     if (!fictiveClass) {
       const anyLevel = await prisma.level.findFirst();
@@ -252,8 +256,8 @@ async function completeExistingFamilyRegistration(req, res) {
           dayOfWeek: 'N/A',
           startTime: '00:00',
           endTime: '00:00',
-          room: 'AFFECTATION_PROVISOIRE',
-          teacherName: 'AFFECTATION_PROVISOIRE',
+          room: PROVISIONAL_CLASS_NAME,
+          teacherName: PROVISIONAL_CLASS_NAME,
           capacity: 1000,
           enrolledCount: 0,
           status: 'OPEN',
@@ -619,6 +623,7 @@ async function completeExistingFamilyRegistration(req, res) {
             method: paymentMethod,
             amount: toDecimal(paymentTotal),
             status: 'INITIATED',
+            payerName: `${family.user.firstName} ${family.user.lastName}`,
             description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
               instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
@@ -643,14 +648,20 @@ async function completeExistingFamilyRegistration(req, res) {
     });
 
     // Envoi du mail d'inscription enregistrée
-    const childrenSummaryHtml = `<strong>Enfant(s) enregistré(s) :</strong><br/>${result.students.map((s) => `• ${s.firstName} ${s.lastName}`).join('<br/>')}`;
+    const studentById = new Map(result.students.map((s) => [s.id, s]));
+    const enrollmentDetailsHtml = result.enrollments.map((en) => {
+      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+      const cls = classById.get(en.classId);
+      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+    }).join('<br/>');
     const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
       <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
       <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    await sendEnrollmentConfirmationEmail(req.user, `${childrenSummaryHtml}${paymentDetailsHtml}`);
+    await sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`);
 
     // Notify admins about provisional enrollments (if any were created)
     try {
@@ -809,6 +820,31 @@ async function completeFamilyRegistration(req, res) {
     });
     const classById = new Map(classes.map((c) => [c.id, c]));
 
+    let fictiveClass = await prisma.class.findFirst({
+      where: {
+        schoolYearId: currentYear.id,
+        ...getProvisionalClassFilter(),
+      },
+    });
+    if (!fictiveClass) {
+      const anyLevel = await prisma.level.findFirst();
+      if (!anyLevel) throw new Error('Niveau introuvable pour créer la classe provisoire');
+      fictiveClass = await prisma.class.create({
+        data: {
+          schoolYearId: currentYear.id,
+          levelId: anyLevel.id,
+          dayOfWeek: 'N/A',
+          startTime: '00:00',
+          endTime: '00:00',
+          room: PROVISIONAL_CLASS_NAME,
+          teacherName: PROVISIONAL_CLASS_NAME,
+          capacity: 1000,
+          enrolledCount: 0,
+          status: 'OPEN',
+        },
+      });
+    }
+
     const pricingConfig = await resolvePricingConfig(prisma);
 
     const enrollmentForPricing = courseSelections
@@ -923,6 +959,26 @@ async function completeFamilyRegistration(req, res) {
         }
 
         createdEnrollments.push(enrollment);
+      }
+
+      for (let i = 0; i < students.length; i += 1) {
+        const student = students[i];
+        const already = createdEnrollments.find((e) => e.studentId === student.id);
+        if (!already) {
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollment = await tx.enrollment.create({
+            data: {
+              registrationCode,
+              studentId: student.id,
+              classId: fictiveClass.id,
+              schoolYearId: currentYear.id,
+              status: 'PENDING',
+              comment: 'Affectation provisoire — à confirmer par l’administration',
+            },
+          });
+          await tx.class.update({ where: { id: fictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
+          createdEnrollments.push(enrollment);
+        }
       }
 
       for (let i = 0; i < students.length; i += 1) {
@@ -1154,6 +1210,7 @@ async function completeFamilyRegistration(req, res) {
             method: paymentMethod,
             amount: toDecimal(paymentTotal),
             status: 'INITIATED',
+            payerName: `${family.user.firstName} ${family.user.lastName}`,
             description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
               instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
@@ -1181,7 +1238,13 @@ async function completeFamilyRegistration(req, res) {
     });
 
     // Envoi du mail d'inscription enregistrée (avec activation si nécessaire)
-    const familySummary = `<strong>${result.students.length} enfant(s) inscrit(s) :</strong><br/>${result.students.map((s) => `• ${s.firstName} ${s.lastName}`).join('<br/>')}`;
+    const studentById = new Map(result.students.map((s) => [s.id, s]));
+    const enrollmentDetailsHtml = result.enrollments.map((en) => {
+      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+      const cls = classById.get(en.classId);
+      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+    }).join('<br/>');
     const verifyUrl = `${config.frontendUrl}/verify-email?token=${emailVerifyToken}`;
     const activationHtml = `<p>Pour activer votre compte famille, cliquez sur le bouton ci-dessous :</p>
       <p style="text-align:center;">
@@ -1193,7 +1256,7 @@ async function completeFamilyRegistration(req, res) {
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    await sendEnrollmentConfirmationEmail(result.user, `${familySummary}${paymentDetailsHtml}${activationHtml}`);
+    await sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}${activationHtml}`);
 
     // Notify admins about provisional enrollments (if any were created)
     try {

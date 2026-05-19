@@ -15,7 +15,9 @@ const {
   buildInstallmentSchedule,
 } = require('../services/pricingService');
 const { generateInvoicePDF, getInvoiceFilePath } = require('../utils/invoiceUtils');
+const { getReceiptInfo, saveReceiptFile } = require('../utils/receiptUtils');
 const config = require('../config');
+const { hasPermission, PERMISSIONS } = require('../config/permissions');
 
 const prisma = new PrismaClient();
 const frontendLoginUrl = `${config.frontendUrl.replace(/\/$/, '')}/login`;
@@ -191,6 +193,110 @@ function normalizeInstallmentsByMethod(method, installmentsCount) {
   throw new Error('Mode de paiement non supporté');
 }
 
+function getDefaultPayerName(family) {
+  if (!family) return null;
+  const name = [family.user?.firstName, family.user?.lastName].filter(Boolean).join(' ');
+  return name || family.familyName || null;
+}
+
+function userCanManageReceipt(user, payment) {
+  if (!user || !payment) return false;
+  if (hasPermission(user.role, PERMISSIONS.PAYMENTS_MANAGE)) return true;
+  if (hasPermission(user.role, PERMISSIONS.FAMILY_SELF_PAYMENTS) && payment.family?.userId === user.id) return true;
+  return false;
+}
+
+async function uploadPaymentReceipt(req, res) {
+  try {
+    const { paymentId } = req.params;
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { family: true },
+    });
+
+    if (!payment) return res.status(404).json({ error: 'Paiement introuvable' });
+    if (!userCanManageReceipt(req.user, payment)) {
+      return res.status(403).json({ error: 'Accès non autorisé' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'Aucun fichier de reçu fourni' });
+    }
+
+    const receiptInfo = saveReceiptFile(paymentId, req.file);
+    const metadata = {
+      ...(payment.metadata || {}),
+      receiptUrl: receiptInfo.relativePath,
+      receiptFileName: receiptInfo.filename,
+      receiptUploadedAt: new Date().toISOString(),
+    };
+
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { metadata },
+    });
+
+    return res.status(201).json({
+      receiptUrl: receiptInfo.relativePath,
+      filename: receiptInfo.filename,
+      downloadUrl: `/api/payments/${paymentId}/receipt/download`,
+    });
+  } catch (error) {
+    console.error('Erreur uploadPaymentReceipt:', error);
+    return res.status(500).json({ error: 'Erreur serveur lors de l’enregistrement du reçu' });
+  }
+}
+
+async function getPaymentReceipt(req, res) {
+  try {
+    const { paymentId } = req.params;
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { family: true },
+    });
+    if (!payment) return res.status(404).json({ error: 'Paiement introuvable' });
+    if (!userCanManageReceipt(req.user, payment)) {
+      return res.status(403).json({ error: 'Accès non autorisé' });
+    }
+    const receiptUrl = payment.metadata?.receiptUrl;
+    if (!receiptUrl) return res.status(404).json({ error: 'Reçu non disponible' });
+
+    return res.json({
+      receiptUrl,
+      filename: payment.metadata.receiptFileName || `recu-${paymentId}.pdf`,
+      downloadUrl: `/api/payments/${paymentId}/receipt/download`,
+    });
+  } catch (error) {
+    console.error('Erreur getPaymentReceipt:', error);
+    return res.status(500).json({ error: 'Erreur serveur lors de la récupération du reçu' });
+  }
+}
+
+async function downloadPaymentReceipt(req, res) {
+  try {
+    const { paymentId } = req.params;
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { family: true },
+    });
+    if (!payment) return res.status(404).json({ error: 'Paiement introuvable' });
+    if (!userCanManageReceipt(req.user, payment)) {
+      return res.status(403).json({ error: 'Accès non autorisé' });
+    }
+    const receiptUrl = payment.metadata?.receiptUrl;
+    if (!receiptUrl) return res.status(404).json({ error: 'Reçu non disponible' });
+
+    const filePath = getReceiptInfo(paymentId)?.filePath;
+    if (!filePath) return res.status(404).json({ error: 'Fichier de reçu introuvable' });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${payment.metadata.receiptFileName || `recu-${paymentId}.pdf`}"`);
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error('Erreur downloadPaymentReceipt:', error);
+    return res.status(500).json({ error: 'Erreur serveur lors du téléchargement du reçu' });
+  }
+}
+
 async function createFamilyEnrollmentPayment(req, res) {
   try {
     const { method, installmentsCount = 1, scheduleDay = 10, payerName } = req.body;
@@ -361,18 +467,24 @@ async function createFamilyEnrollmentPayment(req, res) {
       });
     }
 
+    const effectivePayerName = payerName && String(payerName).trim()
+      ? String(payerName).trim()
+      : getDefaultPayerName(family);
+
     if (provider === 'OFFLINE') {
       await prisma.paymentTransaction.create({
         data: {
           paymentId: payment.id,
           provider: 'OFFLINE',
-          method: 'CHEQUE',
+          method: paymentMethod,
           amount: toDecimal(paymentTotal),
           status: 'INITIATED',
-          payerName: payerName || null,
-          description: 'Paiement par chèque en attente de réception',
+          payerName: effectivePayerName,
+          description: 'Paiement par ' + (paymentMethod === 'ESPECES' ? 'espèces' : 'chèque') + ' en attente de réception',
           metadata: {
-            paymentInstructions: 'Déposez les chèques au bureau PARTAGE selon l\'échéancier fourni.',
+            paymentInstructions: paymentMethod === 'ESPECES'
+              ? 'Veuillez déposer le montant en espèces selon l\'échéancier fourni.'
+              : 'Déposez les chèques au bureau PARTAGE selon l\'échéancier fourni.',
           },
         },
       });
@@ -452,6 +564,7 @@ async function recordOfflinePayment(req, res) {
     const newPaidAmount = new Prisma.Decimal(payment.paidAmount).plus(toDecimal(amount));
     const isCompleted = newPaidAmount.greaterThanOrEqualTo(payment.totalAmount);
 
+    const defaultPayerName = getDefaultPayerName(payment.family);
     const [updatedPayment, transaction] = await prisma.$transaction([
       prisma.payment.update({
         where: { id: paymentId },
@@ -470,7 +583,7 @@ async function recordOfflinePayment(req, res) {
           amount: toDecimal(amount),
           status: 'SUCCEEDED',
           externalRef: transactionRef || null,
-          payerName: payerName || null,
+          payerName: payerName?.trim() || defaultPayerName,
           description: description || 'Paiement hors ligne',
           recordedById: req.user.id,
           processedAt: new Date(),
@@ -1350,5 +1463,8 @@ module.exports = {
   handleGoCardlessWebhook,
   downloadInvoice,
   getPaymentInvoice,
+  uploadPaymentReceipt,
+  getPaymentReceipt,
+  downloadPaymentReceipt,
   finalizeStripePayment,
 };

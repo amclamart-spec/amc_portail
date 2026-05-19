@@ -93,6 +93,12 @@ export default function FamilyChildren() {
     return url.startsWith('http') ? url : `${BACKEND_ORIGIN}${url}`;
   };
 
+  const isProvisionalClass = (cls) => {
+    if (!cls) return false;
+    const value = String(cls.teacherName || cls.room || '').trim();
+    return ['AFFECTATION_PROVISOIRE', 'Classe fictive'].includes(value);
+  };
+
   if (loading) return <p>Chargement...</p>;
 
   return (
@@ -133,11 +139,14 @@ export default function FamilyChildren() {
                     </div>
                     {s.enrollments?.length > 0 && (
                       <div style={{ marginTop: 8 }}>
-                        {s.enrollments.filter((e) => e.status !== 'CANCELLED').map((e) => (
-                          <span key={e.id} className="badge badge-info" style={{ marginRight: 6 }}>
-                            {e.class?.level?.pole?.name} — {e.class?.level?.name}
-                          </span>
-                        ))}
+                        {s.enrollments.filter((e) => e.status !== 'CANCELLED').map((e) => {
+                          const provisional = isProvisionalClass(e.class);
+                          return (
+                            <span key={e.id} className="badge badge-info" style={{ marginRight: 6 }}>
+                              {provisional ? 'Classe fictive' : `${e.class?.level?.pole?.name} — ${e.class?.level?.name}`}
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

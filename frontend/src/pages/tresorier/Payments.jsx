@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
+import { FiDownload } from 'react-icons/fi';
 
 const statusOptions = [
   { value: 'UPCOMING', label: 'À venir' },
@@ -20,7 +21,7 @@ const transactionStatusOptions = [
 export default function TresorierPayments() {
   const [transactions, setTransactions] = useState([]);
   const [plans, setPlans] = useState([]);
-  const [form, setForm] = useState({ paymentId: '', amount: '', method: 'CHEQUE', description: '', transactionRef: '', payerName: '' });
+  const [form, setForm] = useState({ amount: '', method: 'CHEQUE', description: '', payerName: '' });
   const [filters, setFilters] = useState({ payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
 
   const buildQueryParams = (values) => {
@@ -80,11 +81,14 @@ export default function TresorierPayments() {
     e.preventDefault();
     try {
       await api.post('/payments/offline', {
-        ...form,
         amount: Number(form.amount),
+        method: form.method,
+        description: form.description,
+        payerName: form.payerName,
       });
+
       toast.success('Paiement hors ligne enregistré');
-      setForm({ paymentId: '', amount: '', method: 'CHEQUE', description: '', transactionRef: '', payerName: '' });
+      setForm({ amount: '', method: 'CHEQUE', description: '', payerName: '' });
       load();
     } catch {
       toast.error('Erreur enregistrement paiement');
@@ -107,15 +111,13 @@ export default function TresorierPayments() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h3>Paiement hors ligne</h3>
-        <form onSubmit={submitOffline} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <input className="form-control" placeholder="ID paiement" value={form.paymentId} onChange={(e) => setForm((p) => ({ ...p, paymentId: e.target.value }))} required />
-          <input className="form-control" placeholder="Montant" type="number" step="0.01" value={form.amount} onChange={(e) => setForm((p) => ({ ...p, amount: e.target.value }))} required />
-          <select className="form-control" value={form.method} onChange={(e) => setForm((p) => ({ ...p, method: e.target.value }))}>
+        <form onSubmit={submitOffline} style={{ display: 'grid', gridTemplateColumns: '220px 220px 1fr', gap: 12, alignItems: 'end' }}>
+          <input className="form-control" placeholder="Montant" type="number" step="0.01" value={form.amount} onChange={(e) => setForm((p) => ({ ...p, amount: e.target.value }))} required style={{ maxWidth: 220 }} />
+          <select className="form-control" value={form.method} onChange={(e) => setForm((p) => ({ ...p, method: e.target.value }))} style={{ maxWidth: 220 }}>
             <option value="CHEQUE">Chèque</option>
             <option value="ESPECES">Espèces</option>
             <option value="VIREMENT">Virement</option>
           </select>
-          <input className="form-control" placeholder="Référence transaction" value={form.transactionRef} onChange={(e) => setForm((p) => ({ ...p, transactionRef: e.target.value }))} />
           <input className="form-control" placeholder="Nom du payeur" value={form.payerName} onChange={(e) => setForm((p) => ({ ...p, payerName: e.target.value }))} />
           <input className="form-control" placeholder="Description" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} style={{ gridColumn: '1 / -1' }} />
           <button className="btn btn-primary" type="submit" style={{ width: 'fit-content' }}>Enregistrer</button>
@@ -234,6 +236,7 @@ export default function TresorierPayments() {
                 <th>Méthode</th>
                 <th>Montant</th>
                 <th>Statut</th>
+                <th>Reçu</th>
               </tr>
             </thead>
             <tbody>
@@ -245,6 +248,32 @@ export default function TresorierPayments() {
                   <td>{t.method}</td>
                   <td>{Number(t.amount).toFixed(2)} €</td>
                   <td>{txStatusLabel(t.status)}</td>
+                  <td>
+                    {t.payment?.metadata?.receiptUrl ? (
+                      <button
+                        className="btn btn-outline btn-sm"
+                        onClick={async () => {
+                          try {
+                            const response = await api.get(`/payments/${t.paymentId}/invoice/download`, { responseType: 'blob' });
+                            const url = window.URL.createObjectURL(new Blob([response.data]));
+                            const link = document.createElement('a');
+                            link.href = url;
+                            link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
+                            document.body.appendChild(link);
+                            link.click();
+                            link.remove();
+                            window.URL.revokeObjectURL(url);
+                          } catch (error) {
+                            toast.error('Impossible de télécharger le reçu de paiement');
+                          }
+                        }}
+                      >
+                        <FiDownload size={16} /> Reçu
+                      </button>
+                    ) : (
+                      <span>Non dispo</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

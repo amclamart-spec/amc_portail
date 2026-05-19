@@ -3,9 +3,10 @@ const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const { PrismaClient, Prisma } = require('@prisma/client');
 const { v4: uuidv4 } = require('uuid');
-const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendMail } = require('../services/emailService');
+const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail } = require('../services/emailService');
 const { finalizeStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
+const { isProvisionalClass, getProvisionalClassFilter } = require('../utils/provisionalClassUtils');
 const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
 
 const prisma = new PrismaClient();
@@ -351,7 +352,7 @@ async function getEnrollments(req, res) {
       classWhere.status = 'FULL';
     }
     if (req.query.provisional === 'true') {
-      classWhere.teacherName = 'AFFECTATION_PROVISOIRE';
+      classWhere.OR = getProvisionalClassFilter().OR;
     }
     if (Object.keys(classWhere).length > 0) {
       where.class = classWhere;
@@ -392,7 +393,7 @@ async function getEnrollments(req, res) {
 
     // add provisional flag when enrollment.class indicates provisional assignment
     const enhanced = enrollments.map((e) => {
-      const isProvisional = e.class && (String(e.class.teacherName) === 'AFFECTATION_PROVISOIRE' || String(e.class.room) === 'AFFECTATION_PROVISOIRE');
+      const isProvisional = isProvisionalClass(e.class);
       const isWaitlist = e.status === 'PENDING' && (e.class?.status === 'FULL' || String(e.comment || '').toLowerCase().includes('liste d\'attente'));
       return { ...e, isProvisional, isWaitlist, waitlistOrder: null };
     });
@@ -441,7 +442,7 @@ async function findEnrollmentAndPayment(enrollmentId) {
   const enrollment = await prisma.enrollment.findUnique({
     where: { id: enrollmentId },
     include: {
-      student: { include: { family: true } },
+      student: { include: { family: { include: { user: true } } } },
       schoolYear: true,
     },
   });
@@ -509,9 +510,6 @@ async function getEnrollmentPayments(req, res) {
 async function createEnrollmentPayment(req, res) {
   try {
     const { payerName, date, method, status, comment, amount } = req.body;
-    if (!payerName || !String(payerName).trim()) {
-      return res.status(400).json({ error: 'Nom du payeur requis' });
-    }
     const parsedAmount = amount ? new Prisma.Decimal(amount) : null;
     if (!parsedAmount || parsedAmount.lte(0)) {
       return res.status(400).json({ error: 'Montant de paiement invalide' });
@@ -532,6 +530,15 @@ async function createEnrollmentPayment(req, res) {
     const { enrollment, payment } = await findEnrollmentAndPayment(req.params.id);
     let targetPayment = payment;
     const transactionStatus = status === 'validé' ? 'SUCCEEDED' : 'INITIATED';
+    const defaultPayer = [enrollment.student.family.user?.firstName, enrollment.student.family.user?.lastName]
+      .filter(Boolean)
+      .join(' ') || enrollment.student.family.familyName;
+    const normalizedPayerName = payerName && String(payerName).trim()
+      ? String(payerName).trim()
+      : (['CHEQUE', 'ESPECES'].includes(method) ? defaultPayer : null);
+    if (!normalizedPayerName) {
+      return res.status(400).json({ error: 'Nom du payeur requis' });
+    }
     const paymentData = {
       paymentMethod: method,
       provider: 'OFFLINE',
@@ -577,7 +584,7 @@ async function createEnrollmentPayment(req, res) {
         method,
         amount: parsedAmount,
         status: transactionStatus,
-        payerName: payerName.trim(),
+        payerName: normalizedPayerName,
         description: comment || 'Paiement ajouté par admin',
         recordedById: req.user.id,
         processedAt: txDate,
@@ -619,7 +626,7 @@ async function exportEnrollments(req, res) {
       classWhere.status = 'FULL';
     }
     if (provisional === true || provisional === 'true') {
-      classWhere.teacherName = 'AFFECTATION_PROVISOIRE';
+      classWhere.OR = getProvisionalClassFilter().OR;
     }
     if (Object.keys(classWhere).length > 0) {
       where.class = classWhere;
@@ -1093,7 +1100,7 @@ async function updateEnrollment(req, res) {
       include: {
         student: {
           include: {
-            family: true,
+            family: { include: { user: true } },
             healthForms: { include: { emergencyContacts: true, pickupAuthorizations: true } },
             enrollmentConsents: { where: { consentType: 'SANITARY_FORM' } },
           },
@@ -1105,6 +1112,31 @@ async function updateEnrollment(req, res) {
 
     if (status === 'CONFIRMED' && currentStatus !== 'CONFIRMED') {
       await confirmStripePaymentsForEnrollment(id);
+      if (updated?.student?.family?.user?.email) {
+        const familyUser = updated.student.family.user;
+        const classInfo = `${updated.class?.level?.pole?.name ? `${updated.class.level.pole.name} - ` : ''}${updated.class?.level?.name || 'Classe inconnue'}`;
+        const scheduleInfo = [updated.class?.dayOfWeek, updated.class?.startTime, updated.class?.endTime].filter(Boolean).join(' ');
+        const summaryHtml = `
+          <p><strong>Élève :</strong> ${updated.student.firstName} ${updated.student.lastName}</p>
+          <p><strong>Classe :</strong> ${classInfo}</p>
+          <p><strong>Horaires :</strong> ${scheduleInfo || 'Non renseignés'}</p>
+          <p><strong>Année scolaire :</strong> ${updated.schoolYear?.label || 'Non renseignée'}</p>
+        `;
+        await sendEnrollmentApprovedEmail(familyUser, summaryHtml);
+      }
+    } else if (status === 'CANCELLED' && currentStatus !== 'CANCELLED') {
+      if (updated?.student?.family?.user?.email) {
+        const familyUser = updated.student.family.user;
+        const classInfo = `${updated.class?.level?.pole?.name ? `${updated.class.level.pole.name} - ` : ''}${updated.class?.level?.name || 'Classe inconnue'}`;
+        const scheduleInfo = [updated.class?.dayOfWeek, updated.class?.startTime, updated.class?.endTime].filter(Boolean).join(' ');
+        const summaryHtml = `
+          <p><strong>Élève :</strong> ${updated.student.firstName} ${updated.student.lastName}</p>
+          <p><strong>Classe :</strong> ${classInfo}</p>
+          <p><strong>Horaires :</strong> ${scheduleInfo || 'Non renseignés'}</p>
+          <p><strong>Année scolaire :</strong> ${updated.schoolYear?.label || 'Non renseignée'}</p>
+        `;
+        await sendEnrollmentRejectedEmail(familyUser, summaryHtml, updated.comment || 'Aucun motif précisé.');
+      }
     }
 
     res.json({ enrollment: updated });
