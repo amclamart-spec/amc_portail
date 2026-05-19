@@ -81,7 +81,7 @@ export default function FamilyEnrollment() {
                   <div>
                     <strong style={{ fontSize: 16 }}>{enrollment.studentName}</strong>
                     <div style={{ color: '#6B7280', fontSize: 13, marginTop: 6 }}>
-                      {enrollment.poleName} — {enrollment.levelName} ({enrollment.levelCode})
+                      {enrollment.classLabel || `${enrollment.poleName} — ${enrollment.levelName} (${enrollment.levelCode})`}
                     </div>
                   </div>
                   <div style={getStatusStyles(enrollment.status)}>

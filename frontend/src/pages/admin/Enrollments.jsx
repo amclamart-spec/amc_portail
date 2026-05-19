@@ -664,9 +664,9 @@ export default function AdminEnrollments() {
                           </div>
                         )}
                       </td>
-                      <td style={{ padding: '16px 12px' }}>{e.class?.level?.pole?.name || '—'}</td>
-                      <td style={{ padding: '16px 12px' }}>{e.class?.level?.name || '—'}</td>
-                      <td style={{ padding: '16px 12px' }}>{e.class ? `${e.class.dayOfWeek} ${e.class.startTime}-${e.class.endTime}` : '—'}</td>
+                      <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.pole?.name || '—')}</td>
+                      <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.name || '—')}</td>
+                      <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'À affecter' : (e.class ? `${e.class.dayOfWeek} ${e.class.startTime}-${e.class.endTime}` : '—')}</td>
                       <td style={{ padding: '16px 12px' }}>
                         <span className={`badge ${waitlist ? 'badge-danger' : 'badge-success'}`}>
                           {waitlist ? 'Oui' : 'Non'}

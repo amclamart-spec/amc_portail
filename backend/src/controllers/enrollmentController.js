@@ -2,6 +2,7 @@ const { PrismaClient } = require('@prisma/client');
 const { calculateFamilyTotal, resolvePricingConfig } = require('../services/pricingService');
 const { sendEnrollmentConfirmationEmail } = require('../services/emailService');
 const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
+const { isProvisionalClass } = require('../utils/provisionalClassUtils');
 const { isRegistrationBlocked } = require('../services/systemService');
 
 const prisma = new PrismaClient();
@@ -164,14 +165,24 @@ async function getEnrollmentSummary(req, res) {
       status: e.status,
       room: e.class.room || null,
       teacherName: e.class.teacherName || null,
+      classLabel: `${e.class.level.pole.name} — ${e.class.level.name}`,
     }));
 
     // mark provisional enrollments (assigned to the provisional class)
     const enhanced = enrollmentData.map((d, idx) => {
       const cls = enrollments[idx].class;
-      const isProvisional = cls && (String(cls.teacherName) === 'AFFECTATION_PROVISOIRE' || String(cls.room) === 'AFFECTATION_PROVISOIRE');
+      const isProvisional = isProvisionalClass(cls);
       if (isProvisional) {
-        return { ...d, isProvisional: true, levelName: 'Affectation provisoire', schedule: 'À affecter', room: null, teacherName: null };
+        return {
+          ...d,
+          isProvisional: true,
+          classLabel: 'Classe fictive',
+          levelName: 'Classe fictive',
+          levelCode: '',
+          schedule: 'À affecter',
+          room: null,
+          teacherName: null,
+        };
       }
       return { ...d, isProvisional: false };
     });

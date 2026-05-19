@@ -559,26 +559,34 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         {((step === 0 && existingFamily) || (step === 1 && !existingFamily)) && (
           <div>
             <h3>Membres de la famille</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
-              <div className="form-group"><label>Nom *</label><input className="form-control" value={memberForm.lastName} onChange={(e) => setMemberForm((p) => ({ ...p, lastName: e.target.value }))} /></div>
-              <div className="form-group"><label>Prénom *</label><input className="form-control" value={memberForm.firstName} onChange={(e) => setMemberForm((p) => ({ ...p, firstName: e.target.value }))} /></div>
-              <div className="form-group"><label>Date naissance *</label><input type="date" className="form-control" value={memberForm.dateOfBirth} onChange={(e) => setMemberForm((p) => ({ ...p, dateOfBirth: e.target.value }))} /></div>
-              <div className="form-group"><label>Sexe</label><select className="form-control" value={memberForm.gender} onChange={(e) => setMemberForm((p) => ({ ...p, gender: e.target.value }))}><option value="GARCON">Garçon</option><option value="FILLE">Fille</option></select></div>
-              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label style={{ margin: 0 }}><input type="checkbox" checked={memberForm.isOldStudent || false} onChange={(e) => setMemberForm((p) => ({ ...p, isOldStudent: e.target.checked }))} /> Ancien élève</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'center' }} className="member-inline-row">
+              <div className="form-group member-inline">
+                <input className="form-control" placeholder="Nom *" value={memberForm.lastName} onChange={(e) => setMemberForm((p) => ({ ...p, lastName: e.target.value }))} />
               </div>
-              <div className="form-group">
-                <label>Photo de l'enfant</label>
-                <input type="file" accept="image/*" className="form-control" onChange={handleMemberPhotoChange} />
-                {memberForm.photoBase64 && (
-                  <img
-                    src={memberForm.photoBase64}
-                    alt="Aperçu photo" 
-                    style={{ width: 100, height: 100, objectFit: 'cover', borderRadius: 12, marginTop: 8, border: '1px solid #E2E8F0' }}
-                  />
-                )}
+              <div className="form-group member-inline">
+                <input className="form-control" placeholder="Prénom *" value={memberForm.firstName} onChange={(e) => setMemberForm((p) => ({ ...p, firstName: e.target.value }))} />
               </div>
-              <button className="btn btn-primary" onClick={addOrUpdateMember}>{editingMemberIndex !== null ? 'Mettre à jour' : 'Ajouter'}</button>
+              <div className="form-group member-inline">
+                <input type="date" className="form-control" placeholder="Date naissance *" value={memberForm.dateOfBirth} onChange={(e) => setMemberForm((p) => ({ ...p, dateOfBirth: e.target.value }))} />
+              </div>
+              <div className="form-group member-inline">
+                <select className="form-control" value={memberForm.gender} onChange={(e) => setMemberForm((p) => ({ ...p, gender: e.target.value }))}>
+                  <option value="GARCON">Garçon</option>
+                  <option value="FILLE">Fille</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ margin: 0 }} className="member-inline-legacy"><input type="checkbox" checked={memberForm.isOldStudent || false} onChange={(e) => setMemberForm((p) => ({ ...p, isOldStudent: e.target.checked }))} /> <span style={{ marginLeft: 8 }}>Ancien élève</span></label>
+                <label style={{ marginLeft: 8, display: 'flex', alignItems: 'center', gap: 8 }} className="member-photo-input">
+                  <input type="file" accept="image/*" className="form-control" onChange={handleMemberPhotoChange} />
+                </label>
+                <button className="btn btn-primary btn-sm" onClick={addOrUpdateMember} style={{ marginLeft: 8 }}>{editingMemberIndex !== null ? 'Mettre à jour' : 'Ajouter'}</button>
+              </div>
+              {memberForm.photoBase64 && (
+                <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-start', marginTop: 8 }}>
+                  <img src={memberForm.photoBase64} alt="Aperçu photo" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 12, border: '1px solid #E2E8F0' }} />
+                </div>
+              )}
             </div>
 
             <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
@@ -623,7 +631,9 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                         </label>
                       </div>
                       {!isOldStudent ? (
-                        <p style={{ marginTop: 12, color: '#475569' }}>Cochez « Ancien élève » pour choisir une classe.</p>
+                        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E' }}>
+                          <strong>Test de niveau requis :</strong> Un test de niveau est nécessaire pour pouvoir choisir une classe et finaliser l'inscription. Veuillez contacter le secrétariat pour organiser le test.
+                        </div>
                       ) : (
                         <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
                           {allClasses.map((cls) => {

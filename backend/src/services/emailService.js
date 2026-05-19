@@ -199,23 +199,61 @@ async function sendResetPasswordEmail(user, token) {
   });
 }
 
-async function sendEnrollmentConfirmationEmail(user, enrollmentSummary = '') {
+async function sendEnrollmentConfirmationEmail(user, enrollmentSummary = '', subject = 'Inscription enregistrée') {
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
     <p>Votre inscription a bien été enregistrée.</p>
-    ${enrollmentSummary ? `<div style="margin:18px 0;padding:18px;background:#eef2ff;border-radius:12px;">${enrollmentSummary}</div>` : ''}
+    ${enrollmentSummary ? `<div style="margin:18px 0;padding:18px;background:#eef2ff;border-radius:12px;"><strong>Détails des inscriptions :</strong><br/>${enrollmentSummary}</div>` : ''}
     <p>Nous vous enverrons un second email dès que le paiement sera validé et que l'inscription sera confirmée.</p>
   `;
 
   return sendMail({
     to: user.email,
-    subject: 'AMC — Inscription enregistrée',
+    subject,
     html: renderEmailHtml({
       title: 'Inscription enregistrée',
       subtitle: 'Votre inscription a bien été prise en compte',
       contentHtml,
     }),
   });
+}
+
+async function sendEnrollmentStatusEmail(user, subject, title, subtitle, summaryHtml) {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    ${summaryHtml}
+    <p style="margin-top:24px;">Merci de votre confiance.</p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject,
+    html: renderEmailHtml({
+      title,
+      subtitle,
+      contentHtml,
+    }),
+  });
+}
+
+async function sendEnrollmentApprovedEmail(user, enrollmentSummary = '') {
+  return sendEnrollmentStatusEmail(
+    user,
+    'Inscription validée',
+    'Inscription validée',
+    'Votre inscription a été validée par l’équipe administrative.',
+    `<p>Félicitations ! L’inscription suivante a été validée :</p><div style="margin:18px 0;padding:18px;background:#dcfce7;border-radius:12px;">${enrollmentSummary}</div>`,
+  );
+}
+
+async function sendEnrollmentRejectedEmail(user, enrollmentSummary = '', reason = '') {
+  return sendEnrollmentStatusEmail(
+    user,
+    'Inscription refusée',
+    'Inscription refusée',
+    'Votre inscription n’a pas été validée.',
+    `<p>Nous sommes désolés, l’inscription suivante a été refusée :</p><div style="margin:18px 0;padding:18px;background:#fee2e2;border-radius:12px;">${enrollmentSummary}</div>${reason ? `<p><strong>Motif :</strong> ${reason}</p>` : '<p>Pour plus d’informations, merci de contacter le secrétariat.</p>'}`,
+  );
 }
 
 async function sendPaymentConfirmationEmail(user, payment) {
@@ -352,6 +390,8 @@ module.exports = {
   sendVerificationEmail,
   sendResetPasswordEmail,
   sendEnrollmentConfirmationEmail,
+  sendEnrollmentApprovedEmail,
+  sendEnrollmentRejectedEmail,
   sendPaymentConfirmationEmail,
   sendAccountApprovedEmail,
   sendAccountRejectedEmail,
