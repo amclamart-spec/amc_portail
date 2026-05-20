@@ -1363,6 +1363,7 @@ module.exports = {
   getDraft,
   getPricingPreview,
   createFamilyPortalAccount,
+  checkEmailAvailability,
   completeFamilyRegistration,
   completeExistingFamilyRegistration,
 };
