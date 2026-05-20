@@ -73,7 +73,7 @@ function getIndividualCoursePrice(levelCode, pricing = DEFAULT_PRICING) {
 }
 
 function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = {}) {
-  const { skipRegistrationFee = false } = options;
+  const { skipRegistrationFee = false, existingArabicCount = 0 } = options;
   let arabicCount = 0;
   let coranScienceTotal = 0;
 
@@ -88,7 +88,7 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = 
   }
 
   const registrationFee = skipRegistrationFee ? 0 : (pricing.registrationFee || 0);
-  const arabicFee = calculateArabicFee(arabicCount, pricing);
+  const arabicFee = calculateArabicFee(arabicCount + existingArabicCount, pricing);
   const total = registrationFee + arabicFee + coranScienceTotal;
 
   return {
