@@ -1080,16 +1080,6 @@ async function updateEnrollment(req, res) {
         });
       }
     }
-    if (Object.keys(studentUpdates).length > 0) {
-      actions.push(prisma.student.update({ where: { id: enrollment.studentId }, data: studentUpdates }));
-    }
-    if (Object.keys(familyUpdates).length > 0) {
-      actions.push(prisma.family.update({ where: { id: enrollment.student.familyId }, data: familyUpdates }));
-    }
-    if (Object.keys(enrollmentUpdates).length > 0) {
-      actions.push(prisma.enrollment.update({ where: { id }, data: enrollmentUpdates }));
-    }
-    classTransactions.forEach((tx) => actions.push(prisma.class.update(tx)));
 
     if (actions.length > 0) {
       await prisma.$transaction(actions);
