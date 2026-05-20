@@ -27,6 +27,7 @@ import AdminExports from './pages/admin/Exports';
 import AdminMailing from './pages/admin/Mailing';
 import AdminPlanning from './pages/admin/Planning';
 import AdminChat from './pages/admin/Chat';
+import EnrollmentDashboard from './pages/EnrollmentDashboard';
 
 import TresorierDashboard from './pages/tresorier/Dashboard';
 import TresorierPayments from './pages/tresorier/Payments';
@@ -57,7 +58,7 @@ function App() {
       <Route path="/auth/google/callback" element={<GoogleCallback />} />
       <Route path="/super-admin" element={<PrivateRoute roles={['SUPER_ADMIN']}><Layout><SuperAdminDashboard /></Layout></PrivateRoute>} />
 
-      <Route path="/admin" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminDashboard /></Layout></PrivateRoute>} />
+      <Route path="/admin" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><EnrollmentDashboard /></Layout></PrivateRoute>} />
       <Route path="/admin/users" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminUsers /></Layout></PrivateRoute>} />
       <Route path="/admin/enrollments" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminEnrollments /></Layout></PrivateRoute>} />
       <Route path="/admin/settings" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminSettings /></Layout></PrivateRoute>} />
@@ -72,6 +73,7 @@ function App() {
       <Route path="/admin/planning" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminPlanning /></Layout></PrivateRoute>} />
       <Route path="/admin/chat" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminChat /></Layout></PrivateRoute>} />
       <Route path="/admin/mailing" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminMailing /></Layout></PrivateRoute>} />
+      <Route path="/admin/tableau-inscriptions" element={<Navigate to="/admin" replace />} />
 
       {/* Alias historiques */}
       <Route path="/admin/rooms" element={<Navigate to="/admin/salles" replace />} />

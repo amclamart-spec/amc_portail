@@ -126,6 +126,7 @@ async function getPricingPreview(req, res) {
 
     const pricingConfig = await resolvePricingConfig(prisma);
     let skipRegistrationFee = false;
+    let existingArabicCount = 0;
 
     if (req.user) {
       const family = await prisma.family.findUnique({ where: { userId: req.user.id } });
@@ -139,10 +140,28 @@ async function getPricingPreview(req, res) {
           },
         });
         skipRegistrationFee = existingCount > 0;
+
+        existingArabicCount = await prisma.enrollment.count({
+          where: {
+            student: { familyId: family.id },
+            schoolYearId: currentYear.id,
+            status: { in: ['PENDING', 'CONFIRMED'] },
+            class: {
+              level: {
+                pole: {
+                  name: { contains: 'arabe', mode: 'insensitive' },
+                },
+              },
+            },
+          },
+        });
       }
     }
 
-    const pricing = calculateFamilyTotal(enrollments, pricingConfig, { skipRegistrationFee });
+    const pricing = calculateFamilyTotal(enrollments, pricingConfig, {
+      skipRegistrationFee,
+      existingArabicCount,
+    });
 
     return res.json({ pricing, classes });
   } catch (error) {
@@ -285,8 +304,24 @@ async function completeExistingFamilyRegistration(req, res) {
       },
     });
 
+    const existingArabicCount = await prisma.enrollment.count({
+      where: {
+        student: { familyId: family.id },
+        schoolYearId: currentYear.id,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+        class: {
+          level: {
+            pole: {
+              name: { contains: 'arabe', mode: 'insensitive' },
+            },
+          },
+        },
+      },
+    });
+
     const pricing = calculateFamilyTotal(enrollmentForPricing, pricingConfig, {
       skipRegistrationFee: existingEnrollmentsCount > 0,
+      existingArabicCount,
     });
 
     const installmentsCount = Number(payment.installmentsCount || 1);
@@ -700,6 +735,25 @@ async function completeExistingFamilyRegistration(req, res) {
   } catch (error) {
     console.error('Erreur completeExistingFamilyRegistration:', error);
     return res.status(500).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function checkEmailAvailability(req, res) {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: 'Email requis' });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+    }
+
+    return res.json({ available: true });
+  } catch (error) {
+    console.error('Erreur checkEmailAvailability:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
 

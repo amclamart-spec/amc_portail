@@ -104,6 +104,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [memberForm, setMemberForm] = useState(emptyMember);
   const [editingMemberIndex, setEditingMemberIndex] = useState(null);
   const [activeHealthMember, setActiveHealthMember] = useState(0);
+  const [emailError, setEmailError] = useState('');
 
   const handleMemberPhotoChange = (event) => {
     const file = event.target.files?.[0];
@@ -228,6 +229,27 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
   const isEmailValid = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
+  const validateEmailAvailability = async (email) => {
+    if (!isEmailValid(email)) {
+      setEmailError('Veuillez saisir un email valide');
+      return false;
+    }
+
+    try {
+      await api.post('/family-wizard/check-email', { email });
+      setEmailError('');
+      return true;
+    } catch (error) {
+      if (error.response?.status === 409) {
+        setEmailError('Un compte existe déjà avec cet email');
+        toast.error('Un compte existe déjà avec cet email');
+        return false;
+      }
+      toast.error('Impossible de vérifier l’email pour le moment');
+      return false;
+    }
+  };
+
   const updateWizard = (path, value) => {
     setWizard((prev) => ({
       ...prev,
@@ -238,7 +260,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     }));
   };
 
-  const validateStep = () => {
+  const validateStep = async () => {
     if (!existingFamily && step === 0) {
       const a = wizard.address;
       const account = wizard.account;
@@ -248,6 +270,10 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       }
       if (!isEmailValid(account.email)) {
         toast.error('Veuillez saisir un email valide');
+        return false;
+      }
+      const emailAvailable = await validateEmailAvailability(account.email);
+      if (!emailAvailable) {
         return false;
       }
       if (!account.phone.trim()) {
@@ -328,7 +354,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   };
 
   const next = async () => {
-    if (!validateStep()) return;
+    if (!(await validateStep())) return;
     const target = Math.min(step + 1, steps.length - 1);
     setStep(target);
     await persistDraft(target);
@@ -527,7 +553,11 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             </div>
             <div className="form-group">
               <label>Email *</label>
-              <input type="email" className="form-control" value={wizard.account.email} onChange={(e) => updateWizard('account', { email: e.target.value })} />
+              <input type="email" className="form-control" value={wizard.account.email} onChange={(e) => {
+                updateWizard('account', { email: e.target.value });
+                setEmailError('');
+              }} />
+              {emailError ? <div style={{ color: '#dc2626', marginTop: 6, fontSize: 13 }}>{emailError}</div> : null}
             </div>
             <div className="form-group">
               <label>Téléphone *</label>
