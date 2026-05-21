@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
@@ -701,10 +701,45 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                         </label>
                       </div>
                       {!isOldStudent ? (
-                        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E' }}>
-                          <strong>Test de niveau requis :</strong> Un test de niveau est nécessaire pour pouvoir choisir une classe et finaliser l'inscription. Veuillez contacter le secrétariat pour organiser le test.
+                        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', marginBottom: 16 }}>
+                          <strong>Nouveau cours :</strong> Sélectionnez les pôles et cours disponibles. Un test de niveau sera organisé avec le secrétariat.
                         </div>
-                      ) : (
+                      ) : null}
+                      {!isOldStudent && poles.length > 0 ? (
+                        <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
+                          {poles.map((pole) => {
+                            const poleSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId);
+                            return (
+                              <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                  <div>
+                                    <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name}</div>
+                                    <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Cours de langue arabe'}</div>
+                                  </div>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={poleSelected}
+                                      onChange={() => {
+                                        setWizard((prev) => {
+                                          const exists = prev.courseSelections.some((s) => s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId);
+                                          const nextSelections = exists
+                                            ? prev.courseSelections.filter((s) => !(s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId))
+                                            : [...prev.courseSelections, { memberIndex, poleId: pole.id, classId: null }];
+                                          return { ...prev, courseSelections: nextSelections };
+                                        });
+                                      }}
+                                      style={{ cursor: 'pointer' }}
+                                    />
+                                    Sélectionner
+                                  </label>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      {isOldStudent && classesGroupedByPole.length > 0 ? (
                         <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
                           {classesGroupedByPole.map((group) => (
                             <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
@@ -766,7 +801,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                             </div>
                           ))}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   );
                 })}
@@ -922,18 +957,12 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             <div className="form-group">
               <label>Mode de paiement</label>
               <select className="form-control" value={wizard.payment.method} onChange={(e) => updateWizard('payment', { method: e.target.value })}>
-                {!wizard.members.some((member) => !member.isOldStudent) ? (
-                  <>
-                    <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
-                    <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
-                  </>
-                ) : null}
+                <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
+                <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
                 <option value="ESPECES">Espèces</option>
                 <option value="CHEQUE">Chèque</option>
               </select>
-              {wizard.members.some((member) => !member.isOldStudent) && (
-                <small style={{ color: '#475569' }}>Les paiements en ligne (Carte / SEPA) ne sont pas disponibles tant qu’au moins un enfant est nouveau.</small>
-              )}
+              
             </div>
             {pricingPreview && wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
               <div className="card" style={{ marginBottom: 14, background: '#FEF3C7' }}>
@@ -1007,3 +1036,4 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     </div>
   );
 }
+
