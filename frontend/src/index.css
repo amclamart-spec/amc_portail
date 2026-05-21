@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* ============================================
    AMC Portail — Styles Globaux
    ============================================ */
@@ -218,6 +222,18 @@ select.form-control {
 textarea.form-control {
   min-height: 80px;
   resize: vertical;
+}
+
+/* Member inline form styles */
+.member-inline-row .member-inline { margin-bottom: 0; }
+.member-inline-row .member-inline .form-control { padding: 8px 10px; font-size: 14px; }
+.member-inline-row .member-inline select.form-control { padding-top: 8px; padding-bottom: 8px; }
+.member-inline-legacy { font-weight: 700; color: var(--amc-text); }
+.member-photo-input .form-control { padding: 6px 8px; font-size: 13px; }
+
+@media (max-width: 768px) {
+  .member-inline-row { grid-template-columns: 1fr 1fr !important; }
+  .member-inline-row .member-photo-input { grid-column: 1 / -1; }
 }
 
 /* ============================================

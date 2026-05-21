@@ -19,7 +19,7 @@ if (!fs.existsSync(uploadsDir)) {
 async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
   return new Promise((resolve, reject) => {
     try {
-      const filename = `facture-${paymentData.id}.pdf`;
+      const filename = `recu-${paymentData.id}.pdf`;
       const filePath = path.join(uploadsDir, filename);
 
       const doc = new PDFDocument({ margin: 40, size: 'A4' });
@@ -33,19 +33,55 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
 
       doc.pipe(stream);
 
-      // Header with logo and title
-      doc.fontSize(11).font('Helvetica-Bold').text('ASSOCIATION DES MUSULMANS DE CLAMART', { align: 'center' });
-      doc.fontSize(9).font('Helvetica').text('Portail d\'Inscription Scolaire', { align: 'center' });
+      // Header with logos and title
+      // Try to locate AMC and PARTAGE logos
+      let amcLogoPath = null;
+      let partnerLogoPath = null;
+      const possibleLogoPaths = [
+        path.join(process.cwd(), 'frontend/public/amc_logo.png'),
+        path.join(process.cwd(), 'frontend/public/amc_logo.png'),
+        path.join(__dirname, '../../uploads/logo.png'),
+      ];
+      const possiblePartnerPaths = [
+        path.join(process.cwd(), 'frontend/public/amc_logo_partner.png'),
+        path.join(__dirname, '../../uploads/amc_logo_partner.png'),
+      ];
+
+      for (const p of possibleLogoPaths) {
+        if (fs.existsSync(p)) { amcLogoPath = p; break; }
+      }
+      for (const p of possiblePartnerPaths) {
+        if (fs.existsSync(p)) { partnerLogoPath = p; break; }
+      }
+
+      const headerTop = doc.y;
+      const logoWidth = 100;
+      try {
+        if (amcLogoPath) {
+          doc.image(amcLogoPath, 60, doc.y, { width: logoWidth });
+        }
+        if (partnerLogoPath) {
+          const rightX = doc.page.width - 60 - logoWidth;
+          doc.image(partnerLogoPath, rightX, doc.y, { width: logoWidth });
+        }
+      } catch (e) {
+        // ignore image rendering errors
+      }
+
+      // Title centered below logos
+      doc.moveDown(4);
+      doc.fontSize(11).font('Helvetica-Bold').text('ASSOCIATION PARTAGE ET DES MUSULMANS DE CLAMART', { align: 'center' });
+      doc.fontSize(9).font('Helvetica').text("Portail d'Inscription Scolaire", { align: 'center' });
       doc.moveDown(0.5);
 
-      // Invoice title
-      doc.fontSize(18).font('Helvetica-Bold').text('FACTURE', { align: 'center' });
+      // Invoice title -> Reçu
+      doc.fontSize(18).font('Helvetica-Bold').text('REÇU', { align: 'center' });
       doc.moveDown(0.3);
 
       // Invoice metadata
       const invoiceDate = new Date(paymentData.createdAt);
       doc.fontSize(9).font('Helvetica');
-      doc.text(`Numéro de facture: ${paymentData.id.substring(0, 8).toUpperCase()}`, { align: 'left' });
+      doc.text(`Numéro de reçu: ${paymentData.id.substring(0, 8).toUpperCase()}`, { align: 'left' });
       doc.text(`Date: ${invoiceDate.toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric' })}`);
       doc.moveDown(1);
 
@@ -73,6 +109,9 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
       doc.text(`Statut: ${paymentData.status === 'COMPLETED' ? 'PAYÉ' : paymentData.status}`, rightX, paymentY + 16);
       doc.text(`Méthode: ${formatPaymentMethod(paymentData.paymentMethod)}`, rightX, paymentY + 32);
       doc.text(`Montant: ${Number(paymentData.totalAmount).toFixed(2)}€`, rightX, paymentY + 48, { font: 'Helvetica-Bold' });
+      // Afficher le nom du payeur s'il est disponible
+      const payerName = paymentData.payerName || familyData.familyName || `${familyData.user.firstName} ${familyData.user.lastName}`;
+      doc.text(`Payeur: ${payerName}`, rightX, paymentY + 64);
 
       doc.moveDown(5);
 
@@ -164,18 +203,28 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
       doc.fontSize(10).font('Helvetica-Bold').text('TOTAL:', summaryLabelX, currentY);
       doc.text(`${Number(paymentData.totalAmount).toFixed(2)}€`, summaryAmountX, currentY, { align: 'right' });
 
-      // Footer
-      currentY = doc.page.height - 80;
+      // Footer with PARTAGE branding (Reçu)
+      currentY = doc.page.height - 110;
+      try {
+        if (partnerLogoPath) {
+          const pLogoW = 80;
+          const pX = (doc.page.width / 2) - (pLogoW / 2);
+          doc.image(partnerLogoPath, pX, currentY - 20, { width: pLogoW });
+        }
+      } catch (e) {
+        // ignore
+      }
+      doc.fontSize(9).font('Helvetica-Bold').text('Association PARTAGE • Portail AMC', 40, currentY + 30, { align: 'center', width: 515 });
       doc.fontSize(8).font('Helvetica').text(
-        'Cette facture a été générée automatiquement par le portail d\'inscription scolaire AMC.',
+        'Ce reçu a été généré automatiquement par le portail d\'inscription scolaire AMC.',
         40,
-        currentY,
+        currentY + 48,
         { align: 'center', width: 515 }
       );
       doc.text(
         `Générée le ${new Date().toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
         40,
-        currentY + 14,
+        currentY + 62,
         { align: 'center', width: 515 }
       );
 
@@ -205,7 +254,7 @@ function formatPaymentMethod(method) {
  * @returns {{filePath: string, filename: string, relativePath: string} | null}
  */
 function getInvoiceFilePath(paymentId) {
-  const filename = `facture-${paymentId}.pdf`;
+  const filename = `recu-${paymentId}.pdf`;
   const filePath = path.join(uploadsDir, filename);
 
   if (fs.existsSync(filePath)) {
@@ -223,14 +272,14 @@ function getInvoiceFilePath(paymentId) {
  * @param {string} paymentId
  */
 function deleteInvoiceFile(paymentId) {
-  const filePath = path.join(uploadsDir, `facture-${paymentId}.pdf`);
+  const filePath = path.join(uploadsDir, `recu-${paymentId}.pdf`);
   try {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
       return true;
     }
   } catch (error) {
-    console.error(`Erreur suppression facture ${paymentId}:`, error);
+    console.error(`Erreur suppression reçu ${paymentId}:`, error);
   }
   return false;
 }

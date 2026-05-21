@@ -1,12 +1,46 @@
 const bcrypt = require('bcryptjs');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
-const { PrismaClient } = require('@prisma/client');
+const { PrismaClient, Prisma } = require('@prisma/client');
 const { v4: uuidv4 } = require('uuid');
-const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendMail } = require('../services/emailService');
+const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail } = require('../services/emailService');
+const { finalizeStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
+const { isProvisionalClass, getProvisionalClassFilter } = require('../utils/provisionalClassUtils');
+const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
 
 const prisma = new PrismaClient();
+
+async function confirmStripePaymentsForEnrollment(enrollmentId) {
+  const stripePayments = await prisma.payment.findMany({
+    where: {
+      provider: 'STRIPE',
+      paymentMethod: 'CB',
+      status: 'PENDING',
+    },
+  });
+
+  for (const payment of stripePayments) {
+    const enrollmentIds = Array.isArray(payment.metadata?.enrollmentIds)
+      ? payment.metadata.enrollmentIds
+      : [];
+
+    if (!enrollmentIds.includes(enrollmentId)) {
+      continue;
+    }
+
+    const pendingCount = await prisma.enrollment.count({
+      where: {
+        id: { in: enrollmentIds },
+        status: 'PENDING',
+      },
+    });
+
+    if (pendingCount === 0) {
+      await finalizeStripePayment(payment.id);
+    }
+  }
+}
 
 const DAYS = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI', 'DIMANCHE'];
 
@@ -263,15 +297,66 @@ async function getStats(req, res) {
   }
 }
 
+async function getRegistrationBlockStatus(req, res) {
+  try {
+    const status = await getRegistrationBlock();
+    res.json(status);
+  } catch (error) {
+    console.error('Erreur getRegistrationBlockStatus:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateRegistrationBlockStatus(req, res) {
+  try {
+    const { blocked } = req.body;
+    if (typeof blocked !== 'boolean') {
+      return res.status(400).json({ error: 'blocked doit être un booléen' });
+    }
+
+    const setting = await setRegistrationBlock(blocked);
+    res.json({ blocked: String(setting.value).toLowerCase() === 'true' });
+  } catch (error) {
+    console.error('Erreur updateRegistrationBlockStatus:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 /**
  * GET /api/admin/enrollments
  */
 async function getEnrollments(req, res) {
   try {
-    const { schoolYearId, status, page = 1, limit = 20 } = req.query;
+    const { schoolYearId, status, studentName, poleId, classId, page = 1, limit = 20 } = req.query;
+    const waitlist = req.query.waitlist === 'true';
     const where = {};
     if (schoolYearId) where.schoolYearId = schoolYearId;
-    if (status) where.status = status;
+    if (waitlist) {
+      where.status = 'PENDING';
+    } else if (status) {
+      where.status = status;
+    }
+    if (studentName) {
+      where.student = {
+        OR: [
+          { firstName: { contains: studentName, mode: 'insensitive' } },
+          { lastName: { contains: studentName, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const classWhere = {};
+    if (classId) classWhere.id = classId;
+    if (poleId) classWhere.level = { poleId };
+    if (waitlist) {
+      classWhere.status = 'FULL';
+    }
+    if (req.query.provisional === 'true') {
+      classWhere.OR = getProvisionalClassFilter().OR;
+    }
+    if (Object.keys(classWhere).length > 0) {
+      where.class = classWhere;
+    }
 
     const studentHealthFormsInclude = schoolYearId
       ? { where: { schoolYearId }, include: { emergencyContacts: true, pickupAuthorizations: true } }
@@ -287,7 +372,7 @@ async function getEnrollments(req, res) {
         include: {
           student: {
             include: {
-              family: true,
+              family: { include: { user: true } },
               healthForms: studentHealthFormsInclude,
               enrollmentConsents: studentConsentsInclude,
             },
@@ -306,10 +391,309 @@ async function getEnrollments(req, res) {
       prisma.enrollment.count({ where }),
     ]);
 
-    res.json({ enrollments, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
+    // add provisional flag when enrollment.class indicates provisional assignment
+    const enhanced = enrollments.map((e) => {
+      const isProvisional = isProvisionalClass(e.class);
+      const isWaitlist = e.status === 'PENDING' && (e.class?.status === 'FULL' || String(e.comment || '').toLowerCase().includes('liste d\'attente'));
+      return { ...e, isProvisional, isWaitlist, waitlistOrder: null };
+    });
+
+    const waitlistClassIds = [...new Set(enhanced.filter((e) => e.isWaitlist && e.classId).map((e) => e.classId))];
+    if (waitlistClassIds.length > 0) {
+      const waitlistEnrollments = await prisma.enrollment.findMany({
+        where: {
+          status: 'PENDING',
+          classId: { in: waitlistClassIds },
+          OR: [
+            { class: { status: 'FULL' } },
+            { comment: { contains: 'liste d\'attente', mode: 'insensitive' } },
+          ],
+        },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, classId: true },
+      });
+      const waitlistOrderByClass = waitlistEnrollments.reduce((acc, item) => {
+        const classGroup = acc[item.classId] || [];
+        classGroup.push(item.id);
+        acc[item.classId] = classGroup;
+        return acc;
+      }, {});
+      const orders = {};
+      Object.entries(waitlistOrderByClass).forEach(([classId, ids]) => {
+        ids.forEach((enrollmentId, idx) => {
+          orders[`${classId}_${enrollmentId}`] = idx + 1;
+        });
+      });
+      enhanced.forEach((e) => {
+        if (e.isWaitlist && e.classId) {
+          e.waitlistOrder = orders[`${e.classId}_${e.id}`] || null;
+        }
+      });
+    }
+
+    res.json({ enrollments: enhanced, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
   } catch (error) {
     console.error('Erreur getEnrollments:', error);
     res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function findEnrollmentAndPayment(enrollmentId) {
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { id: enrollmentId },
+    include: {
+      student: { include: { family: { include: { user: true } } } },
+      schoolYear: true,
+    },
+  });
+
+  if (!enrollment) {
+    const error = new Error('Inscription introuvable');
+    error.status = 404;
+    throw error;
+  }
+
+  const payments = await prisma.payment.findMany({
+    where: {
+      familyId: enrollment.student.familyId,
+      schoolYearId: enrollment.schoolYearId,
+    },
+    include: {
+      transactions: { orderBy: { createdAt: 'desc' } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const payment = payments.find((p) => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(enrollmentId))
+    || payments[0] || null;
+
+  const attachedPayments = payments.filter((p) => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(enrollmentId));
+
+  return {
+    enrollment,
+    payment,
+    payments: attachedPayments.length > 0 ? attachedPayments : (payment ? [payment] : []),
+  };
+}
+
+async function getEnrollmentPayments(req, res) {
+  try {
+    const { payment, payments } = await findEnrollmentAndPayment(req.params.id);
+    const activePayments = (payments || []).filter((p) => ['PENDING', 'PARTIAL', 'OVERDUE', 'FAILED'].includes(p.status));
+    return res.json({
+      payments: activePayments.map((p) => ({
+        id: p.id,
+        status: p.status,
+        totalAmount: String(p.totalAmount),
+        paidAmount: String(p.paidAmount),
+        paymentMethod: p.paymentMethod,
+        provider: p.provider,
+        createdAt: p.createdAt,
+      })),
+      payment: payment ? {
+        id: payment.id,
+        status: payment.status,
+        totalAmount: String(payment.totalAmount),
+        paidAmount: String(payment.paidAmount),
+        paymentMethod: payment.paymentMethod,
+        provider: payment.provider,
+      } : null,
+      transactions: payment?.transactions || [],
+    });
+  } catch (error) {
+    console.error('Erreur getEnrollmentPayments:', error);
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createEnrollmentPayment(req, res) {
+  try {
+    const { payerName, date, method, status, comment, amount } = req.body;
+    const parsedAmount = amount ? new Prisma.Decimal(amount) : null;
+    if (!parsedAmount || parsedAmount.lte(0)) {
+      return res.status(400).json({ error: 'Montant de paiement invalide' });
+    }
+    const allowedMethods = ['CHEQUE', 'ESPECES', 'CB'];
+    if (!allowedMethods.includes(method)) {
+      return res.status(400).json({ error: 'Moyen de paiement invalide' });
+    }
+    const allowedStatuses = ['validé', 'non validé'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Statut de paiement invalide' });
+    }
+    const txDate = date ? new Date(date) : new Date();
+    if (Number.isNaN(txDate.getTime())) {
+      return res.status(400).json({ error: 'Date de paiement invalide' });
+    }
+
+    const { enrollment, payment } = await findEnrollmentAndPayment(req.params.id);
+    let targetPayment = payment;
+    const transactionStatus = status === 'validé' ? 'SUCCEEDED' : 'INITIATED';
+    const defaultPayer = [enrollment.student.family.user?.firstName, enrollment.student.family.user?.lastName]
+      .filter(Boolean)
+      .join(' ') || enrollment.student.family.familyName;
+    const normalizedPayerName = payerName && String(payerName).trim()
+      ? String(payerName).trim()
+      : (['CHEQUE', 'ESPECES'].includes(method) ? defaultPayer : null);
+    if (!normalizedPayerName) {
+      return res.status(400).json({ error: 'Nom du payeur requis' });
+    }
+    const paymentData = {
+      paymentMethod: method,
+      provider: 'OFFLINE',
+    };
+
+    if (!targetPayment) {
+      targetPayment = await prisma.payment.create({
+        data: {
+          familyId: enrollment.student.familyId,
+          schoolYearId: enrollment.schoolYearId,
+          totalAmount: parsedAmount,
+          paidAmount: transactionStatus === 'SUCCEEDED' ? parsedAmount : new Prisma.Decimal(0),
+          paymentMethod: method,
+          provider: 'OFFLINE',
+          numberOfInstallments: 1,
+          status: transactionStatus === 'SUCCEEDED' ? 'COMPLETED' : 'PENDING',
+          metadata: { enrollmentIds: [enrollment.id] },
+        },
+      });
+    } else {
+      const enrollmentIds = Array.isArray(targetPayment.metadata?.enrollmentIds)
+        ? [...new Set([...targetPayment.metadata.enrollmentIds, enrollment.id])]
+        : [enrollment.id];
+      const updateData = {
+        ...paymentData,
+        metadata: { ...targetPayment.metadata, enrollmentIds },
+      };
+      if (transactionStatus === 'SUCCEEDED') {
+        const newPaidAmount = new Prisma.Decimal(targetPayment.paidAmount).plus(parsedAmount);
+        updateData.paidAmount = newPaidAmount;
+        updateData.status = newPaidAmount.greaterThanOrEqualTo(targetPayment.totalAmount) ? 'COMPLETED' : 'PARTIAL';
+      }
+      targetPayment = await prisma.payment.update({
+        where: { id: targetPayment.id },
+        data: updateData,
+      });
+    }
+
+    const transaction = await prisma.paymentTransaction.create({
+      data: {
+        paymentId: targetPayment.id,
+        provider: 'OFFLINE',
+        method,
+        amount: parsedAmount,
+        status: transactionStatus,
+        payerName: normalizedPayerName,
+        description: comment || 'Paiement ajouté par admin',
+        recordedById: req.user.id,
+        processedAt: txDate,
+        createdAt: txDate,
+      },
+    });
+
+    return res.status(201).json({ transaction, payment: targetPayment });
+  } catch (error) {
+    console.error('Erreur createEnrollmentPayment:', error);
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function exportEnrollments(req, res) {
+  try {
+    const { schoolYearId, status, studentName, poleId, classId, waitlist, provisional } = req.body || {};
+    const where = {};
+    if (schoolYearId) where.schoolYearId = schoolYearId;
+    if (waitlist) {
+      where.status = 'PENDING';
+    } else if (status) {
+      where.status = status;
+    }
+    if (studentName) {
+      where.student = {
+        OR: [
+          { firstName: { contains: studentName, mode: 'insensitive' } },
+          { lastName: { contains: studentName, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const classWhere = {};
+    if (classId) classWhere.id = classId;
+    if (poleId) classWhere.level = { poleId };
+    if (waitlist) {
+      classWhere.status = 'FULL';
+    }
+    if (provisional === true || provisional === 'true') {
+      classWhere.OR = getProvisionalClassFilter().OR;
+    }
+    if (Object.keys(classWhere).length > 0) {
+      where.class = classWhere;
+    }
+
+    const enrollments = await prisma.enrollment.findMany({
+      where,
+      include: {
+        student: {
+          include: {
+            family: { include: { user: true } },
+          },
+        },
+        class: {
+          include: {
+            level: { include: { pole: true } },
+          },
+        },
+        schoolYear: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Inscriptions');
+    worksheet.columns = [
+      { header: 'Réf. inscription', key: 'registrationCode', width: 20 },
+      { header: 'Élève', key: 'studentName', width: 28 },
+      { header: 'Famille', key: 'familyName', width: 24 },
+      { header: 'Pôle', key: 'pole', width: 18 },
+      { header: 'Niveau', key: 'level', width: 18 },
+      { header: 'Créneau', key: 'schedule', width: 22 },
+      { header: 'Statut', key: 'status', width: 16 },
+      { header: 'Liste d\'attente', key: 'waitlist', width: 16 },
+      { header: 'Commentaire', key: 'comment', width: 30 },
+    ];
+
+    const rows = enrollments.map((enrollment) => {
+      const studentName = `${enrollment.student.lastName} ${enrollment.student.firstName}`.trim();
+      const familyName = enrollment.student.family?.familyName || '';
+      const pole = enrollment.class?.level?.pole?.name || '';
+      const level = enrollment.class?.level?.name || '';
+      const schedule = enrollment.class ? `${enrollment.class.dayOfWeek} ${enrollment.class.startTime}-${enrollment.class.endTime}` : '';
+      const isWaitlist = enrollment.status === 'PENDING' && (enrollment.class?.status === 'FULL' || String(enrollment.comment || '').toLowerCase().includes('liste d\'attente'));
+      return {
+        registrationCode: enrollment.registrationCode || '',
+        studentName,
+        familyName,
+        pole,
+        level,
+        schedule,
+        status: enrollment.status,
+        waitlist: isWaitlist ? 'Oui' : 'Non',
+        comment: enrollment.comment || '',
+      };
+    });
+
+    worksheet.addRows(rows);
+    worksheet.getRow(1).font = { bold: true };
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="inscriptions-${Date.now()}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Erreur exportEnrollments:', error);
+    res.status(500).json({ error: 'Erreur lors de l’export des inscriptions' });
   }
 }
 
@@ -519,31 +903,53 @@ async function updateEnrollment(req, res) {
     }
 
     const classTransactions = [];
-    const shouldIncrementNewClass = targetStatus === 'CONFIRMED' && (currentStatus !== 'CONFIRMED' || classChanged);
-    const shouldDecrementOldClass = currentStatus === 'CONFIRMED' && (targetStatus !== 'CONFIRMED' || classChanged);
-
-    if (shouldIncrementNewClass) {
-      const targetClass = classChanged ? newClass : enrollment.class;
-      if (targetClass.enrolledCount >= targetClass.capacity) {
-        return res.status(400).json({ error: 'Impossible de confirmer l’inscription : la classe est complète' });
+    // If the class changed, move the enrollment counts from old class to new class immediately
+    if (classChanged) {
+      // ensure new class has capacity
+      if (newClass.enrolledCount >= newClass.capacity) {
+        return res.status(400).json({ error: 'Impossible d’affecter : la classe cible est complète' });
       }
+      // increment new class
       classTransactions.push({
-        where: { id: targetClass.id },
+        where: { id: newClass.id },
         data: {
           enrolledCount: { increment: 1 },
-          status: targetClass.enrolledCount + 1 >= targetClass.capacity ? 'FULL' : 'OPEN',
+          status: newClass.enrolledCount + 1 >= newClass.capacity ? 'FULL' : 'OPEN',
         },
       });
-    }
-
-    if (shouldDecrementOldClass) {
-      classTransactions.push({
-        where: { id: enrollment.classId },
-        data: {
-          enrolledCount: { decrement: 1 },
-          status: 'OPEN',
-        },
-      });
+      // decrement old class if exists
+      if (enrollment.classId) {
+        classTransactions.push({
+          where: { id: enrollment.classId },
+          data: {
+            enrolledCount: { decrement: 1 },
+            status: 'OPEN',
+          },
+        });
+      }
+    } else {
+      // No class change: handle status transitions that affect counts
+      if (currentStatus !== 'CONFIRMED' && targetStatus === 'CONFIRMED') {
+        const targetClass = enrollment.class;
+        if (targetClass.enrolledCount >= targetClass.capacity) {
+          return res.status(400).json({ error: 'Impossible de confirmer l’inscription : la classe est complète' });
+        }
+        classTransactions.push({
+          where: { id: enrollment.classId },
+          data: {
+            enrolledCount: { increment: 1 },
+            status: targetClass.enrolledCount + 1 >= targetClass.capacity ? 'FULL' : 'OPEN',
+          },
+        });
+      } else if (currentStatus === 'CONFIRMED' && targetStatus !== 'CONFIRMED') {
+        classTransactions.push({
+          where: { id: enrollment.classId },
+          data: {
+            enrolledCount: { decrement: 1 },
+            status: 'OPEN',
+          },
+        });
+      }
     }
 
     const targetSchoolYearId = schoolYearId || enrollment.schoolYearId;
@@ -674,16 +1080,6 @@ async function updateEnrollment(req, res) {
         });
       }
     }
-    if (Object.keys(studentUpdates).length > 0) {
-      actions.push(prisma.student.update({ where: { id: enrollment.studentId }, data: studentUpdates }));
-    }
-    if (Object.keys(familyUpdates).length > 0) {
-      actions.push(prisma.family.update({ where: { id: enrollment.student.familyId }, data: familyUpdates }));
-    }
-    if (Object.keys(enrollmentUpdates).length > 0) {
-      actions.push(prisma.enrollment.update({ where: { id }, data: enrollmentUpdates }));
-    }
-    classTransactions.forEach((tx) => actions.push(prisma.class.update(tx)));
 
     if (actions.length > 0) {
       await prisma.$transaction(actions);
@@ -694,7 +1090,7 @@ async function updateEnrollment(req, res) {
       include: {
         student: {
           include: {
-            family: true,
+            family: { include: { user: true } },
             healthForms: { include: { emergencyContacts: true, pickupAuthorizations: true } },
             enrollmentConsents: { where: { consentType: 'SANITARY_FORM' } },
           },
@@ -703,6 +1099,35 @@ async function updateEnrollment(req, res) {
         schoolYear: true,
       },
     });
+
+    if (status === 'CONFIRMED' && currentStatus !== 'CONFIRMED') {
+      await confirmStripePaymentsForEnrollment(id);
+      if (updated?.student?.family?.user?.email) {
+        const familyUser = updated.student.family.user;
+        const classInfo = `${updated.class?.level?.pole?.name ? `${updated.class.level.pole.name} - ` : ''}${updated.class?.level?.name || 'Classe inconnue'}`;
+        const scheduleInfo = [updated.class?.dayOfWeek, updated.class?.startTime, updated.class?.endTime].filter(Boolean).join(' ');
+        const summaryHtml = `
+          <p><strong>Élève :</strong> ${updated.student.firstName} ${updated.student.lastName}</p>
+          <p><strong>Classe :</strong> ${classInfo}</p>
+          <p><strong>Horaires :</strong> ${scheduleInfo || 'Non renseignés'}</p>
+          <p><strong>Année scolaire :</strong> ${updated.schoolYear?.label || 'Non renseignée'}</p>
+        `;
+        await sendEnrollmentApprovedEmail(familyUser, summaryHtml);
+      }
+    } else if (status === 'CANCELLED' && currentStatus !== 'CANCELLED') {
+      if (updated?.student?.family?.user?.email) {
+        const familyUser = updated.student.family.user;
+        const classInfo = `${updated.class?.level?.pole?.name ? `${updated.class.level.pole.name} - ` : ''}${updated.class?.level?.name || 'Classe inconnue'}`;
+        const scheduleInfo = [updated.class?.dayOfWeek, updated.class?.startTime, updated.class?.endTime].filter(Boolean).join(' ');
+        const summaryHtml = `
+          <p><strong>Élève :</strong> ${updated.student.firstName} ${updated.student.lastName}</p>
+          <p><strong>Classe :</strong> ${classInfo}</p>
+          <p><strong>Horaires :</strong> ${scheduleInfo || 'Non renseignés'}</p>
+          <p><strong>Année scolaire :</strong> ${updated.schoolYear?.label || 'Non renseignée'}</p>
+        `;
+        await sendEnrollmentRejectedEmail(familyUser, summaryHtml, updated.comment || 'Aucun motif précisé.');
+      }
+    }
 
     res.json({ enrollment: updated });
   } catch (error) {
@@ -1864,7 +2289,10 @@ module.exports = {
   removeStudentFromClass,
   exportClassStudentsExcel,
   exportClassStudentsPdf,
+  exportEnrollments,
   sendMessageToClassFamilies,
+  getEnrollmentPayments,
+  createEnrollmentPayment,
 
   getTeachers,
   getTeacherById,
@@ -1872,6 +2300,8 @@ module.exports = {
   updateTeacher,
   resetTeacherPassword,
   deleteTeacher,
+  getRegistrationBlockStatus,
+  updateRegistrationBlockStatus,
   getStudentAcademicRecord,
   updateEnrollment,
 };

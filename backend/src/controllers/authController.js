@@ -68,6 +68,7 @@ async function register(req, res) {
     const emailVerifyToken = uuidv4();
 
     const userRole = ['FAMILLE', 'PROFESSEUR', 'ADMIN', 'TRESORIER'].includes(role) ? role : 'FAMILLE';
+    const validationStatus = userRole === 'FAMILLE' ? 'APPROVED' : 'PENDING';
     const user = await prisma.user.create({
       data: {
         email,
@@ -78,14 +79,22 @@ async function register(req, res) {
         phone,
         role: userRole,
         emailVerifyToken,
-        validationStatus: 'PENDING',
+        validationStatus,
       },
     });
 
-    await sendVerificationEmail(user, emailVerifyToken);
+    let emailWarning = null;
+    try {
+      await sendVerificationEmail(user, emailVerifyToken);
+    } catch (emailError) {
+      console.error('Erreur envoi email de vérification:', emailError);
+      emailWarning = 'Verification email could not be sent. Contactez l’administrateur pour activer le compte.';
+    }
 
-    res.status(201).json({
-      message: 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes famille sont validés après vérification de l’email.',
+    const responsePayload = {
+      message: userRole === 'FAMILLE'
+        ? 'Inscription réussie ! Votre compte famille est activé automatiquement. Vérifiez votre email pour confirmer votre adresse.'
+        : 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes professeur, administrateur et trésorier doivent être validés par un administrateur.',
       user: {
         id: user.id,
         email: user.email,
@@ -94,7 +103,13 @@ async function register(req, res) {
         role: user.role,
         validationStatus: user.validationStatus,
       },
-    });
+    };
+
+    if (emailWarning) {
+      responsePayload.warning = emailWarning;
+    }
+
+    res.status(201).json(responsePayload);
   } catch (error) {
     console.error('Erreur inscription:', error);
     res.status(500).json({ error: 'Erreur serveur lors de l\'inscription' });

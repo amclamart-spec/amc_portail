@@ -1,17 +1,20 @@
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { PrismaClient, Prisma } = require('@prisma/client');
-const { sendVerificationEmail, sendEnrollmentConfirmationEmail } = require('../services/emailService');
+const { sendVerificationEmail, sendEnrollmentConfirmationEmail, sendMail } = require('../services/emailService');
 const { resolvePricingConfig, calculateFamilyTotal, buildInstallmentSchedule } = require('../services/pricingService');
 const { createOnlineCheckout } = require('../services/paymentProviders');
 const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
+const { getProvisionalClassFilter, PROVISIONAL_CLASS_NAME } = require('../utils/provisionalClassUtils');
 const { savePhotoBase64 } = require('../utils/photoUtils');
+const { isRegistrationBlocked } = require('../services/systemService');
 const config = require('../config');
 
 const prisma = new PrismaClient();
 
 const ENGAGEMENT_TEXT_VERSION = 'engagement-v1-2026';
 const SANITARY_TEXT_VERSION = 'fiche-sanitaire-v1-2026';
+const REGISTRATION_PENDING_VALIDATION_MESSAGE = 'Votre inscription a bien été prise en compte, une validation par le service secrétériat interviendra sous peu.';
 
 function toDecimal(value) {
   return new Prisma.Decimal(value || 0);
@@ -106,7 +109,7 @@ async function getPricingPreview(req, res) {
 
     const classes = await prisma.class.findMany({
       where: { id: { in: classIds } },
-      include: { level: { include: { pole: true } } },
+      include: { level: { include: { pole: true } }, pole: true },
     });
 
     const classById = new Map(classes.map((c) => [c.id, c]));
@@ -115,14 +118,15 @@ async function getPricingPreview(req, res) {
         const cls = classById.get(selection.classId);
         if (!cls) return null;
         return {
-          poleName: cls.level.pole.name,
-          levelCode: cls.level.code,
+          poleName: cls.level?.pole?.name || cls.pole?.name || '',
+          levelCode: cls.level?.code || '',
         };
       })
       .filter(Boolean);
 
     const pricingConfig = await resolvePricingConfig(prisma);
     let skipRegistrationFee = false;
+    let existingArabicCount = 0;
 
     if (req.user) {
       const family = await prisma.family.findUnique({ where: { userId: req.user.id } });
@@ -136,10 +140,28 @@ async function getPricingPreview(req, res) {
           },
         });
         skipRegistrationFee = existingCount > 0;
+
+        existingArabicCount = await prisma.enrollment.count({
+          where: {
+            student: { familyId: family.id },
+            schoolYearId: currentYear.id,
+            status: { in: ['PENDING', 'CONFIRMED'] },
+            class: {
+              level: {
+                pole: {
+                  name: { contains: 'arabe', mode: 'insensitive' },
+                },
+              },
+            },
+          },
+        });
       }
     }
 
-    const pricing = calculateFamilyTotal(enrollments, pricingConfig, { skipRegistrationFee });
+    const pricing = calculateFamilyTotal(enrollments, pricingConfig, {
+      skipRegistrationFee,
+      existingArabicCount,
+    });
 
     return res.json({ pricing, classes });
   } catch (error) {
@@ -186,6 +208,11 @@ function validateHealthForm(healthForm = {}) {
 
 async function completeExistingFamilyRegistration(req, res) {
   try {
+    const blocked = await isRegistrationBlocked();
+    if (blocked) {
+      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquées par le secrétariat' });
+    }
+
     const payload = req.body || {};
     const address = payload.address || {};
     const members = payload.members || [];
@@ -231,6 +258,32 @@ async function completeExistingFamilyRegistration(req, res) {
     });
     const classById = new Map(classes.map((c) => [c.id, c]));
 
+    // ensure there is a fictive / provisional class for new students without class selection
+    let fictiveClass = await prisma.class.findFirst({
+      where: {
+        schoolYearId: currentYear.id,
+        ...getProvisionalClassFilter(),
+      },
+    });
+    if (!fictiveClass) {
+      const anyLevel = await prisma.level.findFirst();
+      if (!anyLevel) throw new Error('Niveau introuvable pour créer la classe provisoire');
+      fictiveClass = await prisma.class.create({
+        data: {
+          schoolYearId: currentYear.id,
+          levelId: anyLevel.id,
+          dayOfWeek: 'N/A',
+          startTime: '00:00',
+          endTime: '00:00',
+          room: PROVISIONAL_CLASS_NAME,
+          teacherName: PROVISIONAL_CLASS_NAME,
+          capacity: 1000,
+          enrolledCount: 0,
+          status: 'OPEN',
+        },
+      });
+    }
+
     const pricingConfig = await resolvePricingConfig(prisma);
     const enrollmentForPricing = courseSelections
       .map((selection) => {
@@ -251,8 +304,24 @@ async function completeExistingFamilyRegistration(req, res) {
       },
     });
 
+    const existingArabicCount = await prisma.enrollment.count({
+      where: {
+        student: { familyId: family.id },
+        schoolYearId: currentYear.id,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+        class: {
+          level: {
+            pole: {
+              name: { contains: 'arabe', mode: 'insensitive' },
+            },
+          },
+        },
+      },
+    });
+
     const pricing = calculateFamilyTotal(enrollmentForPricing, pricingConfig, {
       skipRegistrationFee: existingEnrollmentsCount > 0,
+      existingArabicCount,
     });
 
     const installmentsCount = Number(payment.installmentsCount || 1);
@@ -309,28 +378,32 @@ async function completeExistingFamilyRegistration(req, res) {
         const student = students[studentIndex];
         if (!student) continue;
 
-        if (cls.enrolledCount >= cls.capacity || cls.status === 'FULL') {
-          throw new Error(`Le créneau ${cls.dayOfWeek} ${cls.startTime}-${cls.endTime} est complet`);
+        const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
+        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+        const enrollmentData = {
+          registrationCode,
+          studentId: student.id,
+          classId: cls.id,
+          schoolYearId: currentYear.id,
+          status: 'PENDING',
+        };
+
+        if (isFull) {
+          // Put on waitlist (do not increment enrolledCount)
+          enrollmentData.comment = 'Liste d\'attente';
         }
 
-        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
-        const enrollment = await tx.enrollment.create({
-          data: {
-            registrationCode,
-            studentId: student.id,
-            classId: cls.id,
-            schoolYearId: currentYear.id,
-            status: 'PENDING',
-          },
-        });
+        const enrollment = await tx.enrollment.create({ data: enrollmentData });
 
-        await tx.class.update({
-          where: { id: cls.id },
-          data: {
-            enrolledCount: { increment: 1 },
-            status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
-          },
-        });
+        if (!isFull) {
+          await tx.class.update({
+            where: { id: cls.id },
+            data: {
+              enrolledCount: { increment: 1 },
+              status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+            },
+          });
+        }
 
         createdEnrollments.push(enrollment);
       }
@@ -410,6 +483,28 @@ async function completeExistingFamilyRegistration(req, res) {
             }),
           },
         });
+      }
+
+      // Create enrollments for students that do not have one (assigned to fictive class)
+      for (let i = 0; i < students.length; i += 1) {
+        const student = students[i];
+        const already = createdEnrollments.find((e) => e.studentId === student.id);
+        if (!already) {
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollment = await tx.enrollment.create({
+            data: {
+              registrationCode,
+              studentId: student.id,
+              classId: fictiveClass.id,
+              schoolYearId: currentYear.id,
+              status: 'PENDING',
+              comment: 'Affectation provisoire — à confirmer par l’administration',
+            },
+          });
+
+          await tx.class.update({ where: { id: fictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
+          createdEnrollments.push(enrollment);
+        }
       }
 
       await tx.enrollmentConsent.create({
@@ -563,9 +658,10 @@ async function completeExistingFamilyRegistration(req, res) {
             method: paymentMethod,
             amount: toDecimal(paymentTotal),
             status: 'INITIATED',
+            payerName: `${req.user.firstName} ${req.user.lastName}`,
             description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
-              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par AMC.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
+              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
             },
           },
         });
@@ -587,14 +683,42 @@ async function completeExistingFamilyRegistration(req, res) {
     });
 
     // Envoi du mail d'inscription enregistrée
-    const childrenSummaryHtml = `<strong>Enfant(s) enregistré(s) :</strong><br/>${result.students.map((s) => `• ${s.firstName} ${s.lastName}`).join('<br/>')}`;
+    const studentById = new Map(result.students.map((s) => [s.id, s]));
+    const enrollmentDetailsHtml = result.enrollments.map((en) => {
+      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+      const cls = classById.get(en.classId);
+      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+    }).join('<br/>');
     const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
       <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
       <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    await sendEnrollmentConfirmationEmail(req.user, `${childrenSummaryHtml}${paymentDetailsHtml}`);
+    // Envoi des emails en arrière-plan sans bloquer la réponse
+    sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+      console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+    });
+
+    // Notify admins about provisional enrollments (if any were created)
+    try {
+      const adminUsers = await prisma.user.findMany({ where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } }, select: { email: true, firstName: true } });
+      const adminEmails = adminUsers.map((u) => u.email).filter(Boolean);
+      if (adminEmails.length > 0 && result.enrollments && result.enrollments.length > 0) {
+        const provisionalListHtml = result.enrollments.map((en) => `• ${en.registrationCode || en.id} — ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Élève'}`).join('<br/>');
+        const contentHtml = `
+          <p>Bonjour,</p>
+          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont été créées via l’assistant famille :</p>
+          <div style="margin:12px 0;padding:12px;background:#FEF3C7;border-radius:8px;">${provisionalListHtml}</div>
+          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces élèves :</p>
+          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">Accéder aux inscriptions</a></p>
+        `;
+        await sendMail({ to: adminEmails.join(','), subject: 'AMC — Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
+      }
+    } catch (err) {
+      console.error('Erreur notification admins pour inscriptions provisoires:', err?.message || err);
+    }
 
     return res.status(201).json({
       message: 'Inscription du nouveau membre enregistrée. Les inscriptions seront confirmées après paiement réussi.',
@@ -614,6 +738,25 @@ async function completeExistingFamilyRegistration(req, res) {
   } catch (error) {
     console.error('Erreur completeExistingFamilyRegistration:', error);
     return res.status(500).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function checkEmailAvailability(req, res) {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: 'Email requis' });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+    }
+
+    return res.json({ available: true });
+  } catch (error) {
+    console.error('Erreur checkEmailAvailability:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
 
@@ -646,7 +789,7 @@ async function createFamilyPortalAccount(req, res) {
           lastName: account.lastName,
           phone: account.phone,
           role: 'FAMILLE',
-          validationStatus: 'PENDING',
+          validationStatus: 'APPROVED',
           emailVerifyToken,
         },
       });
@@ -687,6 +830,11 @@ async function createFamilyPortalAccount(req, res) {
 
 async function completeFamilyRegistration(req, res) {
   try {
+    const blocked = await isRegistrationBlocked();
+    if (blocked) {
+      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquées par le secrétariat' });
+    }
+
     const payload = req.body || {};
     const account = payload.account || {};
     const address = payload.address || {};
@@ -729,6 +877,31 @@ async function completeFamilyRegistration(req, res) {
     });
     const classById = new Map(classes.map((c) => [c.id, c]));
 
+    let fictiveClass = await prisma.class.findFirst({
+      where: {
+        schoolYearId: currentYear.id,
+        ...getProvisionalClassFilter(),
+      },
+    });
+    if (!fictiveClass) {
+      const anyLevel = await prisma.level.findFirst();
+      if (!anyLevel) throw new Error('Niveau introuvable pour créer la classe provisoire');
+      fictiveClass = await prisma.class.create({
+        data: {
+          schoolYearId: currentYear.id,
+          levelId: anyLevel.id,
+          dayOfWeek: 'N/A',
+          startTime: '00:00',
+          endTime: '00:00',
+          room: PROVISIONAL_CLASS_NAME,
+          teacherName: PROVISIONAL_CLASS_NAME,
+          capacity: 1000,
+          enrolledCount: 0,
+          status: 'OPEN',
+        },
+      });
+    }
+
     const pricingConfig = await resolvePricingConfig(prisma);
 
     const enrollmentForPricing = courseSelections
@@ -766,7 +939,7 @@ async function completeFamilyRegistration(req, res) {
           lastName: account.lastName,
           phone: account.phone || address.phonePrimary,
           role: 'FAMILLE',
-          validationStatus: 'PENDING',
+          validationStatus: 'APPROVED',
           emailVerifyToken,
         },
       });
@@ -815,30 +988,54 @@ async function completeFamilyRegistration(req, res) {
         const student = students[studentIndex];
         if (!student) continue;
 
-        if (cls.enrolledCount >= cls.capacity || cls.status === 'FULL') {
-          throw new Error(`Le créneau ${cls.dayOfWeek} ${cls.startTime}-${cls.endTime} est complet`);
+        const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
+        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+        const enrollmentData = {
+          registrationCode,
+          studentId: student.id,
+          classId: cls.id,
+          schoolYearId: currentYear.id,
+          status: 'PENDING',
+        };
+
+        if (isFull) {
+          // Put on waitlist (do not increment enrolledCount)
+          enrollmentData.comment = 'Liste d\'attente';
         }
 
-        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
-        const enrollment = await tx.enrollment.create({
-          data: {
-            registrationCode,
-            studentId: student.id,
-            classId: cls.id,
-            schoolYearId: currentYear.id,
-            status: 'PENDING',
-          },
-        });
+        const enrollment = await tx.enrollment.create({ data: enrollmentData });
 
-        await tx.class.update({
-          where: { id: cls.id },
-          data: {
-            enrolledCount: { increment: 1 },
-            status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
-          },
-        });
+        if (!isFull) {
+          await tx.class.update({
+            where: { id: cls.id },
+            data: {
+              enrolledCount: { increment: 1 },
+              status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+            },
+          });
+        }
 
         createdEnrollments.push(enrollment);
+      }
+
+      for (let i = 0; i < students.length; i += 1) {
+        const student = students[i];
+        const already = createdEnrollments.find((e) => e.studentId === student.id);
+        if (!already) {
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollment = await tx.enrollment.create({
+            data: {
+              registrationCode,
+              studentId: student.id,
+              classId: fictiveClass.id,
+              schoolYearId: currentYear.id,
+              status: 'PENDING',
+              comment: 'Affectation provisoire — à confirmer par l’administration',
+            },
+          });
+          await tx.class.update({ where: { id: fictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
+          createdEnrollments.push(enrollment);
+        }
       }
 
       for (let i = 0; i < students.length; i += 1) {
@@ -1070,9 +1267,10 @@ async function completeFamilyRegistration(req, res) {
             method: paymentMethod,
             amount: toDecimal(paymentTotal),
             status: 'INITIATED',
+            payerName: `${user.firstName} ${user.lastName}`,
             description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
-              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par AMC.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
+              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
             },
           },
         });
@@ -1097,7 +1295,13 @@ async function completeFamilyRegistration(req, res) {
     });
 
     // Envoi du mail d'inscription enregistrée (avec activation si nécessaire)
-    const familySummary = `<strong>${result.students.length} enfant(s) inscrit(s) :</strong><br/>${result.students.map((s) => `• ${s.firstName} ${s.lastName}`).join('<br/>')}`;
+    const studentById = new Map(result.students.map((s) => [s.id, s]));
+    const enrollmentDetailsHtml = result.enrollments.map((en) => {
+      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+      const cls = classById.get(en.classId);
+      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+    }).join('<br/>');
     const verifyUrl = `${config.frontendUrl}/verify-email?token=${emailVerifyToken}`;
     const activationHtml = `<p>Pour activer votre compte famille, cliquez sur le bouton ci-dessous :</p>
       <p style="text-align:center;">
@@ -1109,10 +1313,32 @@ async function completeFamilyRegistration(req, res) {
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    await sendEnrollmentConfirmationEmail(result.user, `${familySummary}${paymentDetailsHtml}${activationHtml}`);
+    // Envoi des emails en arrière-plan sans bloquer la réponse
+    sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}${activationHtml}`).catch((err) => {
+      console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+    });
+
+    // Notify admins about provisional enrollments (if any were created)
+    try {
+      const adminUsers = await prisma.user.findMany({ where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } }, select: { email: true, firstName: true } });
+      const adminEmails = adminUsers.map((u) => u.email).filter(Boolean);
+      if (adminEmails.length > 0 && result.enrollments && result.enrollments.length > 0) {
+        const provisionalListHtml = result.enrollments.map((en) => `• ${en.registrationCode || en.id} — ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Élève'}`).join('<br/>');
+        const contentHtml = `
+          <p>Bonjour,</p>
+          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont été créées via l’assistant famille :</p>
+          <div style="margin:12px 0;padding:12px;background:#FEF3C7;border-radius:8px;">${provisionalListHtml}</div>
+          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces élèves :</p>
+          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">Accéder aux inscriptions</a></p>
+        `;
+        await sendMail({ to: adminEmails.join(','), subject: 'AMC — Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
+      }
+    } catch (err) {
+      console.error('Erreur notification admins pour inscriptions provisoires:', err?.message || err);
+    }
 
     return res.status(201).json({
-      message: 'Inscription famille enregistrée. Vérifiez votre email pour activer votre compte. Les inscriptions des membres seront confirmées après paiement réussi.',
+      message: REGISTRATION_PENDING_VALIDATION_MESSAGE,
       user: {
         id: result.user.id,
         email: result.user.email,
@@ -1143,6 +1369,7 @@ module.exports = {
   getDraft,
   getPricingPreview,
   createFamilyPortalAccount,
+  checkEmailAvailability,
   completeFamilyRegistration,
   completeExistingFamilyRegistration,
 };

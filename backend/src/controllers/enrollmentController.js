@@ -2,6 +2,8 @@ const { PrismaClient } = require('@prisma/client');
 const { calculateFamilyTotal, resolvePricingConfig } = require('../services/pricingService');
 const { sendEnrollmentConfirmationEmail } = require('../services/emailService');
 const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
+const { isProvisionalClass } = require('../utils/provisionalClassUtils');
+const { isRegistrationBlocked } = require('../services/systemService');
 
 const prisma = new PrismaClient();
 
@@ -39,6 +41,7 @@ async function getAvailableClasses(req, res) {
       where,
       include: {
         level: { include: { pole: true } },
+        pole: true,
         schoolYear: true,
       },
       orderBy: { dayOfWeek: 'asc' },
@@ -55,6 +58,11 @@ async function getAvailableClasses(req, res) {
  */
 async function createEnrollment(req, res) {
   try {
+    const blocked = await isRegistrationBlocked();
+    if (blocked) {
+      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquées par le secrétariat' });
+    }
+
     const { studentId, classId } = req.body;
 
     // Vérifier que l'élève appartient à la famille
@@ -72,10 +80,6 @@ async function createEnrollment(req, res) {
     if (!cls) {
       return res.status(404).json({ error: 'Classe non trouvée' });
     }
-    if (cls.status === 'FULL' || cls.enrolledCount >= cls.capacity) {
-      return res.status(400).json({ error: 'Cette classe est complète' });
-    }
-
     // Vérifier l'âge minimum
     if (cls.level.minAge) {
       const age = Math.floor((Date.now() - student.dateOfBirth.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
@@ -162,13 +166,33 @@ async function getEnrollmentSummary(req, res) {
       status: e.status,
       room: e.class.room || null,
       teacherName: e.class.teacherName || null,
+      classLabel: `${e.class.level.pole.name} — ${e.class.level.name}`,
     }));
+
+    // mark provisional enrollments (assigned to the provisional class)
+    const enhanced = enrollmentData.map((d, idx) => {
+      const cls = enrollments[idx].class;
+      const isProvisional = isProvisionalClass(cls);
+      if (isProvisional) {
+        return {
+          ...d,
+          isProvisional: true,
+          classLabel: 'Classe fictive',
+          levelName: 'Classe fictive',
+          levelCode: '',
+          schedule: 'À affecter',
+          room: null,
+          teacherName: null,
+        };
+      }
+      return { ...d, isProvisional: false };
+    });
 
     const pricingConfig = await resolvePricingConfig(prisma);
     const pricing = calculateFamilyTotal(enrollmentData, pricingConfig);
 
     res.json({
-      enrollments: enrollmentData,
+      enrollments: enhanced,
       pricing,
       schoolYear: currentYear,
     });

@@ -225,7 +225,10 @@ export default function Layout({ children }) {
         className="sidebar-desktop"
       >
         <div style={{ padding: '20px', textAlign: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-          <img src="/amc_logo.png" alt="AMC" style={{ height: 60, marginBottom: 8 }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+            <img src="/amc_logo.png" alt="AMC" style={{ height: 60, marginBottom: 8 }} />
+            <img src="/amc_logo_partner.png" alt="PARTAGE" style={{ height: 48, opacity: 0.95 }} />
+          </div>
           <div style={{ fontSize: 13, opacity: 0.8 }}>Portail d'inscription</div>
         </div>
 

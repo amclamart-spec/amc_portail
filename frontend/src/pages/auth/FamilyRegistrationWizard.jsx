@@ -5,12 +5,13 @@ import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 
 const STORAGE_KEY_BASE = 'amc_family_wizard_draft_v1';
+const REGISTRATION_PENDING_VALIDATION_MESSAGE = 'Votre inscription a bien été prise en compte, une validation par le service secrétériat interviendra sous peu.';
 
 const engagementBulletPoints = [
   'Les élèves de moins de 11 ans doivent être accompagnés et récupérés par le responsable légal.',
   'Les familles s’engagent à respecter ponctualité, assiduité et suivi pédagogique à domicile.',
   'Tout changement de personne autorisée à récupérer l’enfant doit être signalé par écrit.',
-  'AMC est déchargée de responsabilité dès récupération de l’enfant devant sa salle.',
+  'PARTAGE est déchargée de responsabilité dès récupération de l’enfant devant sa salle.',
   'Le stationnement dangereux ou gênant aux abords du centre est strictement interdit.',
 ];
 
@@ -20,6 +21,7 @@ const emptyMember = {
   dateOfBirth: '',
   gender: 'GARCON',
   photoBase64: '',
+  isOldStudent: false,
 };
 
 const emptyHealthForm = {
@@ -102,6 +104,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [memberForm, setMemberForm] = useState(emptyMember);
   const [editingMemberIndex, setEditingMemberIndex] = useState(null);
   const [activeHealthMember, setActiveHealthMember] = useState(0);
+  const [emailError, setEmailError] = useState('');
 
   const handleMemberPhotoChange = (event) => {
     const file = event.target.files?.[0];
@@ -188,6 +191,14 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       .finally(() => setLoadingClasses(false));
   }, []);
 
+  useEffect(() => {
+    const hasNewChild = wizard.members.some((member) => !member.isOldStudent);
+    // If there is any new child, disallow online methods (Stripe / SEPA) and fallback to an offline method
+    if (hasNewChild && (wizard.payment.method === 'STRIPE_CARD' || wizard.payment.method === 'GO_CARDLESS_SEPA')) {
+      updateWizard('payment', { method: 'ESPECES' });
+    }
+  }, [wizard.members]);
+
   const selectedEnrollmentsLabel = useMemo(() => {
     return wizard.courseSelections.map((selection) => {
       const member = wizard.members[selection.memberIndex];
@@ -196,6 +207,40 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       return `${member.firstName} ${member.lastName} — ${cls.level?.pole?.name || ''} / ${cls.level?.name || ''} (${cls.dayOfWeek} ${cls.startTime}-${cls.endTime})`;
     }).filter(Boolean);
   }, [wizard.courseSelections, wizard.members, allClasses]);
+
+  const classesGroupedByPole = useMemo(() => {
+    const poleOrder = new Map(poles.map((pole, index) => [pole.id, index]));
+    const groups = new Map();
+
+    allClasses.forEach((cls) => {
+      const pole = cls.level?.pole || cls.pole;
+      const poleId = pole?.id || 'unknown';
+      const poleName = pole?.name || 'Autres';
+      const key = `${poleId}:${poleName}`;
+      if (!groups.has(key)) {
+        groups.set(key, { poleId, poleName, classes: [], sortOrder: poleOrder.has(poleId) ? poleOrder.get(poleId) : 999 });
+      }
+      groups.get(key).classes.push(cls);
+    });
+
+    return Array.from(groups.values())
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.poleName.localeCompare(b.poleName))
+      .map((group) => ({
+        ...group,
+        classes: group.classes.sort((a, b) => {
+          const levelOrder = (a.level?.sortOrder || 0) - (b.level?.sortOrder || 0);
+          if (levelOrder !== 0) return levelOrder;
+          if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek.localeCompare(b.dayOfWeek);
+          return a.startTime.localeCompare(b.startTime);
+        }),
+      }));
+  }, [allClasses, poles]);
+
+  useEffect(() => {
+    if (((existingFamily && step === 1) || (!existingFamily && step === 2))) {
+      refreshPricing();
+    }
+  }, [wizard.courseSelections, step, existingFamily]);
 
   const persistDraft = async (nextStep = step) => {
     const email = wizard.account.email || user?.email;
@@ -218,6 +263,27 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
   const isEmailValid = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
+  const validateEmailAvailability = async (email) => {
+    if (!isEmailValid(email)) {
+      setEmailError('Veuillez saisir un email valide');
+      return false;
+    }
+
+    try {
+      await api.post('/family-wizard/check-email', { email });
+      setEmailError('');
+      return true;
+    } catch (error) {
+      if (error.response?.status === 409) {
+        setEmailError('Un compte existe déjà avec cet email');
+        toast.error('Un compte existe déjà avec cet email');
+        return false;
+      }
+      toast.error('Impossible de vérifier l’email pour le moment');
+      return false;
+    }
+  };
+
   const updateWizard = (path, value) => {
     setWizard((prev) => ({
       ...prev,
@@ -228,7 +294,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     }));
   };
 
-  const validateStep = () => {
+  const validateStep = async () => {
     if (!existingFamily && step === 0) {
       const a = wizard.address;
       const account = wizard.account;
@@ -238,6 +304,10 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       }
       if (!isEmailValid(account.email)) {
         toast.error('Veuillez saisir un email valide');
+        return false;
+      }
+      const emailAvailable = await validateEmailAvailability(account.email);
+      if (!emailAvailable) {
         return false;
       }
       if (!account.phone.trim()) {
@@ -266,9 +336,16 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     }
 
     if ((existingFamily && step === 1) || (!existingFamily && step === 2)) {
-      if (wizard.courseSelections.length === 0) {
-        toast.error('Veuillez sélectionner au moins un cours');
-        return false;
+      const oldMemberIndices = wizard.members
+        .map((member, idx) => member.isOldStudent ? idx : -1)
+        .filter((idx) => idx !== -1);
+      if (oldMemberIndices.length > 0) {
+        const selectedOldMembers = new Set(wizard.courseSelections.map((s) => s.memberIndex));
+        const missingSelection = oldMemberIndices.some((idx) => !selectedOldMembers.has(idx));
+        if (missingSelection) {
+          toast.error('Veuillez sélectionner un cours pour chaque ancien élève');
+          return false;
+        }
       }
     }
 
@@ -311,7 +388,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   };
 
   const next = async () => {
-    if (!validateStep()) return;
+    if (!(await validateStep())) return;
     const target = Math.min(step + 1, steps.length - 1);
     setStep(target);
     await persistDraft(target);
@@ -356,14 +433,14 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       const endpoint = existingFamily ? '/family-wizard/complete-existing' : '/family-wizard/complete';
       const { data } = await api.post(endpoint, payload);
       localStorage.removeItem(storageKey);
-      toast.success(existingFamily ? 'Inscription du membre finalisée ✅' : 'Inscription famille finalisée ✅');
 
       if (data?.payment?.checkout?.checkoutUrl) {
+        toast.success('Redirection vers le paiement...');
         window.location.href = data.payment.checkout.checkoutUrl;
         return;
       }
 
-      navigate(existingFamily ? '/famille' : '/login');
+      navigate(`/login?registration_message=${encodeURIComponent(REGISTRATION_PENDING_VALIDATION_MESSAGE)}`);
     } catch (error) {
       toast.error(error.response?.data?.error || 'Erreur de finalisation');
     } finally {
@@ -510,7 +587,11 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             </div>
             <div className="form-group">
               <label>Email *</label>
-              <input type="email" className="form-control" value={wizard.account.email} onChange={(e) => updateWizard('account', { email: e.target.value })} />
+              <input type="email" className="form-control" value={wizard.account.email} onChange={(e) => {
+                updateWizard('account', { email: e.target.value });
+                setEmailError('');
+              }} />
+              {emailError ? <div style={{ color: '#dc2626', marginTop: 6, fontSize: 13 }}>{emailError}</div> : null}
             </div>
             <div className="form-group">
               <label>Téléphone *</label>
@@ -542,23 +623,40 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         {((step === 0 && existingFamily) || (step === 1 && !existingFamily)) && (
           <div>
             <h3>Membres de la famille</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
-              <div className="form-group"><label>Nom *</label><input className="form-control" value={memberForm.lastName} onChange={(e) => setMemberForm((p) => ({ ...p, lastName: e.target.value }))} /></div>
-              <div className="form-group"><label>Prénom *</label><input className="form-control" value={memberForm.firstName} onChange={(e) => setMemberForm((p) => ({ ...p, firstName: e.target.value }))} /></div>
-              <div className="form-group"><label>Date naissance *</label><input type="date" className="form-control" value={memberForm.dateOfBirth} onChange={(e) => setMemberForm((p) => ({ ...p, dateOfBirth: e.target.value }))} /></div>
-              <div className="form-group"><label>Sexe</label><select className="form-control" value={memberForm.gender} onChange={(e) => setMemberForm((p) => ({ ...p, gender: e.target.value }))}><option value="GARCON">Garçon</option><option value="FILLE">Fille</option></select></div>
-              <div className="form-group">
-                <label>Photo de l'enfant</label>
-                <input type="file" accept="image/*" className="form-control" onChange={handleMemberPhotoChange} />
-                {memberForm.photoBase64 && (
-                  <img
-                    src={memberForm.photoBase64}
-                    alt="Aperçu photo" 
-                    style={{ width: 100, height: 100, objectFit: 'cover', borderRadius: 12, marginTop: 8, border: '1px solid #E2E8F0' }}
-                  />
-                )}
+            <div style={{ display: 'grid', gap: 10, padding: 12, border: '1px solid #E2E8F0', borderRadius: 12, background: '#ffffff' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1.7fr 1fr 0.9fr', gap: 10, alignItems: 'center' }} className="member-inline-row">
+                <div className="form-group member-inline">
+                  <input className="form-control" placeholder="Nom *" value={memberForm.lastName} onChange={(e) => setMemberForm((p) => ({ ...p, lastName: e.target.value }))} />
+                </div>
+                <div className="form-group member-inline">
+                  <input className="form-control" placeholder="Prénom *" value={memberForm.firstName} onChange={(e) => setMemberForm((p) => ({ ...p, firstName: e.target.value }))} />
+                </div>
+                <div className="form-group member-inline">
+                  <input type="date" className="form-control" placeholder="Date naissance *" value={memberForm.dateOfBirth} onChange={(e) => setMemberForm((p) => ({ ...p, dateOfBirth: e.target.value }))} />
+                </div>
+                <div className="form-group member-inline">
+                  <select className="form-control" value={memberForm.gender} onChange={(e) => setMemberForm((p) => ({ ...p, gender: e.target.value }))}>
+                    <option value="GARCON">Garçon</option>
+                    <option value="FILLE">Fille</option>
+                  </select>
+                </div>
               </div>
-              <button className="btn btn-primary" onClick={addOrUpdateMember}>{editingMemberIndex !== null ? 'Mettre à jour' : 'Ajouter'}</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', border: '1px solid #CBD5E1', borderRadius: 10, background: '#F8FAFC', cursor: 'pointer', minWidth: 140, maxWidth: 220 }} className="member-photo-input">
+                  <span style={{ fontSize: 13, color: '#334155', fontWeight: 600 }}>Photo</span>
+                  <input type="file" accept="image/*" className="form-control" onChange={handleMemberPhotoChange} style={{ padding: 2, minWidth: 0, width: 'auto' }} />
+                </label>
+                <label style={{ margin: 0, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', border: '1px solid #CBD5E1', borderRadius: 10, background: '#F8FAFC' }} className="member-inline-legacy">
+                  <input type="checkbox" checked={memberForm.isOldStudent || false} onChange={(e) => setMemberForm((p) => ({ ...p, isOldStudent: e.target.checked }))} />
+                  <span style={{ fontSize: 13, color: '#334155' }}>Ancien élève</span>
+                </label>
+                <button className="btn btn-primary btn-sm" onClick={addOrUpdateMember} style={{ whiteSpace: 'nowrap', padding: '10px 14px' }}>{editingMemberIndex !== null ? 'Mettre à jour' : 'Ajouter'}</button>
+              </div>
+              {memberForm.photoBase64 && (
+                <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 8 }}>
+                  <img src={memberForm.photoBase64} alt="Aperçu photo" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 12, border: '1px solid #E2E8F0' }} />
+                </div>
+              )}
             </div>
 
             <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
@@ -585,26 +683,93 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             <h3>Inscription aux cours</h3>
             {loadingClasses ? <p>Chargement des créneaux...</p> : (
               <>
-                {wizard.members.map((member, memberIndex) => (
-                  <div key={`${member.firstName}-${memberIndex}`} style={{ marginBottom: 20 }}>
-                    <h4>{member.firstName} {member.lastName}</h4>
-                    <div style={{ display: 'grid', gap: 8 }}>
-                      {allClasses.map((cls) => {
-                        const selected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.classId === cls.id);
-                        return (
-                          <label key={cls.id} style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: 10, display: 'flex', justifyContent: 'space-between', cursor: 'pointer' }}>
-                            <span>
-                              <strong>{cls.level?.pole?.name || 'Pôle'} / {cls.level?.name || 'Niveau'}</strong>
-                              <br />
-                              <small>{cls.dayOfWeek} {cls.startTime}-{cls.endTime} • Salle {cls.room || '-'}</small>
-                            </span>
-                            <input type="checkbox" checked={selected} onChange={() => toggleCourseSelection(memberIndex, cls.id)} />
-                          </label>
-                        );
-                      })}
+                {wizard.members.map((member, memberIndex) => {
+                  const isOldStudent = Boolean(member.isOldStudent);
+                  return (
+                    <div key={`${member.firstName}-${memberIndex}`} style={{ marginBottom: 20, border: '1px solid #E2E8F0', borderRadius: 12, padding: 16, background: '#ffffff' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <h4 style={{ margin: 0 }}>{member.firstName} {member.lastName}</h4>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                          <input type="checkbox" checked={isOldStudent} onChange={(e) => {
+                            const checked = e.target.checked;
+                            setWizard((prev) => ({
+                              ...prev,
+                              members: prev.members.map((m, idx) => idx === memberIndex ? { ...m, isOldStudent: checked } : m),
+                              courseSelections: checked ? prev.courseSelections : prev.courseSelections.filter((s) => s.memberIndex !== memberIndex),
+                            }));
+                          }} /> Ancien élève
+                        </label>
+                      </div>
+                      {!isOldStudent ? (
+                        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E' }}>
+                          <strong>Test de niveau requis :</strong> Un test de niveau est nécessaire pour pouvoir choisir une classe et finaliser l'inscription. Veuillez contacter le secrétariat pour organiser le test.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
+                          {classesGroupedByPole.map((group) => (
+                            <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                <div>
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
+                                  <div style={{ color: '#64748B', fontSize: 13 }}>{group.classes.length} cours disponibles</div>
+                                </div>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
+                                  Par pôle
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                                {group.classes.map((cls) => {
+                                  const selected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.classId === cls.id);
+                                  const isWaitlist = cls.status === 'FULL' || cls.enrolledCount >= cls.capacity;
+                                  return (
+                                    <label
+                                      key={cls.id}
+                                      style={{
+                                        borderRadius: 14,
+                                        border: '1px solid',
+                                        borderColor: selected ? '#2563EB' : isWaitlist ? '#F87171' : '#E2E8F0',
+                                        background: selected ? '#EFF6FF' : isWaitlist ? '#FEF2F2' : '#FFFFFF',
+                                        padding: 14,
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        justifyContent: 'space-between',
+                                        cursor: 'pointer',
+                                        minHeight: 130,
+                                        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                                        boxShadow: selected ? '0 10px 30px rgba(37,99,235,0.08)' : '0 0 0 rgba(0,0,0,0)',
+                                      }}
+                                    >
+                                      <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                                          <div>
+                                            <div style={{ fontSize: 14, fontWeight: 700 }}>{cls.level?.name || cls.pole?.name || 'Niveau'}</div>
+                                            <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{cls.dayOfWeek} {cls.startTime} - {cls.endTime}</div>
+                                          </div>
+                                          {selected && (
+                                            <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#DBEAFE', borderRadius: 999, padding: '4px 10px' }}>
+                                              Sélectionné
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>Salle {cls.room || '-'}</div>
+                                        {cls.teacherName ? <div style={{ fontSize: 12, color: '#475569' }}>Professeur : {cls.teacherName}</div> : null}
+                                      </div>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                                        <span style={{ fontSize: 12, color: isWaitlist ? '#B91C1C' : '#334155' }}>{isWaitlist ? 'Liste d’attente' : `${cls.enrolledCount}/${cls.capacity} inscrits`}</span>
+                                        <input type="checkbox" checked={selected} onChange={() => toggleCourseSelection(memberIndex, cls.id)} />
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 <button className="btn btn-outline" onClick={refreshPricing}>Recalculer les tarifs</button>
 
@@ -717,7 +882,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               <ul>
                 {engagementBulletPoints.map((item) => <li key={item}>{item}</li>)}
               </ul>
-              <p style={{ fontSize: 13, color: '#7C2D12' }}>La signature engage les représentants légaux à respecter les règles de sécurité et de suivi pédagogique AMC.</p>
+              <p style={{ fontSize: 13, color: '#7C2D12' }}>La signature engage les représentants légaux à respecter les règles de sécurité et de suivi pédagogique PARTAGE.</p>
             </div>
 
             <div className="form-group">
@@ -757,11 +922,18 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             <div className="form-group">
               <label>Mode de paiement</label>
               <select className="form-control" value={wizard.payment.method} onChange={(e) => updateWizard('payment', { method: e.target.value })}>
-                <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
-                <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
+                {!wizard.members.some((member) => !member.isOldStudent) ? (
+                  <>
+                    <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
+                    <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
+                  </>
+                ) : null}
                 <option value="ESPECES">Espèces</option>
                 <option value="CHEQUE">Chèque</option>
               </select>
+              {wizard.members.some((member) => !member.isOldStudent) && (
+                <small style={{ color: '#475569' }}>Les paiements en ligne (Carte / SEPA) ne sont pas disponibles tant qu’au moins un enfant est nouveau.</small>
+              )}
             </div>
             {pricingPreview && wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
               <div className="card" style={{ marginBottom: 14, background: '#FEF3C7' }}>
@@ -810,7 +982,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                 <div className="card" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
                   <p><strong>Instructions chèque :</strong></p>
                   <ul>
-                    <li>Libeller à l’ordre de l’Association des Musulmans de Clamart.</li>
+                    <li>Libeller à l’ordre de l’Association PARTAGE.</li>
                     <li>Indiquer au dos le nom de famille et l’année scolaire.</li>
                     <li>Déposer le lot de chèques selon l’échéancier généré.</li>
                   </ul>

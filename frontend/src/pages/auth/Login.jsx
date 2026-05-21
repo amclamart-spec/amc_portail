@@ -10,15 +10,34 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [registrationMessage, setRegistrationMessage] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
+    let messageTimer;
     const oauthError = searchParams.get('oauth_error');
-    if (!oauthError) return;
+    if (oauthError) {
+      toast.error(decodeURIComponent(oauthError));
+      searchParams.delete('oauth_error');
+    }
 
-    toast.error(decodeURIComponent(oauthError));
-    searchParams.delete('oauth_error');
-    setSearchParams(searchParams, { replace: true });
+    const registrationMessageParam = searchParams.get('registration_message');
+    if (registrationMessageParam) {
+      const decodedMessage = decodeURIComponent(registrationMessageParam);
+      setRegistrationMessage(decodedMessage);
+      messageTimer = setTimeout(() => setRegistrationMessage(''), 180000);
+      searchParams.delete('registration_message');
+    }
+
+    if (oauthError || registrationMessageParam) {
+      setSearchParams(searchParams, { replace: true });
+    }
+
+    return () => {
+      if (messageTimer) {
+        clearTimeout(messageTimer);
+      }
+    };
   }, [searchParams, setSearchParams]);
 
   const googleAuthUrl = useMemo(() => {
@@ -50,7 +69,10 @@ export default function Login() {
       }}
     >
       <div style={{ padding: '20px 40px' }}>
-        <img src="/amc_logo.png" alt="AMC" style={{ height: 50 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img src="/amc_logo.png" alt="AMC" style={{ height: 50 }} />
+          <img src="/amc_logo_partner.png" alt="Logo ajouté" style={{ height: 50 }} />
+        </div>
       </div>
 
       <div
@@ -95,6 +117,20 @@ export default function Login() {
             <span style={{ margin: '0 12px', color: '#9CA3AF', fontSize: 12, fontWeight: 700 }}>OU</span>
             <div style={{ flex: 1, height: 1, background: '#E5E7EB' }} />
           </div>
+
+          {registrationMessage && (
+            <div style={{
+              background: '#ECFDF5',
+              border: '1px solid #A7F3D0',
+              color: '#065F46',
+              borderRadius: 10,
+              padding: '16px 18px',
+              marginBottom: 20,
+              textAlign: 'center',
+            }}>
+              {registrationMessage}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
@@ -165,7 +201,7 @@ export default function Login() {
       </div>
 
       <div style={{ textAlign: 'center', padding: 16, color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>
-        © {new Date().getFullYear()} Association des Musulmans de Clamart
+        © {new Date().getFullYear()} Association Partage et des Musulmans de Clamart
       </div>
     </div>
   );

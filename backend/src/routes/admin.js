@@ -9,6 +9,8 @@ const {
   rejectUser,
   getStats,
   getEnrollments,
+  getRegistrationBlockStatus,
+  updateRegistrationBlockStatus,
   getStudentAcademicRecord,
   getSchoolYears,
   createSchoolYear,
@@ -41,7 +43,10 @@ const {
   removeStudentFromClass,
   exportClassStudentsExcel,
   exportClassStudentsPdf,
+  exportEnrollments,
   sendMessageToClassFamilies,
+  getEnrollmentPayments,
+  createEnrollmentPayment,
   updateEnrollment,
 
   getTeachers,
@@ -104,7 +109,12 @@ router.put('/users/:id/approve', authorizePermission(PERMISSIONS.USERS_APPROVE),
 router.put('/users/:id/reject', authorizePermission(PERMISSIONS.USERS_APPROVE), rejectUser);
 
 router.get('/enrollments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollments);
+router.post('/enrollments/export', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), exportEnrollments);
+router.get('/enrollments/registration-block', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getRegistrationBlockStatus);
+router.put('/enrollments/registration-block', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), updateRegistrationBlockStatus);
 router.get('/students/:studentId/record', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getStudentAcademicRecord);
+router.get('/enrollments/:id/payments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollmentPayments);
+router.post('/enrollments/:id/payments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), createEnrollmentPayment);
 router.put('/enrollments/:id', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), updateEnrollment);
 
 router.get('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getSchoolYears);

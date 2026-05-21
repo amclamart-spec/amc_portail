@@ -1,6 +1,6 @@
 # 📚 AMC — Portail d'Inscription Scolaire
 
-**Association des Musulmans de Clamart (AMC)**  
+**Association Partage et des Musulmans de Clamart (AMC)**  
 École de Langue Arabe et Sciences Islamiques
 
 ---
@@ -353,5 +353,5 @@ npm run preview          # Prévisualiser le build
 
 ## 📝 Licence
 
-Projet privé — Association des Musulmans de Clamart (AMC)  
+Projet privé — Association Partage et des Musulmans de Clamart (AMC)  
 Tous droits réservés © 2025-2026

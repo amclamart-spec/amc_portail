@@ -72,11 +72,16 @@ export default function FamilyEnrollment() {
                   justifyContent: 'space-between',
                 }}
               >
+                    {enrollment.isProvisional && (
+                      <div style={{ marginBottom: 8 }}>
+                        <span style={{ background: '#FEF3C7', color: '#92400E', padding: '6px 10px', borderRadius: 8, fontWeight: 800 }}>Affectation provisoire</span>
+                      </div>
+                    )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                   <div>
                     <strong style={{ fontSize: 16 }}>{enrollment.studentName}</strong>
                     <div style={{ color: '#6B7280', fontSize: 13, marginTop: 6 }}>
-                      {enrollment.poleName} — {enrollment.levelName} ({enrollment.levelCode})
+                      {enrollment.classLabel || `${enrollment.poleName} — ${enrollment.levelName} (${enrollment.levelCode})`}
                     </div>
                   </div>
                   <div style={getStatusStyles(enrollment.status)}>
