@@ -278,11 +278,20 @@ async function completeExistingFamilyRegistration(req, res) {
     }
 
     const selectedClassIds = [...new Set(courseSelections.map((c) => c.classId).filter(Boolean))];
+    const selectedPoleIds = [...new Set(courseSelections.map((c) => c.poleId).filter(Boolean))];
+    
     const classes = await prisma.class.findMany({
       where: { id: { in: selectedClassIds }, schoolYearId: currentYear.id },
       include: { level: { include: { pole: true } } },
     });
     const classById = new Map(classes.map((c) => [c.id, c]));
+
+    // Fetch poles for new students
+    const poles = await prisma.pole.findMany({
+      where: { id: { in: selectedPoleIds } },
+      include: { levels: true },
+    });
+    const poleById = new Map(poles.map((p) => [p.id, p]));
 
     // ensure there is a fictive / provisional class for new students without class selection
     let fictiveClass = await prisma.class.findFirst({
@@ -312,13 +321,32 @@ async function completeExistingFamilyRegistration(req, res) {
 
     const pricingConfig = await resolvePricingConfig(prisma);
     const enrollmentForPricing = courseSelections
-      .map((selection) => {
-        const cls = classById.get(selection.classId);
-        if (!cls) return null;
-        return {
-          poleName: cls.level.pole.name,
-          levelCode: cls.level.code,
-        };
+      .flatMap((selection) => {
+        const result = [];
+        
+        // Old student: has selected a specific class
+        if (selection.classId) {
+          const cls = classById.get(selection.classId);
+          if (cls) {
+            result.push({
+              poleName: cls.level.pole.name,
+              levelCode: cls.level.code,
+            });
+          }
+        }
+        // New student: has selected one or more poles
+        else if (selection.poleId) {
+          const pole = poleById.get(selection.poleId);
+          if (pole) {
+            const firstLevel = pole.levels && pole.levels[0];
+            result.push({
+              poleName: pole.name,
+              levelCode: firstLevel?.code || '',
+            });
+          }
+        }
+        
+        return result;
       })
       .filter(Boolean);
 
@@ -397,41 +425,62 @@ async function completeExistingFamilyRegistration(req, res) {
 
       const createdEnrollments = [];
       for (const selection of courseSelections) {
-        const cls = classById.get(selection.classId);
-        if (!cls) continue;
-
         const studentIndex = Number(selection.memberIndex);
         const student = students[studentIndex];
         if (!student) continue;
 
-        const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
-        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
-        const enrollmentData = {
-          registrationCode,
-          studentId: student.id,
-          classId: cls.id,
-          schoolYearId: currentYear.id,
-          status: 'PENDING',
-        };
+        // Old student: has selected a specific class
+        if (selection.classId) {
+          const cls = classById.get(selection.classId);
+          if (!cls) continue;
 
-        if (isFull) {
-          // Put on waitlist (do not increment enrolledCount)
-          enrollmentData.comment = 'Liste d\'attente';
+          const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollmentData = {
+            registrationCode,
+            studentId: student.id,
+            classId: cls.id,
+            schoolYearId: currentYear.id,
+            status: 'PENDING',
+          };
+
+          if (isFull) {
+            // Put on waitlist (do not increment enrolledCount)
+            enrollmentData.comment = 'Liste d\'attente';
+          }
+
+          const enrollment = await tx.enrollment.create({ data: enrollmentData });
+
+          if (!isFull) {
+            await tx.class.update({
+              where: { id: cls.id },
+              data: {
+                enrolledCount: { increment: 1 },
+                status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+              },
+            });
+          }
+
+          createdEnrollments.push(enrollment);
         }
+        // New student: has selected one or more poles
+        else if (selection.poleId) {
+          const pole = poleById.get(selection.poleId);
+          if (!pole) continue;
 
-        const enrollment = await tx.enrollment.create({ data: enrollmentData });
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollmentData = {
+            registrationCode,
+            studentId: student.id,
+            classId: fictiveClass.id,
+            schoolYearId: currentYear.id,
+            status: 'PENDING',
+            comment: 'Affectation provisoire - ' + (pole?.name || 'Pôle') + ' - Test de niveau à organiser',
+          };
 
-        if (!isFull) {
-          await tx.class.update({
-            where: { id: cls.id },
-            data: {
-              enrolledCount: { increment: 1 },
-              status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
-            },
-          });
+          const enrollment = await tx.enrollment.create({ data: enrollmentData });
+          createdEnrollments.push(enrollment);
         }
-
-        createdEnrollments.push(enrollment);
       }
 
       for (let i = 0; i < students.length; i += 1) {
