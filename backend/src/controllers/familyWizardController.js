@@ -109,7 +109,7 @@ async function getPricingPreview(req, res) {
 
     const classes = await prisma.class.findMany({
       where: { id: { in: classIds } },
-      include: { level: { include: { pole: true } } },
+      include: { level: { include: { pole: true } }, pole: true },
     });
 
     const classById = new Map(classes.map((c) => [c.id, c]));
@@ -118,8 +118,8 @@ async function getPricingPreview(req, res) {
         const cls = classById.get(selection.classId);
         if (!cls) return null;
         return {
-          poleName: cls.level.pole.name,
-          levelCode: cls.level.code,
+          poleName: cls.level?.pole?.name || cls.pole?.name || '',
+          levelCode: cls.level?.code || '',
         };
       })
       .filter(Boolean);
@@ -658,7 +658,7 @@ async function completeExistingFamilyRegistration(req, res) {
             method: paymentMethod,
             amount: toDecimal(paymentTotal),
             status: 'INITIATED',
-            payerName: `${family.user.firstName} ${family.user.lastName}`,
+            payerName: `${req.user.firstName} ${req.user.lastName}`,
             description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
               instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
@@ -1264,7 +1264,7 @@ async function completeFamilyRegistration(req, res) {
             method: paymentMethod,
             amount: toDecimal(paymentTotal),
             status: 'INITIATED',
-            payerName: `${family.user.firstName} ${family.user.lastName}`,
+            payerName: `${user.firstName} ${user.lastName}`,
             description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
             metadata: {
               instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',

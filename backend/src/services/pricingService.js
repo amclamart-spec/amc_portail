@@ -68,8 +68,26 @@ function calculateArabicFee(numberOfStudentsInArabic, pricing = DEFAULT_PRICING)
   return pricing.arabicTiers[5] + (numberOfStudentsInArabic - 5) * pricing.arabicExtraPerStudent;
 }
 
+function normalizeLevelCode(levelCode) {
+  if (!levelCode) return '';
+  return String(levelCode).trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+}
+
 function getIndividualCoursePrice(levelCode, pricing = DEFAULT_PRICING) {
-  return pricing.individualPricing[levelCode] || 0;
+  const normalizedCode = normalizeLevelCode(levelCode);
+  const mapping = {
+    ENFANT: 'CORAN_ENFANT',
+    CORAN_ENFANT: 'CORAN_ENFANT',
+    ADULTE_HOMME: 'CORAN_ADULTE_HOMME',
+    CORAN_ADULTE_HOMME: 'CORAN_ADULTE_HOMME',
+    ADULTE_FEMME: 'CORAN_ADULTE_FEMME',
+    CORAN_ADULTE_FEMME: 'CORAN_ADULTE_FEMME',
+    SCIENCES_ISLAMIQUES: 'SCIENCES_ISLAMIQUES',
+    SCIENCES: 'SCIENCES_ISLAMIQUES',
+    SCIENCES_ISLAMIQUE: 'SCIENCES_ISLAMIQUES',
+  };
+  const pricingKey = mapping[normalizedCode] || normalizedCode;
+  return pricing.individualPricing[pricingKey] || 0;
 }
 
 function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = {}) {

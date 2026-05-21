@@ -34,17 +34,24 @@ async function createStripeCheckout({ amount, currency = 'eur', paymentId, retur
     throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
   }
 
+  const normalizedInstallments = Number(installments) || 1;
+  const perInstallmentAmount = normalizedInstallments > 1
+    ? Math.floor((Number(amount) / normalizedInstallments) * 100) / 100
+    : Number(amount);
+
   const formData = {
     mode: 'payment',
     'success_url': `${returnUrl}?payment_id=${paymentId}`,
     'cancel_url': `${cancelUrl}?payment_id=${paymentId}`,
     'line_items[0][price_data][currency]': currency.toLowerCase(),
-    'line_items[0][price_data][product_data][name]': `AMC Inscription #${paymentId}`,
-    'line_items[0][price_data][unit_amount]': Math.round(Number(amount) * 100),
+    'line_items[0][price_data][product_data][name]': normalizedInstallments > 1
+      ? `AMC Inscription #${paymentId} — 1/${normalizedInstallments}`
+      : `AMC Inscription #${paymentId}`,
+    'line_items[0][price_data][unit_amount]': Math.round(perInstallmentAmount * 100),
     'line_items[0][quantity]': 1,
     'payment_intent_data[capture_method]': 'manual',
     'metadata[payment_id]': paymentId,
-    'metadata[installments]': installments,
+    'metadata[installments]': normalizedInstallments,
   };
 
   if (customer?.email) {
