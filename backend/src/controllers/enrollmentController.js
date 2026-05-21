@@ -41,6 +41,7 @@ async function getAvailableClasses(req, res) {
       where,
       include: {
         level: { include: { pole: true } },
+        pole: true,
         schoolYear: true,
       },
       orderBy: { dayOfWeek: 'asc' },
