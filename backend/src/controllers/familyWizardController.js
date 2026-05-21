@@ -696,7 +696,10 @@ async function completeExistingFamilyRegistration(req, res) {
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    await sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`);
+    // Envoi des emails en arrière-plan sans bloquer la réponse
+    sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+      console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+    });
 
     // Notify admins about provisional enrollments (if any were created)
     try {
@@ -1310,7 +1313,10 @@ async function completeFamilyRegistration(req, res) {
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    await sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}${activationHtml}`);
+    // Envoi des emails en arrière-plan sans bloquer la réponse
+    sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}${activationHtml}`).catch((err) => {
+      console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+    });
 
     // Notify admins about provisional enrollments (if any were created)
     try {
