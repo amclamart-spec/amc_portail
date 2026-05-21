@@ -57,6 +57,65 @@ async function sendWithAbacus({ to, subject, html, text, attachments }) {
   return response.json();
 }
 
+async function sendWithBrevo({ to, subject, html, text, attachments }) {
+  const { apiKey } = config.brevoEmail;
+  if (!apiKey) {
+    throw new Error('BREVO_API_KEY manquante pour envoi email Brevo');
+  }
+
+  const recipientList = Array.isArray(to)
+    ? to.map((recipient) => ({ email: recipient.email || recipient }))
+    : [{ email: to }];
+
+  const payload = {
+    sender: {
+      name: config.email.fromName,
+      email: config.email.fromEmail,
+    },
+    to: recipientList,
+    subject,
+    htmlContent: html || undefined,
+    textContent: text || (html ? html.replace(/<[^>]+>/g, '') : undefined),
+  };
+
+  if (attachments && attachments.length > 0) {
+    payload.attachment = await Promise.all(
+      attachments.map(async (attachment) => {
+        if (attachment.content) {
+          return {
+            name: attachment.filename,
+            content: attachment.content,
+            contentType: attachment.contentType || 'application/octet-stream',
+          };
+        }
+
+        const buffer = await fs.promises.readFile(attachment.path);
+        return {
+          name: attachment.filename,
+          content: buffer.toString('base64'),
+          contentType: attachment.mimetype || 'application/octet-stream',
+        };
+      })
+    );
+  }
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': apiKey,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Brevo email API error ${response.status}: ${details}`);
+  }
+
+  return response.json();
+}
+
 async function sendWithSmtp({ to, subject, html, text, attachments }) {
   const mailOptions = {
     from: `"${config.email.fromName}" <${config.email.fromEmail}>`,
@@ -88,6 +147,28 @@ async function sendMail(payload) {
     if (config.email.provider === 'ABACUS' && payload.attachments && payload.attachments.length > 0) {
       console.log('[EMAIL] Basculement vers SMTP car pièces jointes détectées avec Abacus');
       return await sendWithSmtp(payload);
+    }
+
+    if (config.email.provider === 'BREVO') {
+      if (!config.brevoEmail.apiKey) {
+        const fallbackAllowed = isSmtpConfigured();
+        if (fallbackAllowed) {
+          console.warn('[EMAIL] BREVO_API_KEY manquante, basculement vers SMTP');
+          return await sendWithSmtp(payload);
+        }
+        throw new Error('BREVO_API_KEY manquante et SMTP non configuré pour l’envoi d’email');
+      }
+
+      try {
+        return await sendWithBrevo(payload);
+      } catch (error) {
+        const fallbackAllowed = isSmtpConfigured();
+        if (fallbackAllowed) {
+          console.warn('[EMAIL] Brevo non disponible, basculement vers SMTP:', error.message);
+          return await sendWithSmtp(payload);
+        }
+        throw error;
+      }
     }
 
     if (config.email.provider === 'ABACUS') {

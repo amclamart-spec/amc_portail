@@ -105,22 +105,48 @@ async function getDraft(req, res) {
 async function getPricingPreview(req, res) {
   try {
     const { courseSelections = [] } = req.body || {};
+    
+    // Handle both classId (old students) and poleId (new students)
     const classIds = [...new Set(courseSelections.map((s) => s.classId).filter(Boolean))];
+    const poleIds = [...new Set(courseSelections.map((s) => s.poleId).filter(Boolean))];
 
     const classes = await prisma.class.findMany({
       where: { id: { in: classIds } },
       include: { level: { include: { pole: true } }, pole: true },
     });
 
+    const poles = await prisma.pole.findMany({
+      where: { id: { in: poleIds } },
+      include: { levels: true },
+    });
+
     const classById = new Map(classes.map((c) => [c.id, c]));
+    const poleById = new Map(poles.map((p) => [p.id, p]));
+
     const enrollments = courseSelections
       .map((selection) => {
-        const cls = classById.get(selection.classId);
-        if (!cls) return null;
-        return {
-          poleName: cls.level?.pole?.name || cls.pole?.name || '',
-          levelCode: cls.level?.code || '',
-        };
+        if (selection.classId) {
+          // Old student: has selected a specific class
+          const cls = classById.get(selection.classId);
+          if (!cls) return null;
+          return {
+            poleName: cls.level?.pole?.name || cls.pole?.name || '',
+            levelCode: cls.level?.code || '',
+          };
+        } else if (selection.poleId) {
+          // New student: has only selected a pole, estimate based on pole
+          const pole = poleById.get(selection.poleId);
+          if (!pole) return null;
+          
+          // For new students, use a representative level from the pole
+          // This is an estimate since they haven't had a placement test yet
+          const firstLevel = pole.levels && pole.levels[0];
+          return {
+            poleName: pole.name || '',
+            levelCode: firstLevel?.code || '',
+          };
+        }
+        return null;
       })
       .filter(Boolean);
 
@@ -871,11 +897,17 @@ async function completeFamilyRegistration(req, res) {
     const currentYear = await ensureCurrentSchoolYear();
 
     const selectedClassIds = [...new Set(courseSelections.map((c) => c.classId).filter(Boolean))];
+    const selectedPoleIds = [...new Set(courseSelections.map((c) => c.poleId).filter(Boolean))];
     const classes = await prisma.class.findMany({
       where: { id: { in: selectedClassIds }, schoolYearId: currentYear.id },
       include: { level: { include: { pole: true } } },
     });
+    const poles = await prisma.pole.findMany({
+      where: { id: { in: selectedPoleIds } },
+      include: { levels: true },
+    });
     const classById = new Map(classes.map((c) => [c.id, c]));
+    const poleById = new Map(poles.map((p) => [p.id, p]));
 
     let fictiveClass = await prisma.class.findFirst({
       where: {
@@ -906,12 +938,23 @@ async function completeFamilyRegistration(req, res) {
 
     const enrollmentForPricing = courseSelections
       .map((selection) => {
-        const cls = classById.get(selection.classId);
-        if (!cls) return null;
-        return {
-          poleName: cls.level.pole.name,
-          levelCode: cls.level.code,
-        };
+        if (selection.classId) {
+          const cls = classById.get(selection.classId);
+          if (!cls) return null;
+          return {
+            poleName: cls.level.pole.name,
+            levelCode: cls.level.code,
+          };
+        } else if (selection.poleId) {
+          const pole = poleById.get(selection.poleId);
+          if (!pole) return null;
+          const firstLevel = pole.levels && pole.levels[0];
+          return {
+            poleName: pole.name,
+            levelCode: firstLevel?.code || '',
+          };
+        }
+        return null;
       })
       .filter(Boolean);
 
