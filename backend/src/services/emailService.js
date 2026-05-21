@@ -1,7 +1,11 @@
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 
 let transporter;
+let cachedLogoDataUri = null;
+let cachedPartnerLogoDataUri = null;
 
 function getTransporter() {
   if (!transporter) {
@@ -87,6 +91,15 @@ async function sendMail(payload) {
     }
 
     if (config.email.provider === 'ABACUS') {
+      if (!config.abacusEmail.apiKey) {
+        const fallbackAllowed = isSmtpConfigured();
+        if (fallbackAllowed) {
+          console.warn('[EMAIL] ABACUS_API_KEY manquante, basculement vers SMTP');
+          return await sendWithSmtp(payload);
+        }
+        throw new Error('ABACUS_API_KEY manquante et SMTP non configuré pour l’envoi d’email');
+      }
+
       try {
         return await sendWithAbacus(payload);
       } catch (error) {
@@ -110,9 +123,37 @@ async function sendMail(payload) {
   }
 }
 
+function getEmbeddedLogoDataUri(fileName, fallbackColor = '#213B88', fallbackText = 'AMC') {
+  const cache = fileName === 'amc_logo.png' ? cachedLogoDataUri : cachedPartnerLogoDataUri;
+  if (cache) return cache;
+
+  const possiblePaths = [
+    path.join(__dirname, '..', '..', '..', 'frontend', 'public', fileName),
+    path.join(process.cwd(), 'frontend', 'public', fileName),
+    path.join(process.cwd(), '..', 'frontend', 'public', fileName),
+    path.join(__dirname, '..', '..', 'uploads', fileName),
+  ];
+
+  for (const filePath of possiblePaths) {
+    if (fs.existsSync(filePath)) {
+      const buffer = fs.readFileSync(filePath);
+      const dataUri = `data:image/${path.extname(fileName).slice(1)};base64,${buffer.toString('base64')}`;
+      if (fileName === 'amc_logo.png') cachedLogoDataUri = dataUri;
+      else cachedPartnerLogoDataUri = dataUri;
+      return dataUri;
+    }
+  }
+
+  const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><rect width="100%" height="100%" fill="${fallbackColor}"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#FFF" font-family="Arial, sans-serif" font-size="24">${fallbackText}</text></svg>`;
+  const dataUri = `data:image/svg+xml;base64,${Buffer.from(placeholderSvg).toString('base64')}`;
+  if (fileName === 'amc_logo.png') cachedLogoDataUri = dataUri;
+  else cachedPartnerLogoDataUri = dataUri;
+  return dataUri;
+}
+
 function renderEmailHtml({ title, subtitle, contentHtml }) {
-  const logoUrl = `${config.frontendUrl.replace(/\/$/, '')}/amc_logo.png`;
-  const partnerLogoUrl = `${config.frontendUrl.replace(/\/$/, '')}/amc_logo_partner.png`;
+  const logoUrl = getEmbeddedLogoDataUri('amc_logo.png');
+  const partnerLogoUrl = getEmbeddedLogoDataUri('amc_logo_partner.png', '#64748b', 'PARTAGE');
   return `<!DOCTYPE html>
 <html lang="fr">
   <head>
@@ -128,8 +169,8 @@ function renderEmailHtml({ title, subtitle, contentHtml }) {
             <tr>
               <td style="background:#213B88;padding:28px 24px;text-align:center;color:#ffffff;">
                 <div style="display:flex;justify-content:center;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:16px;">
-                  <img src="${logoUrl}" alt="AMC" width="120" style="display:block;" />
-                  <img src="${partnerLogoUrl}" alt="PARTAGE" width="120" style="display:block;" />
+                  <img src="${logoUrl}" alt="AMC" width="120" height="80" style="display:block;width:120px;height:80px;max-width:120px;max-height:80px;object-fit:contain;" />
+                  <img src="${partnerLogoUrl}" alt="PARTAGE" width="120" height="80" style="display:block;width:120px;height:80px;max-width:120px;max-height:80px;object-fit:contain;" />
                 </div>
                 <h1 style="margin:0;font-size:28px;font-weight:700;letter-spacing:-0.02em;">${title}</h1>
                 ${subtitle ? `<p style="margin:12px 0 0;font-size:16px;opacity:0.88;line-height:1.5;">${subtitle}</p>` : ''}

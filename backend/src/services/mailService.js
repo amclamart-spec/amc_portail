@@ -241,8 +241,8 @@ function renderMailHtml({ subject, content, attachmentInfo }) {
             <tr>
               <td style="background:#213B88;padding:32px 24px;text-align:center;">
                 <div style="display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;">
-                  <img src="${logoUrl}" alt="AMC" width="100" height="auto" style="display:block;max-width:100%;height:auto;" />
-                  <img src="${getPartnerLogoBase64()}" alt="PARTAGE" width="100" height="auto" style="display:block;max-width:100%;height:auto;" />
+                  <img src="${logoUrl}" alt="AMC" width="120" height="80" style="display:block;width:120px;height:80px;max-width:120px;max-height:80px;object-fit:contain;" />
+                  <img src="${getPartnerLogoBase64()}" alt="PARTAGE" width="120" height="80" style="display:block;width:120px;height:80px;max-width:120px;max-height:80px;object-fit:contain;" />
                 </div>
               </td>
             </tr>

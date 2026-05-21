@@ -13,7 +13,7 @@ module.exports = {
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
 
   email: {
-    provider: process.env.EMAIL_PROVIDER || 'ABACUS',
+    provider: process.env.EMAIL_PROVIDER || (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS ? 'SMTP' : 'ABACUS'),
     fromName: process.env.EMAIL_FROM_NAME || 'AMC Portail',
     fromEmail: process.env.EMAIL_FROM_EMAIL || 'noreply@amc.fr',
   },
