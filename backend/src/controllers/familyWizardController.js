@@ -109,6 +109,7 @@ async function getPricingPreview(req, res) {
     // Handle both classId (old students) and poleId (new students)
     const classIds = [...new Set(courseSelections.map((s) => s.classId).filter(Boolean))];
     const poleIds = [...new Set(courseSelections.map((s) => s.poleId).filter(Boolean))];
+    const levelIds = [...new Set(courseSelections.map((s) => s.levelId).filter(Boolean))];
 
     const classes = await prisma.class.findMany({
       where: { id: { in: classIds } },
@@ -120,8 +121,14 @@ async function getPricingPreview(req, res) {
       include: { levels: true },
     });
 
+    const levels = await prisma.level.findMany({
+      where: { id: { in: levelIds } },
+      include: { pole: true },
+    });
+
     const classById = new Map(classes.map((c) => [c.id, c]));
     const poleById = new Map(poles.map((p) => [p.id, p]));
+    const levelById = new Map(levels.map((l) => [l.id, l]));
 
     const enrollments = courseSelections
       .map((selection) => {
@@ -130,19 +137,30 @@ async function getPricingPreview(req, res) {
           const cls = classById.get(selection.classId);
           if (!cls) return null;
           return {
+            poleId: cls.level?.pole?.id || cls.pole?.id || '',
             poleName: cls.level?.pole?.name || cls.pole?.name || '',
+            levelId: cls.level?.id || '',
             levelCode: cls.level?.code || '',
+          };
+        } else if (selection.levelId) {
+          const level = levelById.get(selection.levelId);
+          if (!level) return null;
+          return {
+            poleId: level.pole?.id || '',
+            poleName: level.pole?.name || '',
+            levelId: level.id,
+            levelCode: level.code || '',
           };
         } else if (selection.poleId) {
           // New student: has only selected a pole, estimate based on pole
           const pole = poleById.get(selection.poleId);
           if (!pole) return null;
           
-          // For new students, use a representative level from the pole
-          // This is an estimate since they haven't had a placement test yet
           const firstLevel = pole.levels && pole.levels[0];
           return {
+            poleId: pole.id,
             poleName: pole.name || '',
+            levelId: firstLevel?.id || '',
             levelCode: firstLevel?.code || '',
           };
         }
@@ -279,6 +297,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
     const selectedClassIds = [...new Set(courseSelections.map((c) => c.classId).filter(Boolean))];
     const selectedPoleIds = [...new Set(courseSelections.map((c) => c.poleId).filter(Boolean))];
+    const selectedLevelIds = [...new Set(courseSelections.map((c) => c.levelId).filter(Boolean))];
     
     const classes = await prisma.class.findMany({
       where: { id: { in: selectedClassIds }, schoolYearId: currentYear.id },
@@ -292,6 +311,12 @@ async function completeExistingFamilyRegistration(req, res) {
       include: { levels: true },
     });
     const poleById = new Map(poles.map((p) => [p.id, p]));
+
+    const levels = await prisma.level.findMany({
+      where: { id: { in: selectedLevelIds } },
+      include: { pole: true },
+    });
+    const levelById = new Map(levels.map((l) => [l.id, l]));
 
     // ensure there is a fictive / provisional class for new students without class selection
     let fictiveClass = await prisma.class.findFirst({
@@ -324,7 +349,6 @@ async function completeExistingFamilyRegistration(req, res) {
       .flatMap((selection) => {
         const result = [];
         
-        // Old student: has selected a specific class
         if (selection.classId) {
           const cls = classById.get(selection.classId);
           if (cls) {
@@ -333,9 +357,15 @@ async function completeExistingFamilyRegistration(req, res) {
               levelCode: cls.level.code,
             });
           }
-        }
-        // New student: has selected one or more poles
-        else if (selection.poleId) {
+        } else if (selection.levelId) {
+          const level = levelById.get(selection.levelId);
+          if (level) {
+            result.push({
+              poleName: level.pole?.name || '',
+              levelCode: level.code,
+            });
+          }
+        } else if (selection.poleId) {
           const pole = poleById.get(selection.poleId);
           if (pole) {
             const firstLevel = pole.levels && pole.levels[0];
@@ -463,7 +493,28 @@ async function completeExistingFamilyRegistration(req, res) {
 
           createdEnrollments.push(enrollment);
         }
-        // New student: has selected one or more poles
+        // New student: has selected a specific level
+        else if (selection.levelId) {
+          const level = levelById.get(selection.levelId);
+          if (!level) continue;
+
+          const pole = poleById.get(selection.poleId) || level.pole;
+          if (!pole) continue;
+
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollmentData = {
+            registrationCode,
+            studentId: student.id,
+            classId: fictiveClass.id,
+            schoolYearId: currentYear.id,
+            status: 'PENDING',
+            comment: `Affectation provisoire - ${pole.name} / ${level.name} - Test de niveau à organiser`,
+          };
+
+          const enrollment = await tx.enrollment.create({ data: enrollmentData });
+          createdEnrollments.push(enrollment);
+        }
+        // New student: fallback selection by pole only
         else if (selection.poleId) {
           const pole = poleById.get(selection.poleId);
           if (!pole) continue;
@@ -991,6 +1042,8 @@ async function completeFamilyRegistration(req, res) {
           const cls = classById.get(selection.classId);
           if (!cls) return null;
           return {
+            poleId: cls.level.pole.id,
+            levelId: cls.level.id,
             poleName: cls.level.pole.name,
             levelCode: cls.level.code,
           };
@@ -999,6 +1052,8 @@ async function completeFamilyRegistration(req, res) {
           if (!pole) return null;
           const firstLevel = pole.levels && pole.levels[0];
           return {
+            poleId: pole.id,
+            levelId: firstLevel?.id || '',
             poleName: pole.name,
             levelCode: firstLevel?.code || '',
           };

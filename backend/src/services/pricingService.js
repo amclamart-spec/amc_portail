@@ -27,8 +27,43 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+const DEFAULT_TARIFF_ROWS = [
+  { id: 'arabic-1', label: 'Arabe - 1 élève', poleName: 'Arabe', levelId: 'ALL', peopleCount: 1, priceKey: 'arabicTier1' },
+  { id: 'arabic-2', label: 'Arabe - 2 élèves', poleName: 'Arabe', levelId: 'ALL', peopleCount: 2, priceKey: 'arabicTier2' },
+  { id: 'arabic-3', label: 'Arabe - 3 élèves', poleName: 'Arabe', levelId: 'ALL', peopleCount: 3, priceKey: 'arabicTier3' },
+  { id: 'arabic-4', label: 'Arabe - 4 élèves', poleName: 'Arabe', levelId: 'ALL', peopleCount: 4, priceKey: 'arabicTier4' },
+  { id: 'arabic-5', label: 'Arabe - 5 élèves', poleName: 'Arabe', levelId: 'ALL', peopleCount: 5, priceKey: 'arabicTier5' },
+  { id: 'arabic-6-plus', label: 'Arabe - 6+ élèves (unitaire)', poleName: 'Arabe', levelId: 'ALL', peopleCount: 6, priceKey: 'arabicExtraPerStudent' },
+  { id: 'coran-enfant', label: 'Coran - Enfant', poleName: 'Coran', levelMatch: 'Enfant', peopleCount: 1, priceKey: 'coranEnfant' },
+  { id: 'coran-adulte-homme', label: 'Coran - Adulte homme', poleName: 'Coran', levelMatch: 'Homme', peopleCount: 1, priceKey: 'coranAdulteHomme' },
+  { id: 'coran-adulte-femme', label: 'Coran - Adulte femme', poleName: 'Coran', levelMatch: 'Femme', peopleCount: 1, priceKey: 'coranAdulteFemme' },
+  { id: 'sciences-islamiques', label: 'Sciences islamiques', poleName: 'Sciences islamiques', levelId: 'ALL', peopleCount: 1, priceKey: 'sciencesIslamiques' },
+];
+
 function normalizePricingConfig(pricingConfig) {
-  if (!pricingConfig) return { ...DEFAULT_PRICING };
+  if (!pricingConfig) return { ...DEFAULT_PRICING, tariffRows: [] };
+
+  const rawRows = Array.isArray(pricingConfig.tariffRows) ? pricingConfig.tariffRows : [];
+  const tariffRows = rawRows.length > 0
+    ? rawRows.map((row) => ({
+        ...row,
+        peopleCount: Number(row.peopleCount) || 0,
+        price: Number(row.price) || 0,
+        poleId: row.poleId || '',
+        levelId: row.levelId || 'ALL',
+        poleName: row.poleName || '',
+        levelCode: row.levelCode || '',
+      }))
+    : DEFAULT_TARIFF_ROWS.map((row) => ({
+        id: row.id,
+        label: row.label,
+        poleId: '',
+        poleName: row.poleName,
+        levelId: row.levelId,
+        levelCode: '',
+        peopleCount: row.peopleCount,
+        price: toNumber(pricingConfig[row.priceKey], 0),
+      }));
 
   return {
     registrationFee: toNumber(pricingConfig.registrationFee, DEFAULT_PRICING.registrationFee),
@@ -47,6 +82,7 @@ function normalizePricingConfig(pricingConfig) {
       CORAN_ADULTE_FEMME: toNumber(pricingConfig.coranAdulteFemme, DEFAULT_PRICING.individualPricing.CORAN_ADULTE_FEMME),
       SCIENCES_ISLAMIQUES: toNumber(pricingConfig.sciencesIslamiques, DEFAULT_PRICING.individualPricing.SCIENCES_ISLAMIQUES),
     },
+    tariffRows,
   };
 }
 
@@ -90,32 +126,169 @@ function getIndividualCoursePrice(levelCode, pricing = DEFAULT_PRICING) {
   return pricing.individualPricing[pricingKey] || 0;
 }
 
+function getMatchingTariffRows(enrollment, pricing) {
+  const rows = Array.isArray(pricing.tariffRows) ? pricing.tariffRows : [];
+  if (!rows.length) return [];
+
+  return rows.filter((row) => {
+    if (row.poleId && enrollment.poleId) {
+      return row.poleId === enrollment.poleId;
+    }
+    if (row.poleName && enrollment.poleName) {
+      return String(row.poleName).toLowerCase() === String(enrollment.poleName).toLowerCase();
+    }
+    return false;
+  });
+}
+
+function findBestTariffRowForEnrollment(enrollment, rows) {
+  if (!rows?.length) return null;
+
+  const exactLevelMatch = rows.find((row) => row.levelId && enrollment.levelId && row.levelId === enrollment.levelId);
+  if (exactLevelMatch) return exactLevelMatch;
+
+  const exactCodeMatch = rows.find((row) => row.levelCode && enrollment.levelCode && String(row.levelCode).toLowerCase() === String(enrollment.levelCode).toLowerCase());
+  if (exactCodeMatch) return exactCodeMatch;
+
+  const allLevelRow = rows.find((row) => row.levelId === 'ALL');
+  if (allLevelRow) return allLevelRow;
+
+  return rows[0] || null;
+}
+
+function selectTieredTariffRow(rows, count) {
+  if (!rows?.length) return null;
+  const tierRows = rows.filter((row) => row.levelId === 'ALL' && Number.isFinite(row.peopleCount));
+  if (!tierRows.length) return null;
+
+  const sortedRows = tierRows.slice().sort((a, b) => a.peopleCount - b.peopleCount);
+  const exact = sortedRows.find((row) => row.peopleCount === count);
+  if (exact) return exact;
+
+  const fallback = sortedRows.filter((row) => row.peopleCount < count).pop();
+  if (fallback) return fallback;
+
+  return sortedRows[0];
+}
+
 function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = {}) {
   const { skipRegistrationFee = false, existingArabicCount = 0 } = options;
-  let arabicCount = 0;
-  let coranScienceTotal = 0;
+  const registrationFee = skipRegistrationFee ? 0 : toNumber(pricing.registrationFee, DEFAULT_PRICING.registrationFee);
+  const fraisPrelevement = toNumber(pricing.fraisPrelevement, DEFAULT_PRICING.fraisPrelevement);
+  let totalFee = 0;
+  let arabicFee = 0;
+  let coranFee = 0;
+  let sciencesFee = 0;
 
-  for (const enrollment of enrollments) {
-    const pole = (enrollment.poleName || '').toLowerCase();
-    if (pole.includes('arabe')) {
-      arabicCount += 1;
-      continue;
-    }
+  const rows = Array.isArray(pricing.tariffRows) ? pricing.tariffRows : [];
+  const hasCustomTariffRows = rows.length > 0 && rows.some((row) => row.price && Number(row.price) > 0);
 
-    coranScienceTotal += getIndividualCoursePrice(enrollment.levelCode, pricing);
+  if (!enrollments || enrollments.length === 0) {
+    const total = registrationFee + fraisPrelevement;
+    return {
+      registrationFee,
+      fraisPrelevement,
+      arabicFee: 0,
+      coranFee: 0,
+      sciencesFee: 0,
+      total,
+      arabicCount: 0,
+      coranCount: 0,
+      sciencesCount: 0,
+      appliedPricing: pricing,
+    };
   }
 
-  const registrationFee = skipRegistrationFee ? 0 : (pricing.registrationFee || 0);
-  const arabicFee = calculateArabicFee(arabicCount + existingArabicCount, pricing);
-  const total = registrationFee + arabicFee + coranScienceTotal;
+  const enrollmentsByPole = new Map();
+  for (const enrollment of enrollments) {
+    const poleKey = enrollment.poleId || String(enrollment.poleName || '').toLowerCase();
+    const bucket = enrollmentsByPole.get(poleKey) || [];
+    bucket.push(enrollment);
+    enrollmentsByPole.set(poleKey, bucket);
+  }
 
+  // Count by pole for display
+  const arabicCount = enrollments.filter((e) => String(e.poleName || '').toLowerCase().includes('arabe')).length + existingArabicCount;
+  const coranCount = enrollments.filter((e) => String(e.poleName || '').toLowerCase().includes('coran')).length;
+  const sciencesCount = enrollments.filter((e) => String(e.poleName || '').toLowerCase().includes('sciences') || String(e.poleName || '').toLowerCase().includes('science')).length;
+
+  // If we have custom tariff rows, use the grid
+  if (hasCustomTariffRows) {
+    for (const [poleKey, group] of enrollmentsByPole.entries()) {
+      const sampleEnrollment = group[0];
+      const matchingRows = getMatchingTariffRows(sampleEnrollment, pricing);
+
+      // For groupings (multiple students in same pole), try tiered pricing first
+      if (group.length > 1) {
+        const tierRow = selectTieredTariffRow(matchingRows, group.length);
+        if (tierRow && Number(tierRow.price) > 0) {
+          const price = toNumber(tierRow.price, 0);
+          const poleName = String(tierRow.poleName || sampleEnrollment.poleName || '').toLowerCase();
+          if (poleName.includes('arabe')) {
+            arabicFee += price;
+          } else if (poleName.includes('coran')) {
+            coranFee += price;
+          } else if (poleName.includes('sciences') || poleName.includes('science')) {
+            sciencesFee += price;
+          } else {
+            totalFee += price;
+          }
+          continue;
+        }
+      }
+
+      // Individual pricing from tariff rows
+      for (const enrollment of group) {
+        const matchingRowsForEnrollment = getMatchingTariffRows(enrollment, pricing);
+        const tariffRow = findBestTariffRowForEnrollment(enrollment, matchingRowsForEnrollment);
+        if (tariffRow && Number(tariffRow.price) > 0) {
+          const price = toNumber(tariffRow.price, 0);
+          const poleName = String(tariffRow.poleName || enrollment.poleName || '').toLowerCase();
+          if (poleName.includes('arabe')) {
+            arabicFee += price;
+          } else if (poleName.includes('coran')) {
+            coranFee += price;
+          } else if (poleName.includes('sciences') || poleName.includes('science')) {
+            sciencesFee += price;
+          } else {
+            totalFee += price;
+          }
+        }
+      }
+    }
+  } else {
+    // Fallback to legacy pricing if no custom tariff rows
+    for (const enrollment of enrollments) {
+      const pole = (enrollment.poleName || '').toLowerCase();
+      const coursePrice = toNumber(getIndividualCoursePrice(enrollment.levelCode, pricing), 0);
+      if (pole.includes('arabe')) {
+        arabicFee += coursePrice;
+      } else if (pole.includes('coran')) {
+        coranFee += coursePrice;
+      } else if (pole.includes('sciences') || pole.includes('science')) {
+        sciencesFee += coursePrice;
+      } else {
+        totalFee += coursePrice;
+      }
+    }
+  }
+
+  // Calculate Arabic fee based on count if no tariff rows were applied
+  if (!hasCustomTariffRows && arabicCount > 0) {
+    arabicFee = calculateArabicFee(arabicCount, pricing);
+  }
+
+  const total = registrationFee + arabicFee + coranFee + sciencesFee + totalFee;
   return {
     registrationFee,
-    fraisPrelevement: pricing.fraisPrelevement || 0,
+    fraisPrelevement,
     arabicFee,
-    arabicCount,
-    coranScienceFee: coranScienceTotal,
+    coranFee,
+    sciencesFee,
     total,
+    arabicCount,
+    coranCount,
+    sciencesCount,
     appliedPricing: pricing,
   };
 }
