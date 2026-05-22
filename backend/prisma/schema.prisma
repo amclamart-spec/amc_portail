@@ -22,26 +22,26 @@ enum ValidationStatus {
 }
 
 model User {
-  id                   String           @id @default(uuid())
-  email                String           @unique
-  passwordHash         String?          @map("password_hash")
-  googleId             String?          @unique @map("google_id")
+  id                   String               @id @default(uuid())
+  email                String               @unique
+  passwordHash         String?              @map("password_hash")
+  googleId             String?              @unique @map("google_id")
   provider             String?
-  role                 Role             @default(FAMILLE)
-  validationStatus     ValidationStatus @default(PENDING) @map("validation_status")
-  firstName            String           @map("first_name")
-  lastName             String           @map("last_name")
+  role                 Role                 @default(FAMILLE)
+  validationStatus     ValidationStatus     @default(PENDING) @map("validation_status")
+  firstName            String               @map("first_name")
+  lastName             String               @map("last_name")
   phone                String?
-  emailVerified        Boolean          @default(false) @map("email_verified")
-  emailVerifyToken     String?          @map("email_verify_token")
-  resetPasswordToken   String?          @map("reset_password_token")
-  resetPasswordExpires DateTime?        @map("reset_password_expires")
-  failedLoginAttempts  Int              @default(0) @map("failed_login_attempts")
-  lockedUntil          DateTime?        @map("locked_until")
-  refreshToken         String?          @map("refresh_token")
-  lastLogin            DateTime?        @map("last_login")
-  createdAt            DateTime         @default(now()) @map("created_at")
-  updatedAt            DateTime         @updatedAt @map("updated_at")
+  emailVerified        Boolean              @default(false) @map("email_verified")
+  emailVerifyToken     String?              @map("email_verify_token")
+  resetPasswordToken   String?              @map("reset_password_token")
+  resetPasswordExpires DateTime?            @map("reset_password_expires")
+  failedLoginAttempts  Int                  @default(0) @map("failed_login_attempts")
+  lockedUntil          DateTime?            @map("locked_until")
+  refreshToken         String?              @map("refresh_token")
+  lastLogin            DateTime?            @map("last_login")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
   family               Family?
   teacherProfile       Teacher?
   recordedTransactions PaymentTransaction[] @relation("RecordedByUser")
@@ -74,7 +74,7 @@ model Family {
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @updatedAt @map("updated_at")
 
-  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   parents            Parent[]
   students           Student[]
   payments           Payment[]
@@ -153,11 +153,11 @@ model Student {
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
-  family            Family                 @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  enrollments       Enrollment[]
-  healthForms       StudentHealthForm[]
+  family             Family              @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  enrollments        Enrollment[]
+  healthForms        StudentHealthForm[]
   enrollmentConsents EnrollmentConsent[]
-  evaluations       Evaluation[]
+  evaluations        Evaluation[]
 
   @@map("students")
 }
@@ -170,12 +170,12 @@ enum SchoolYearPeriod {
 }
 
 model SchoolYear {
-  id        String    @id @default(uuid())
-  label     String    @unique
-  startDate DateTime  @map("start_date")
-  endDate   DateTime  @map("end_date")
-  isCurrent Boolean   @default(false) @map("is_current")
-  createdAt DateTime  @default(now()) @map("created_at")
+  id        String   @id @default(uuid())
+  label     String   @unique
+  startDate DateTime @map("start_date")
+  endDate   DateTime @map("end_date")
+  isCurrent Boolean  @default(false) @map("is_current")
+  createdAt DateTime @default(now()) @map("created_at")
 
   classes            Class[]
   enrollments        Enrollment[]
@@ -244,8 +244,8 @@ model Teacher {
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  classes Class[]
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  classes          Class[]
   homeworkMessages HomeworkMessage[]
 
   @@map("teachers")
@@ -269,12 +269,12 @@ model ChatMessage {
 }
 
 model Pole {
-  id          String            @id @default(uuid())
-  name        String            @unique
+  id          String           @id @default(uuid())
+  name        String           @unique
   description String?
-  period      SchoolYearPeriod  @default(ANNUEL)
-  sortOrder   Int               @default(0) @map("sort_order")
-  createdAt   DateTime          @default(now()) @map("created_at")
+  period      SchoolYearPeriod @default(ANNUEL)
+  sortOrder   Int              @default(0) @map("sort_order")
+  createdAt   DateTime         @default(now()) @map("created_at")
 
   levels  Level[]
   classes Class[]
@@ -325,14 +325,14 @@ model Class {
   createdAt     DateTime    @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
 
-  schoolYear  SchoolYear   @relation(fields: [schoolYearId], references: [id])
-  pole        Pole?        @relation(fields: [poleId], references: [id])
-  level       Level        @relation(fields: [levelId], references: [id])
-  timeSlot    TimeSlot?    @relation(fields: [timeSlotId], references: [id])
-  roomRef     Room?        @relation(fields: [roomId], references: [id])
-  teacher     Teacher?     @relation(fields: [teacherId], references: [id])
-  enrollments Enrollment[]
-  lessons     Lesson[]
+  schoolYear       SchoolYear        @relation(fields: [schoolYearId], references: [id])
+  pole             Pole?             @relation(fields: [poleId], references: [id])
+  level            Level             @relation(fields: [levelId], references: [id])
+  timeSlot         TimeSlot?         @relation(fields: [timeSlotId], references: [id])
+  roomRef          Room?             @relation(fields: [roomId], references: [id])
+  teacher          Teacher?          @relation(fields: [teacherId], references: [id])
+  enrollments      Enrollment[]
+  lessons          Lesson[]
   homeworkMessages HomeworkMessage[]
 
   @@index([schoolYearId, poleId, levelId])
@@ -349,15 +349,15 @@ enum EvaluationStatus {
 }
 
 model Lesson {
-  id          String      @id @default(uuid())
-  classId     String      @map("class_id")
+  id          String   @id @default(uuid())
+  classId     String   @map("class_id")
   title       String
   description String?
   date        DateTime
-  createdAt   DateTime    @default(now()) @map("created_at")
-  updatedAt   DateTime    @updatedAt @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  class       Class       @relation(fields: [classId], references: [id], onDelete: Cascade)
+  class       Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
   evaluations Evaluation[]
 
   @@index([classId])
@@ -399,11 +399,11 @@ model Enrollment {
   classId          String           @map("class_id")
   status           EnrollmentStatus @default(PENDING)
   comment          String?
-  enrolledAt   DateTime         @default(now()) @map("enrolled_at")
-  confirmedAt  DateTime?        @map("confirmed_at")
-  cancelledAt  DateTime?        @map("cancelled_at")
-  createdAt    DateTime         @default(now()) @map("created_at")
-  updatedAt    DateTime         @updatedAt @map("updated_at")
+  enrolledAt       DateTime         @default(now()) @map("enrolled_at")
+  confirmedAt      DateTime?        @map("confirmed_at")
+  cancelledAt      DateTime?        @map("cancelled_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
   student    Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
   schoolYear SchoolYear @relation(fields: [schoolYearId], references: [id])
@@ -568,27 +568,29 @@ model PaymentPlan {
 }
 
 model PricingConfig {
-  id                   String   @id @default(uuid())
-  isActive             Boolean  @default(true) @map("is_active")
-  registrationFee      Decimal  @default(10.00) @map("registration_fee") @db.Decimal(10, 2)
-  fraisPrelevement     Decimal  @default(0.00) @map("frais_prelevement") @db.Decimal(10, 2)
-  arabicTier1          Decimal  @default(310.00) @map("arabic_tier_1") @db.Decimal(10, 2)
-  arabicTier2          Decimal  @default(570.00) @map("arabic_tier_2") @db.Decimal(10, 2)
-  arabicTier3          Decimal  @default(750.00) @map("arabic_tier_3") @db.Decimal(10, 2)
-  arabicTier4          Decimal  @default(900.00) @map("arabic_tier_4") @db.Decimal(10, 2)
-  arabicTier5          Decimal  @default(1050.00) @map("arabic_tier_5") @db.Decimal(10, 2)
-  arabicExtraPerStudent Decimal @default(150.00) @map("arabic_extra_per_student") @db.Decimal(10, 2)
-  coranEnfant          Decimal  @default(220.00) @map("coran_enfant") @db.Decimal(10, 2)
-  coranAdulteHomme     Decimal  @default(300.00) @map("coran_adulte_homme") @db.Decimal(10, 2)
-  coranAdulteFemme     Decimal  @default(250.00) @map("coran_adulte_femme") @db.Decimal(10, 2)
-  sciencesIslamiques   Decimal  @default(300.00) @map("sciences_islamiques") @db.Decimal(10, 2)
-  createdById          String?  @map("created_by_id")
-  updatedById          String?  @map("updated_by_id")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  id                    String   @id @default(uuid())
+  isActive              Boolean  @default(true) @map("is_active")
+  registrationFee       Decimal  @default(10.00) @map("registration_fee") @db.Decimal(10, 2)
+  fraisPrelevement      Decimal  @default(0.00) @map("frais_prelevement") @db.Decimal(10, 2)
+  arabicTier1           Decimal  @default(310.00) @map("arabic_tier_1") @db.Decimal(10, 2)
+  arabicTier2           Decimal  @default(570.00) @map("arabic_tier_2") @db.Decimal(10, 2)
+  arabicTier3           Decimal  @default(750.00) @map("arabic_tier_3") @db.Decimal(10, 2)
+  arabicTier4           Decimal  @default(900.00) @map("arabic_tier_4") @db.Decimal(10, 2)
+  arabicTier5           Decimal  @default(1050.00) @map("arabic_tier_5") @db.Decimal(10, 2)
+  arabicExtraPerStudent Decimal  @default(150.00) @map("arabic_extra_per_student") @db.Decimal(10, 2)
+  coranEnfant           Decimal  @default(220.00) @map("coran_enfant") @db.Decimal(10, 2)
+  coranAdulteHomme      Decimal  @default(300.00) @map("coran_adulte_homme") @db.Decimal(10, 2)
+  coranAdulteFemme      Decimal  @default(250.00) @map("coran_adulte_femme") @db.Decimal(10, 2)
+  sciencesIslamiques    Decimal  @default(300.00) @map("sciences_islamiques") @db.Decimal(10, 2)
+  tariffRows            Json?    @map("tariff_rows")
+  createdById           String?  @map("created_by_id")
+  updatedById           String?  @map("updated_by_id")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   @@map("pricing_configs")
 }
+
 enum PaymentMethod {
   STRIPE
   PAYPAL

@@ -17,6 +17,7 @@ function mapPayloadToDb(payload = {}) {
     coranAdulteHomme: payload.coranAdulteHomme,
     coranAdulteFemme: payload.coranAdulteFemme,
     sciencesIslamiques: payload.sciencesIslamiques,
+    tariffRows: Array.isArray(payload.tariffRows) ? payload.tariffRows : [],
   };
 }
 
