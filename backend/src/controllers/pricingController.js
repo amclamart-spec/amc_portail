@@ -4,6 +4,14 @@ const { normalizePricingConfig } = require('../services/pricingService');
 const prisma = new PrismaClient();
 
 function mapPayloadToDb(payload = {}) {
+  const tariffRows = Array.isArray(payload.tariffRows)
+    ? payload.tariffRows.map((row) => ({
+        ...row,
+        peopleCount: Number(row.peopleCount) || 0,
+        price: Number(row.price) || 0,
+      }))
+    : [];
+
   return {
     registrationFee: payload.registrationFee,
     fraisPrelevement: payload.fraisPrelevement,
@@ -17,7 +25,7 @@ function mapPayloadToDb(payload = {}) {
     coranAdulteHomme: payload.coranAdulteHomme,
     coranAdulteFemme: payload.coranAdulteFemme,
     sciencesIslamiques: payload.sciencesIslamiques,
-    tariffRows: Array.isArray(payload.tariffRows) ? payload.tariffRows : [],
+    tariffRows,
   };
 }
 
@@ -50,7 +58,23 @@ async function updatePricingConfig(req, res) {
   try {
     const payload = mapPayloadToDb(req.body);
 
+    const numericFields = [
+      'registrationFee',
+      'fraisPrelevement',
+      'arabicTier1',
+      'arabicTier2',
+      'arabicTier3',
+      'arabicTier4',
+      'arabicTier5',
+      'arabicExtraPerStudent',
+      'coranEnfant',
+      'coranAdulteHomme',
+      'coranAdulteFemme',
+      'sciencesIslamiques',
+    ];
+
     Object.entries(payload).forEach(([key, value]) => {
+      if (!numericFields.includes(key)) return;
       if (value !== undefined && (Number.isNaN(Number(value)) || Number(value) < 0)) {
         throw new Error(`Valeur invalide pour ${key}`);
       }
