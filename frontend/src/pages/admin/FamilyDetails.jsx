@@ -274,16 +274,14 @@ export default function AdminFamilyDetails() {
                     <td>{Number(payment.paidAmount || 0).toFixed(2)}€</td>
                     <td><span className={`badge badge-${payment.status === 'COMPLETED' ? 'success' : 'info'}`}>{payment.status === 'COMPLETED' ? 'Payé' : payment.status}</span></td>
                     <td>
-                      {payment.status === 'COMPLETED' && (
-                        <button
-                          className="btn btn-outline btn-sm"
-                          onClick={() => handleDownloadInvoice(payment.id)}
-                          disabled={downloading === payment.id}
-                          title="Télécharger la facture"
-                        >
-                          <FiDownload size={14} /> {downloading === payment.id ? '...' : 'Facture'}
-                        </button>
-                      )}
+                      <button
+                        className="btn btn-outline btn-sm"
+                        onClick={() => handleDownloadInvoice(payment.id)}
+                        disabled={downloading === payment.id}
+                        title="Télécharger le reçu"
+                      >
+                        <FiDownload size={14} /> {downloading === payment.id ? '...' : 'Reçu'}
+                      </button>
                     </td>
                   </tr>
                 ))

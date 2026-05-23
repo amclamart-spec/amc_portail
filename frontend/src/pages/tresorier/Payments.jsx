@@ -249,30 +249,26 @@ export default function TresorierPayments() {
                   <td>{Number(t.amount).toFixed(2)} €</td>
                   <td>{txStatusLabel(t.status)}</td>
                   <td>
-                    {t.payment?.metadata?.receiptUrl ? (
-                      <button
-                        className="btn btn-outline btn-sm"
-                        onClick={async () => {
-                          try {
-                            const response = await api.get(`/payments/${t.paymentId}/invoice/download`, { responseType: 'blob' });
-                            const url = window.URL.createObjectURL(new Blob([response.data]));
-                            const link = document.createElement('a');
-                            link.href = url;
-                            link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
-                            document.body.appendChild(link);
-                            link.click();
-                            link.remove();
-                            window.URL.revokeObjectURL(url);
-                          } catch (error) {
-                            toast.error('Impossible de télécharger le reçu de paiement');
-                          }
-                        }}
-                      >
-                        <FiDownload size={16} /> Reçu
-                      </button>
-                    ) : (
-                      <span>Non dispo</span>
-                    )}
+                    <button
+                      className="btn btn-outline btn-sm"
+                      onClick={async () => {
+                        try {
+                          const response = await api.get(`/finance/payments/${t.paymentId}/receipt/download`, { responseType: 'blob' });
+                          const url = window.URL.createObjectURL(new Blob([response.data]));
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
+                          document.body.appendChild(link);
+                          link.click();
+                          link.remove();
+                          window.URL.revokeObjectURL(url);
+                        } catch (error) {
+                          toast.error('Impossible de télécharger le reçu de paiement');
+                        }
+                      }}
+                    >
+                      <FiDownload size={16} /> Reçu
+                    </button>
                   </td>
                 </tr>
               ))}

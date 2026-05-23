@@ -108,16 +108,14 @@ export default function FamilyPayments() {
                   </td>
                   <td>{formatPaymentMethod(p)}</td>
                   <td>
-                    {p.status === "COMPLETED" && (
-                      <button
-                        className="btn btn-outline btn-sm"
-                        onClick={() => handleDownloadInvoice(p.id)}
-                        disabled={downloading === p.id}
-                        title="Télécharger le reçu de paiement"
-                      >
-                        <FiDownload size={16} /> {downloading === p.id ? "Téléchargement..." : "Reçu"}
-                      </button>
-                    )}
+                    <button
+                      className="btn btn-outline btn-sm"
+                      onClick={() => handleDownloadInvoice(p.id)}
+                      disabled={downloading === p.id}
+                      title="Télécharger le reçu de paiement"
+                    >
+                      <FiDownload size={16} /> {downloading === p.id ? "Téléchargement..." : "Reçu"}
+                    </button>
                   </td>
                 </tr>
               ))}
