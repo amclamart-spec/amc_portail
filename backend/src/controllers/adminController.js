@@ -8,8 +8,13 @@ const { finalizeStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { isProvisionalClass, getProvisionalClassFilter } = require('../utils/provisionalClassUtils');
 const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
+const { getReceiptInfo } = require('../utils/receiptUtils');
 
 const prisma = new PrismaClient();
+
+function normalizeId(value) {
+  return String(value || '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
+}
 
 async function confirmStripePaymentsForEnrollment(enrollmentId) {
   const stripePayments = await prisma.payment.findMany({
@@ -439,8 +444,15 @@ async function getEnrollments(req, res) {
 }
 
 async function findEnrollmentAndPayment(enrollmentId) {
+  const cleanedEnrollmentId = normalizeId(enrollmentId);
+  if (!cleanedEnrollmentId) {
+    const error = new Error('Inscription introuvable');
+    error.status = 404;
+    throw error;
+  }
+
   const enrollment = await prisma.enrollment.findUnique({
-    where: { id: enrollmentId },
+    where: { id: cleanedEnrollmentId },
     include: {
       student: { include: { family: { include: { user: true } } } },
       schoolYear: true,
@@ -464,10 +476,10 @@ async function findEnrollmentAndPayment(enrollmentId) {
     orderBy: { createdAt: 'desc' },
   });
 
-  const payment = payments.find((p) => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(enrollmentId))
+  const payment = payments.find((p) => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(cleanedEnrollmentId))
     || payments[0] || null;
 
-  const attachedPayments = payments.filter((p) => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(enrollmentId));
+  const attachedPayments = payments.filter((p) => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(cleanedEnrollmentId));
 
   return {
     enrollment,
@@ -476,32 +488,296 @@ async function findEnrollmentAndPayment(enrollmentId) {
   };
 }
 
+async function findEnrollmentTransaction(enrollmentId, transactionId) {
+  const cleanedEnrollmentId = normalizeId(enrollmentId);
+  const cleanedTransactionId = normalizeId(transactionId);
+
+  if (!cleanedEnrollmentId) {
+    const error = new Error('Inscription introuvable');
+    error.status = 404;
+    throw error;
+  }
+
+  if (!cleanedTransactionId) {
+    const error = new Error('Paiement introuvable');
+    error.status = 404;
+    throw error;
+  }
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { id: cleanedEnrollmentId },
+    include: {
+      student: { select: { familyId: true } },
+      schoolYear: true,
+    },
+  });
+
+  if (!enrollment) {
+    const error = new Error('Inscription introuvable');
+    error.status = 404;
+    throw error;
+  }
+
+  const transaction = await prisma.paymentTransaction.findUnique({
+    where: { id: cleanedTransactionId },
+    include: { payment: true },
+  });
+
+  if (!transaction || !transaction.payment) {
+    const error = new Error('Paiement introuvable');
+    error.status = 404;
+    throw error;
+  }
+
+  const enrollmentIds = Array.isArray(transaction.payment.metadata?.enrollmentIds)
+    ? transaction.payment.metadata.enrollmentIds
+    : [];
+
+  if (enrollmentIds.length > 0) {
+    if (!enrollmentIds.includes(cleanedEnrollmentId)) {
+      const error = new Error('Paiement introuvable pour cette inscription');
+      error.status = 404;
+      throw error;
+    }
+  } else if (transaction.payment.familyId !== enrollment.student.familyId || transaction.payment.schoolYearId !== enrollment.schoolYearId) {
+    const error = new Error('Paiement introuvable pour cette inscription');
+    error.status = 404;
+    throw error;
+  }
+
+  return { enrollment, transaction };
+}
+
+async function recalculatePaymentAggregate(paymentId) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    include: { transactions: true },
+  });
+
+  if (!payment) {
+    throw new Error('Paiement introuvable');
+  }
+
+  const paidAmount = payment.transactions.reduce((sum, tx) => {
+    if (String(tx.status) === 'SUCCEEDED') {
+      return sum.plus(tx.amount);
+    }
+    return sum;
+  }, new Prisma.Decimal(0));
+
+  let status = 'PENDING';
+  if (paidAmount.greaterThanOrEqualTo(payment.totalAmount)) {
+    status = 'COMPLETED';
+  } else if (paidAmount.greaterThan(0)) {
+    status = 'PARTIAL';
+  }
+
+  await prisma.payment.update({
+    where: { id: paymentId },
+    data: {
+      paidAmount,
+      status,
+    },
+  });
+}
+
 async function getEnrollmentPayments(req, res) {
   try {
-    const { payment, payments } = await findEnrollmentAndPayment(req.params.id);
-    const activePayments = (payments || []).filter((p) => ['PENDING', 'PARTIAL', 'OVERDUE', 'FAILED'].includes(p.status));
+    const { payments } = await findEnrollmentAndPayment(req.params.id);
+    const paymentIds = (payments || []).map((p) => p.id);
+    const transactions = paymentIds.length > 0 ? await prisma.paymentTransaction.findMany({
+      where: { paymentId: { in: paymentIds } },
+      orderBy: { createdAt: 'desc' },
+    }) : [];
+
     return res.json({
-      payments: activePayments.map((p) => ({
-        id: p.id,
-        status: p.status,
-        totalAmount: String(p.totalAmount),
-        paidAmount: String(p.paidAmount),
-        paymentMethod: p.paymentMethod,
-        provider: p.provider,
-        createdAt: p.createdAt,
+      payments: transactions.map((tx) => ({
+        id: tx.id,
+        paymentId: tx.paymentId,
+        payerName: tx.payerName,
+        method: tx.method,
+        description: tx.description,
+        amount: String(tx.amount),
+        status: tx.status,
+        provider: tx.provider,
+        processedAt: tx.processedAt,
+        createdAt: tx.createdAt,
       })),
-      payment: payment ? {
-        id: payment.id,
-        status: payment.status,
-        totalAmount: String(payment.totalAmount),
-        paidAmount: String(payment.paidAmount),
-        paymentMethod: payment.paymentMethod,
-        provider: payment.provider,
-      } : null,
-      transactions: payment?.transactions || [],
     });
   } catch (error) {
     console.error('Erreur getEnrollmentPayments:', error);
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateEnrollmentPayment(req, res) {
+  try {
+    const { payerName, date, method, status, comment, amount } = req.body;
+    const { transaction } = await findEnrollmentTransaction(req.params.id, req.params.paymentId);
+    const updateData = {};
+
+    if (payerName !== undefined) {
+      updateData.payerName = String(payerName || '').trim() || null;
+    }
+
+    if (method !== undefined) {
+      const allowedMethods = ['CHEQUE', 'ESPECES', 'CB'];
+      if (!allowedMethods.includes(method)) {
+        return res.status(400).json({ error: 'Moyen de paiement invalide' });
+      }
+      updateData.method = method;
+    }
+
+    if (status !== undefined) {
+      const allowedStatuses = ['validé', 'non validé'];
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).json({ error: 'Statut de paiement invalide' });
+      }
+      updateData.status = status === 'validé' ? 'SUCCEEDED' : 'INITIATED';
+    }
+
+    if (amount !== undefined) {
+      const parsedAmount = amount ? new Prisma.Decimal(amount) : null;
+      if (!parsedAmount || parsedAmount.lte(0)) {
+        return res.status(400).json({ error: 'Montant de paiement invalide' });
+      }
+      updateData.amount = parsedAmount;
+    }
+
+    if (date !== undefined) {
+      const txDate = date ? new Date(date) : null;
+      if (!txDate || Number.isNaN(txDate.getTime())) {
+        return res.status(400).json({ error: 'Date de paiement invalide' });
+      }
+      updateData.processedAt = txDate;
+    }
+
+    if (comment !== undefined) {
+      updateData.description = comment || null;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'Aucune donnée à mettre à jour' });
+    }
+
+    const updatedTransaction = await prisma.paymentTransaction.update({
+      where: { id: transaction.id },
+      data: updateData,
+    });
+
+    await recalculatePaymentAggregate(transaction.paymentId);
+
+    return res.json({
+      transaction: {
+        id: updatedTransaction.id,
+        paymentId: updatedTransaction.paymentId,
+        payerName: updatedTransaction.payerName,
+        method: updatedTransaction.method,
+        description: updatedTransaction.description,
+        amount: String(updatedTransaction.amount),
+        status: updatedTransaction.status,
+        provider: updatedTransaction.provider,
+        processedAt: updatedTransaction.processedAt,
+        createdAt: updatedTransaction.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('Erreur updateEnrollmentPayment:', error);
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteEnrollmentPayment(req, res) {
+  try {
+    const { transaction } = await findEnrollmentTransaction(req.params.id, req.params.paymentId);
+    await prisma.paymentTransaction.delete({ where: { id: transaction.id } });
+    await recalculatePaymentAggregate(transaction.paymentId);
+    return res.json({ message: 'Paiement supprimé avec succès' });
+  } catch (error) {
+    console.error('Erreur deleteEnrollmentPayment:', error);
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function downloadEnrollmentPaymentReceipt(req, res) {
+  try {
+    const { id: enrollmentId, paymentId: transactionId } = req.params;
+    const { enrollment, transaction } = await findEnrollmentTransaction(enrollmentId, transactionId);
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: transaction.paymentId },
+      include: { family: { include: { user: true } } },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Paiement introuvable' });
+    }
+
+    // Générer le reçu PDF
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    const filename = `recu-${transaction.id}.pdf`;
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    doc.pipe(res);
+
+    // En-tête
+    doc.fontSize(20).font('Helvetica-Bold').text('REÇU DE PAIEMENT', { align: 'center' });
+    doc.moveTo(50, 80).lineTo(550, 80).stroke();
+    doc.fontSize(10);
+
+    // Informations de l'établissement
+    doc.fontSize(12).font('Helvetica-Bold').text('AMC', 50, 100);
+    doc.fontSize(10).font('Helvetica').text('Établissement scolaire', 50, 120);
+
+    // Informations du reçu
+    doc.fontSize(10);
+    doc.text(`Numéro de reçu: ${transaction.id}`, 50, 160);
+    doc.text(`Date: ${new Date(transaction.processedAt || transaction.createdAt).toLocaleDateString('fr-FR')}`, 50, 180);
+
+    // Informations de la famille
+    doc.fontSize(12).font('Helvetica-Bold').text('Famille', 50, 220);
+    doc.fontSize(10).font('Helvetica');
+    const familyName = payment.family.user?.firstName && payment.family.user?.lastName
+      ? `${payment.family.user.firstName} ${payment.family.user.lastName}`
+      : payment.family.familyName;
+    doc.text(`Nom: ${familyName}`, 50, 240);
+
+    // Informations de l'inscription
+    doc.fontSize(12).font('Helvetica-Bold').text('Inscription', 50, 280);
+    doc.fontSize(10).font('Helvetica');
+    doc.text(`ID: ${enrollment.id}`, 50, 300);
+    doc.text(`Niveau: ${enrollment.class?.level?.name || 'N/A'}`, 50, 320);
+
+    // Détails du paiement
+    doc.fontSize(12).font('Helvetica-Bold').text('Détails du paiement', 50, 360);
+    doc.fontSize(10).font('Helvetica');
+    doc.text(`Moyen: ${transaction.method}`, 50, 380);
+    doc.text(`Montant: ${Number(transaction.amount).toFixed(2)} €`, 50, 400);
+    doc.text(`Statut: ${transaction.status === 'SUCCEEDED' ? 'Validé' : 'En attente'}`, 50, 420);
+    if (transaction.payerName) {
+      doc.text(`Payeur: ${transaction.payerName}`, 50, 440);
+    }
+    if (transaction.description) {
+      doc.text(`Commentaire: ${transaction.description}`, 50, 460);
+    }
+
+    // Pied de page
+    doc.moveTo(50, 520).lineTo(550, 520).stroke();
+    doc.fontSize(9).font('Helvetica').text(
+      'Ce reçu a été généré automatiquement. Pour toute question, veuillez contacter l\'établissement.',
+      50,
+      540,
+      { align: 'center', width: 500 }
+    );
+
+    doc.end();
+  } catch (error) {
+    console.error('Erreur downloadEnrollmentPaymentReceipt:', error);
     if (error.status) return res.status(error.status).json({ error: error.message });
     return res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -820,7 +1096,7 @@ async function getStudentAcademicRecord(req, res) {
 async function updateEnrollment(req, res) {
   try {
     const { id } = req.params;
-    const { status, classId, schoolYearId, student, family, healthForm, comment } = req.body;
+    const { status, classId, schoolYearId, student, family, healthForm, comment, levelValidated } = req.body;
     const allowedStatuses = ['PENDING', 'CONFIRMED', 'CANCELLED', 'ARCHIVED'];
 
     if (status && !allowedStatuses.includes(status)) {
@@ -865,6 +1141,12 @@ async function updateEnrollment(req, res) {
     }
     if (comment !== undefined) {
       enrollmentUpdates.comment = comment;
+    }
+    if (levelValidated !== undefined) {
+      if (typeof levelValidated !== 'boolean') {
+        return res.status(400).json({ error: 'levelValidated doit être un booléen' });
+      }
+      enrollmentUpdates.levelValidated = levelValidated;
     }
 
     const studentUpdates = {};
@@ -1055,7 +1337,10 @@ async function updateEnrollment(req, res) {
     if (healthFormData && (healthFormData.legalRepresentativeFullName || healthFormData.citySigned || healthFormData.signedAt)) {
       const consentUpdateData = {};
       if (healthFormData.legalRepresentativeFullName !== undefined) {
-        consentUpdateData.acceptedByFullName = healthFormData.legalRepresentativeFullName.trim() || null;
+        const trimmedName = healthFormData.legalRepresentativeFullName.trim();
+        if (trimmedName) {
+          consentUpdateData.acceptedByFullName = trimmedName;
+        }
       }
       if (healthFormData.citySigned !== undefined) {
         consentUpdateData.citySigned = healthFormData.citySigned.trim() || null;
@@ -1257,7 +1542,7 @@ async function getLevels(req, res) {
 
 async function createLevel(req, res) {
   try {
-    const { poleId, code, name, description, sortOrder = 0, minAge } = req.body;
+    const { poleId, code, name, description, sortOrder = 0, minAge, maxAge } = req.body;
     if (!poleId || !name) {
       return res.status(400).json({ error: 'poleId et name sont requis' });
     }
@@ -1266,6 +1551,16 @@ async function createLevel(req, res) {
       ? String(code).trim().toUpperCase()
       : name.normalize('NFD').replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').toUpperCase();
 
+    const minAgeNum = minAge !== undefined && minAge !== null && minAge !== '' ? Number(minAge) : null;
+    const maxAgeNum = maxAge !== undefined && maxAge !== null && maxAge !== '' ? Number(maxAge) : null;
+
+    if (minAgeNum !== null && isNaN(minAgeNum)) {
+      return res.status(400).json({ error: 'Âge minimum invalide' });
+    }
+    if (maxAgeNum !== null && isNaN(maxAgeNum)) {
+      return res.status(400).json({ error: 'Âge maximum invalide' });
+    }
+
     const level = await prisma.level.create({
       data: {
         poleId,
@@ -1273,7 +1568,8 @@ async function createLevel(req, res) {
         name: String(name).trim(),
         description,
         sortOrder: Number(sortOrder),
-        minAge: minAge !== undefined && minAge !== null && minAge !== '' ? Number(minAge) : null,
+        minAge: minAgeNum,
+        maxAge: maxAgeNum,
       },
     });
 
@@ -1287,7 +1583,17 @@ async function createLevel(req, res) {
 async function updateLevel(req, res) {
   try {
     const { id } = req.params;
-    const { poleId, code, name, description, sortOrder, minAge } = req.body;
+    const { poleId, code, name, description, sortOrder, minAge, maxAge } = req.body;
+
+    const minAgeNum = minAge !== undefined ? (minAge === '' || minAge === null ? null : Number(minAge)) : undefined;
+    const maxAgeNum = maxAge !== undefined ? (maxAge === '' || maxAge === null ? null : Number(maxAge)) : undefined;
+
+    if (minAgeNum !== undefined && minAgeNum !== null && isNaN(minAgeNum)) {
+      return res.status(400).json({ error: 'Âge minimum invalide' });
+    }
+    if (maxAgeNum !== undefined && maxAgeNum !== null && isNaN(maxAgeNum)) {
+      return res.status(400).json({ error: 'Âge maximum invalide' });
+    }
 
     const level = await prisma.level.update({
       where: { id },
@@ -1297,7 +1603,8 @@ async function updateLevel(req, res) {
         ...(name !== undefined ? { name: String(name).trim() } : {}),
         ...(description !== undefined ? { description } : {}),
         ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
-        ...(minAge !== undefined ? { minAge: minAge === '' ? null : Number(minAge) } : {}),
+        ...(minAgeNum !== undefined ? { minAge: minAgeNum } : {}),
+        ...(maxAgeNum !== undefined ? { maxAge: maxAgeNum } : {}),
       },
       include: { pole: true },
     });
@@ -2293,6 +2600,9 @@ module.exports = {
   sendMessageToClassFamilies,
   getEnrollmentPayments,
   createEnrollmentPayment,
+  updateEnrollmentPayment,
+  deleteEnrollmentPayment,
+  downloadEnrollmentPaymentReceipt,
 
   getTeachers,
   getTeacherById,

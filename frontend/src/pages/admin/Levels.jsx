@@ -9,6 +9,8 @@ const emptyLevelForm = {
   name: '',
   description: '',
   sortOrder: 0,
+  minAge: '',
+  maxAge: '',
 };
 
 export default function AdminLevels() {
@@ -95,6 +97,8 @@ export default function AdminLevels() {
       name: level.name || '',
       description: level.description || '',
       sortOrder: level.sortOrder || 0,
+      minAge: level.minAge || '',
+      maxAge: level.maxAge || '',
     });
     setModalOpen(true);
   };
@@ -113,6 +117,8 @@ export default function AdminLevels() {
         name: levelForm.name,
         description: levelForm.description,
         sortOrder: Number(levelForm.sortOrder || 0),
+        minAge: levelForm.minAge ? Number(levelForm.minAge) : null,
+        maxAge: levelForm.maxAge ? Number(levelForm.maxAge) : null,
       };
 
       if (levelForm.id) {
@@ -198,13 +204,15 @@ export default function AdminLevels() {
                         <th>Code</th>
                         <th>Nom</th>
                         <th>Description</th>
+                        <th>Âge Min</th>
+                        <th>Âge Max</th>
                         <th>Classes</th>
                         <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {pole.levels.length === 0 ? (
-                        <tr><td colSpan="6" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun niveau</td></tr>
+                        <tr><td colSpan="8" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun niveau</td></tr>
                       ) : (
                         pole.levels.map((level) => (
                           <tr key={level.id}>
@@ -212,6 +220,8 @@ export default function AdminLevels() {
                             <td>{level.code}</td>
                             <td>{level.name}</td>
                             <td>{level.description || '-'}</td>
+                            <td>{level.minAge || '-'}</td>
+                            <td>{level.maxAge || '-'}</td>
                             <td>{level._count?.classes || 0}</td>
                             <td style={{ display: 'flex', gap: 8 }}>
                               <button className="btn btn-outline btn-sm" onClick={() => openEditLevel(level)}>Modifier</button>
@@ -261,6 +271,17 @@ export default function AdminLevels() {
               <div className="form-group" style={{ margin: 0 }}>
                 <label>Ordre</label>
                 <input type="number" className="form-control" value={levelForm.sortOrder} onChange={(e) => setLevelForm((prev) => ({ ...prev, sortOrder: e.target.value }))} />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Âge minimum</label>
+                  <input type="number" className="form-control" value={levelForm.minAge} onChange={(e) => setLevelForm((prev) => ({ ...prev, minAge: e.target.value }))} placeholder="3" />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Âge maximum</label>
+                  <input type="number" className="form-control" value={levelForm.maxAge} onChange={(e) => setLevelForm((prev) => ({ ...prev, maxAge: e.target.value }))} placeholder="8" />
+                </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>

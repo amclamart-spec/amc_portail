@@ -88,6 +88,28 @@ function getDefaultState(prefill = {}) {
   };
 }
 
+function getAgeFromDate(dateString) {
+  if (!dateString) return null;
+  const dob = new Date(dateString);
+  if (Number.isNaN(dob.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const monthDiff = today.getMonth() - dob.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+    age -= 1;
+  }
+  return age;
+}
+
+function isClassAllowedForAge(cls, age) {
+  if (age === null) return true;
+  const minAge = cls.level?.minAge;
+  const maxAge = cls.level?.maxAge;
+  if (minAge !== undefined && minAge !== null && age < minAge) return false;
+  if (maxAge !== undefined && maxAge !== null && age > maxAge) return false;
+  return true;
+}
+
 export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const { user } = useAuth();
   const location = useLocation();
@@ -893,35 +915,48 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                             })}
                           </div>
                       ) : null}
-                      {isOldStudent && classesGroupedByPole.length > 0 ? (
-                        <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
-                          <div style={{ borderRadius: 16, background: '#F8FAFC', border: '1px solid #E2E8F0', padding: 16 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                              <div>
-                                <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>Niveaux disponibles par pôle</div>
-                                <div style={{ color: '#64748B', fontSize: 13 }}>Affichage des niveaux par pôle en plus des cours Arabe et Coran.</div>
+                      {isOldStudent && classesGroupedByPole.length > 0 ? (() => {
+                        const memberAge = getAgeFromDate(member.dateOfBirth);
+                        const filteredGroups = classesGroupedByPole.map((group) => ({
+                          ...group,
+                          classes: group.classes.filter((cls) => isClassAllowedForAge(cls, memberAge)),
+                        }));
+                        const hasAnyClass = filteredGroups.some((group) => group.classes.length > 0);
+                        return (
+                          <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
+                            <div style={{ borderRadius: 16, background: '#F8FAFC', border: '1px solid #E2E8F0', padding: 16 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                <div>
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>Niveaux disponibles par pôle</div>
+                                  <div style={{ color: '#64748B', fontSize: 13 }}>Affichage des niveaux par pôle en plus des cours Arabe et Coran.</div>
+                                </div>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
+                                  {filteredGroups.length} pôles
+                                </div>
                               </div>
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
-                                {classesGroupedByPole.length} pôles
-                              </div>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                              {classesGroupedByPole.map((group) => {
-                                const uniqueLevels = Array.from(new Set(group.classes.map((cls) => cls.level?.name).filter(Boolean)));
-                                return (
-                                  <div key={`${group.poleId}-levels`} style={{ borderRadius: 14, background: '#FFFFFF', border: '1px solid #E2E8F0', padding: 12 }}>
-                                    <div style={{ fontSize: 14, fontWeight: 700, color: '#1D4ED8', marginBottom: 8 }}>{group.poleName}</div>
-                                    <div style={{ fontSize: 12, color: '#475569', minHeight: 32 }}>
-                                      {uniqueLevels.length > 0 ? uniqueLevels.join(', ') : 'Aucun niveau défini'}
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                                {filteredGroups.map((group) => {
+                                  const uniqueLevels = Array.from(new Set(group.classes.map((cls) => cls.level?.name).filter(Boolean)));
+                                  return (
+                                    <div key={`${group.poleId}-levels`} style={{ borderRadius: 14, background: '#FFFFFF', border: '1px solid #E2E8F0', padding: 12 }}>
+                                      <div style={{ fontSize: 14, fontWeight: 700, color: '#1D4ED8', marginBottom: 8 }}>{group.poleName}</div>
+                                      <div style={{ fontSize: 12, color: '#475569', minHeight: 32 }}>
+                                        {uniqueLevels.length > 0 ? uniqueLevels.join(', ') : 'Aucun niveau défini'}
+                                      </div>
                                     </div>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
 
-                          {classesGroupedByPole.map((group) => (
-                            <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                            {!hasAnyClass ? (
+                              <div style={{ padding: 16, borderRadius: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' }}>
+                                Aucune classe disponible pour cet âge ({memberAge !== null ? `${memberAge} ans` : 'date de naissance invalide'}).
+                              </div>
+                            ) : null}
+
+                            {filteredGroups.map((group) => (
+                              <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
                                 <div>
                                   <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
@@ -980,7 +1015,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                             </div>
                           ))}
                         </div>
-                      ) : null}
+                        );
+                      })() : null}
                     </div>
                   );
                 })}

@@ -436,7 +436,6 @@ async function sendFamilyRegistrationConfirmationEmail(user, familySummary = '')
     ${familySummary ? `<div style="margin:12px 0;padding:12px;background:#eef2ff;border-radius:8px;">${familySummary}</div>` : ''}
     <p>Prochaines étapes :</p>
     <ul>
-      <li>Vérifiez votre email pour activer votre compte</li>
       <li>Effectuez le paiement selon l'échéancier fourni</li>
       <li>Les inscriptions de vos enfants seront confirmées après paiement</li>
     </ul>

@@ -26,6 +26,7 @@ const {
   uploadPaymentReceipt,
   getPaymentReceipt,
   downloadPaymentReceipt,
+  generatePaymentReceiptPDF,
 } = require('../controllers/paymentController');
 
 const receiptsUploadDir = path.join(__dirname, '../../uploads/receipts');
@@ -65,7 +66,7 @@ router.post('/family-enrollment', authorizePermission(PERMISSIONS.FAMILY_SELF_PA
 
 // Receipt routes (invoice and receipt are the same)
 router.get('/:paymentId/invoice', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), getPaymentInvoice);
-router.get('/:paymentId/invoice/download', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), downloadInvoice);
+router.get('/:paymentId/invoice/download', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), generatePaymentReceiptPDF);
 
 // Receipt upload and download routes
 router.post('/:paymentId/receipt', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), upload.single('receipt'), uploadPaymentReceipt);

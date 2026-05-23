@@ -717,64 +717,6 @@ async function completeExistingFamilyRegistration(req, res) {
         },
       });
 
-      let checkout = null;
-      if (provider !== 'OFFLINE') {
-        const urls = getPaymentReturnUrls(req, provider);
-        checkout = await createOnlineCheckout({
-          provider,
-          amount: paymentTotal,
-          paymentId: paymentRecord.id,
-          returnUrl: urls.returnUrl,
-          cancelUrl: urls.cancelUrl,
-          installments: installmentsCount,
-          customer: {
-            firstName: req.user.firstName,
-            lastName: req.user.lastName,
-            email: req.user.email,
-          },
-          metadata: {
-            source: 'family_wizard_existing',
-            plan_id: paymentPlan.id,
-          },
-        });
-
-        await tx.payment.update({
-          where: { id: paymentRecord.id },
-          data: {
-            externalPaymentId: checkout.externalPaymentId || null,
-            metadata: {
-              ...(paymentRecord.metadata || {}),
-              checkout,
-            },
-          },
-        });
-
-        await tx.paymentPlan.update({
-          where: { id: paymentPlan.id },
-          data: {
-            status: checkout.configured ? 'PENDING' : 'FAILED',
-            providerRef: checkout.externalPaymentId || null,
-            metadata: {
-              ...(paymentPlan.metadata || {}),
-              checkout,
-            },
-          },
-        });
-
-        await tx.paymentTransaction.create({
-          data: {
-            paymentId: paymentRecord.id,
-            provider,
-            method: paymentMethod,
-            amount: toDecimal(paymentTotal),
-            status: checkout.configured ? 'INITIATED' : 'FAILED',
-            externalRef: checkout.externalPaymentId || null,
-            description: 'Paiement inscription membre existant',
-            metadata: checkout,
-          },
-        });
-      }
-
       if (provider === 'OFFLINE') {
         const isCheque = paymentMethod === 'CHEQUE';
         await tx.paymentTransaction.create({
@@ -803,10 +745,90 @@ async function completeExistingFamilyRegistration(req, res) {
         enrollments: createdEnrollments,
         payment: paymentRecord,
         paymentPlan,
-        checkout,
         installments,
+        shouldCreateCheckout: provider !== 'OFFLINE',
       };
     });
+
+    if (result.shouldCreateCheckout) {
+      try {
+        const urls = getPaymentReturnUrls(req, provider);
+        const checkout = await createOnlineCheckout({
+          provider,
+          amount: paymentTotal,
+          paymentId: result.payment.id,
+          returnUrl: urls.returnUrl,
+          cancelUrl: urls.cancelUrl,
+          installments: installmentsCount,
+          customer: {
+            firstName: req.user.firstName,
+            lastName: req.user.lastName,
+            email: req.user.email,
+          },
+          metadata: {
+            source: 'family_wizard_existing',
+            plan_id: result.paymentPlan.id,
+          },
+        });
+
+        await prisma.$transaction([
+          prisma.payment.update({
+            where: { id: result.payment.id },
+            data: {
+              externalPaymentId: checkout.externalPaymentId || null,
+              metadata: {
+                ...(result.payment.metadata || {}),
+                checkout,
+              },
+            },
+          }),
+          prisma.paymentPlan.update({
+            where: { id: result.paymentPlan.id },
+            data: {
+              status: checkout.configured ? 'PENDING' : 'FAILED',
+              providerRef: checkout.externalPaymentId || null,
+              metadata: {
+                ...(result.paymentPlan.metadata || {}),
+                checkout,
+              },
+            },
+          }),
+          prisma.paymentTransaction.create({
+            data: {
+              paymentId: result.payment.id,
+              provider,
+              method: paymentMethod,
+              amount: toDecimal(paymentTotal),
+              status: checkout.configured ? 'INITIATED' : 'FAILED',
+              externalRef: checkout.externalPaymentId || null,
+              description: 'Paiement inscription membre existant',
+              metadata: checkout,
+            },
+          }),
+        ]);
+
+        result.checkout = checkout;
+      } catch (checkoutError) {
+        console.error('Erreur création Stripe Checkout hors transaction:', checkoutError);
+        await prisma.paymentPlan.update({
+          where: { id: result.paymentPlan.id },
+          data: { status: 'FAILED' },
+        });
+        await prisma.paymentTransaction.create({
+          data: {
+            paymentId: result.payment.id,
+            provider,
+            method: paymentMethod,
+            amount: toDecimal(paymentTotal),
+            status: 'FAILED',
+            description: 'Échec création Stripe Checkout',
+            metadata: {
+              error: checkoutError?.message || 'Stripe checkout error',
+            },
+          },
+        });
+      }
+    }
 
     // Envoi du mail d'inscription enregistrée
     const studentById = new Map(result.students.map((s) => [s.id, s]));
@@ -1074,8 +1096,6 @@ async function completeFamilyRegistration(req, res) {
     const userAgent = req.headers['user-agent'] || null;
 
     const passwordHash = await bcrypt.hash(account.password, 12);
-    const emailVerifyToken = uuidv4();
-
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -1087,7 +1107,6 @@ async function completeFamilyRegistration(req, res) {
           phone: account.phone || address.phonePrimary,
           role: 'FAMILLE',
           validationStatus: 'APPROVED',
-          emailVerifyToken,
         },
       });
 
@@ -1347,64 +1366,6 @@ async function completeFamilyRegistration(req, res) {
         },
       });
 
-      let checkout = null;
-      if (provider !== 'OFFLINE') {
-        const urls = getPaymentReturnUrls(req, provider);
-        checkout = await createOnlineCheckout({
-          provider,
-          amount: paymentTotal,
-          paymentId: paymentRecord.id,
-          returnUrl: urls.returnUrl,
-          cancelUrl: urls.cancelUrl,
-          installments: installmentsCount,
-          customer: {
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-          },
-          metadata: {
-            source: 'family_wizard',
-            plan_id: paymentPlan.id,
-          },
-        });
-
-        await tx.payment.update({
-          where: { id: paymentRecord.id },
-          data: {
-            externalPaymentId: checkout.externalPaymentId || null,
-            metadata: {
-              ...(paymentRecord.metadata || {}),
-              checkout,
-            },
-          },
-        });
-
-        await tx.paymentPlan.update({
-          where: { id: paymentPlan.id },
-          data: {
-            status: checkout.configured ? 'PENDING' : 'FAILED',
-            providerRef: checkout.externalPaymentId || null,
-            metadata: {
-              ...(paymentPlan.metadata || {}),
-              checkout,
-            },
-          },
-        });
-
-        await tx.paymentTransaction.create({
-          data: {
-            paymentId: paymentRecord.id,
-            provider,
-            method: paymentMethod,
-            amount: toDecimal(paymentTotal),
-            status: checkout.configured ? 'INITIATED' : 'FAILED',
-            externalRef: checkout.externalPaymentId || null,
-            description: 'Paiement inscription initiale',
-            metadata: checkout,
-          },
-        });
-      }
-
       if (provider === 'OFFLINE') {
         const isCheque = paymentMethod === 'CHEQUE';
         await tx.paymentTransaction.create({
@@ -1436,12 +1397,71 @@ async function completeFamilyRegistration(req, res) {
         enrollments: createdEnrollments,
         payment: paymentRecord,
         paymentPlan,
-        checkout,
         installments,
+        shouldCreateCheckout: provider !== 'OFFLINE',
       };
     });
 
-    // Envoi du mail d'inscription enregistrée (avec activation si nécessaire)
+    if (result.shouldCreateCheckout) {
+      const urls = getPaymentReturnUrls(req, result.payment.provider);
+      const checkout = await createOnlineCheckout({
+        provider: result.payment.provider,
+        amount: Number(result.payment.totalAmount || 0),
+        paymentId: result.payment.id,
+        returnUrl: urls.returnUrl,
+        cancelUrl: urls.cancelUrl,
+        installments: result.installments.length,
+        customer: {
+          firstName: result.user.firstName,
+          lastName: result.user.lastName,
+          email: result.user.email,
+        },
+        metadata: {
+          source: 'family_wizard',
+          plan_id: result.paymentPlan.id,
+        },
+      });
+
+      await prisma.payment.update({
+        where: { id: result.payment.id },
+        data: {
+          externalPaymentId: checkout.externalPaymentId || null,
+          metadata: {
+            ...(result.payment.metadata || {}),
+            checkout,
+          },
+        },
+      });
+
+      await prisma.paymentPlan.update({
+        where: { id: result.paymentPlan.id },
+        data: {
+          status: checkout.configured ? 'PENDING' : 'FAILED',
+          providerRef: checkout.externalPaymentId || null,
+          metadata: {
+            ...(result.paymentPlan.metadata || {}),
+            checkout,
+          },
+        },
+      });
+
+      await prisma.paymentTransaction.create({
+        data: {
+          paymentId: result.payment.id,
+          provider: result.payment.provider,
+          method: result.payment.paymentMethod,
+          amount: toDecimal(result.payment.totalAmount),
+          status: checkout.configured ? 'INITIATED' : 'FAILED',
+          externalRef: checkout.externalPaymentId || null,
+          description: 'Paiement inscription initiale',
+          metadata: checkout,
+        },
+      });
+
+      result.checkout = checkout;
+    }
+
+    // Envoi du mail de confirmation d'inscription
     const studentById = new Map(result.students.map((s) => [s.id, s]));
     const enrollmentDetailsHtml = result.enrollments.map((en) => {
       const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
@@ -1449,11 +1469,6 @@ async function completeFamilyRegistration(req, res) {
       const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
       return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
     }).join('<br/>');
-    const verifyUrl = `${config.frontendUrl}/verify-email?token=${emailVerifyToken}`;
-    const activationHtml = `<p>Pour activer votre compte famille, cliquez sur le bouton ci-dessous :</p>
-      <p style="text-align:center;">
-        <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;">Activer mon compte</a>
-      </p>`;
     const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
       <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
       <strong>Mode :</strong> ${paymentMethod}<br/>
@@ -1461,7 +1476,7 @@ async function completeFamilyRegistration(req, res) {
     </div>`;
 
     // Envoi des emails en arrière-plan sans bloquer la réponse
-    sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}${activationHtml}`).catch((err) => {
+    sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
       console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
     });
 
