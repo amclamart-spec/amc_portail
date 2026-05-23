@@ -1,5 +1,6 @@
 const { PrismaClient, Prisma } = require('@prisma/client');
 const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
 const {
   createOnlineCheckout,
   completeGoCardlessRedirectFlow,
@@ -1444,6 +1445,116 @@ async function downloadInvoice(req, res) {
   }
 }
 
+// Fonction générique pour générer un reçu de paiement
+async function generatePaymentReceiptPDF(req, res) {
+  try {
+    const { paymentId } = req.params;
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        family: { include: { user: true } },
+        schoolYear: true,
+        transactions: { take: 1, orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Paiement introuvable' });
+    }
+
+    // Vérifier les permissions
+    const isOwnPayment = payment.family.userId === req.user.id;
+    const isAdminOrTresorier = hasPermission(req.user, PERMISSIONS.PAYMENTS_MANAGE) || 
+                               hasPermission(req.user, PERMISSIONS.FINANCE_VIEW);
+    
+    if (!isOwnPayment && !isAdminOrTresorier) {
+      return res.status(403).json({ error: 'Accès non autorisé' });
+    }
+
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    const filename = `recu-${payment.id.substring(0, 8)}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    doc.pipe(res);
+
+    // En-tête
+    doc.fontSize(20).font('Helvetica-Bold').text('REÇU DE PAIEMENT', { align: 'center' });
+    doc.moveTo(50, 80).lineTo(550, 80).stroke();
+    doc.fontSize(10);
+
+    // Informations de l'établissement
+    doc.fontSize(12).font('Helvetica-Bold').text('AMC - Établissement Scolaire', 50, 100);
+    doc.fontSize(9).font('Helvetica').text('Centre de Formation Académique', 50, 120);
+
+    // Informations du reçu
+    doc.fontSize(10).font('Helvetica');
+    doc.text(`Numéro de reçu: ${payment.id.substring(0, 8)}`, 50, 160);
+    doc.text(`Date: ${new Date(payment.updatedAt || payment.createdAt).toLocaleDateString('fr-FR')}`, 50, 180);
+    doc.text(`Année scolaire: ${payment.schoolYear?.name || 'N/A'}`, 50, 200);
+
+    // Informations de la famille
+    doc.fontSize(12).font('Helvetica-Bold').text('FAMILLE', 50, 240);
+    doc.fontSize(10).font('Helvetica');
+    const familyName = payment.family.user?.firstName && payment.family.user?.lastName
+      ? `${payment.family.user.firstName} ${payment.family.user.lastName}`
+      : payment.family.familyName || 'N/A';
+    doc.text(`Nom: ${familyName}`, 50, 260);
+    if (payment.family.user?.email) {
+      doc.text(`Email: ${payment.family.user.email}`, 50, 280);
+    }
+
+    // Détails du paiement
+    doc.fontSize(12).font('Helvetica-Bold').text('DÉTAILS DU PAIEMENT', 50, 320);
+    doc.fontSize(10).font('Helvetica');
+    doc.text(`Statut: ${payment.status === 'COMPLETED' ? 'Payé' : payment.status === 'PENDING' ? 'En attente' : payment.status}`, 50, 340);
+    doc.text(`Méthode: ${payment.paymentMethod || 'Non spécifiée'}`, 50, 360);
+    doc.text(`Fournisseur: ${payment.provider}`, 50, 380);
+    doc.text(`Montant total: ${Number(payment.totalAmount).toFixed(2)} €`, 50, 400);
+    doc.text(`Montant payé: ${Number(payment.paidAmount).toFixed(2)} €`, 50, 420);
+
+    // Détails des frais si présents
+    if (Number(payment.registrationFee) > 0) {
+      doc.text(`Frais d'inscription: ${Number(payment.registrationFee).toFixed(2)} €`, 50, 440);
+    }
+    if (Number(payment.arabicFee) > 0) {
+      doc.text(`Frais Arabe: ${Number(payment.arabicFee).toFixed(2)} €`, 50, 460);
+    }
+    if (Number(payment.coranScienceFee) > 0) {
+      doc.text(`Frais Coran-Science: ${Number(payment.coranScienceFee).toFixed(2)} €`, 50, 480);
+    }
+
+    // Dernier paiement si existe
+    if (payment.transactions && payment.transactions.length > 0) {
+      const lastTransaction = payment.transactions[0];
+      doc.fontSize(12).font('Helvetica-Bold').text('DERNIÈRE TRANSACTION', 50, 520);
+      doc.fontSize(10).font('Helvetica');
+      doc.text(`Date: ${new Date(lastTransaction.createdAt).toLocaleDateString('fr-FR')}`, 50, 540);
+      doc.text(`Montant: ${Number(lastTransaction.amount).toFixed(2)} €`, 50, 560);
+      doc.text(`Statut: ${lastTransaction.status}`, 50, 580);
+      if (lastTransaction.payerName) {
+        doc.text(`Payeur: ${lastTransaction.payerName}`, 50, 600);
+      }
+    }
+
+    // Pied de page
+    doc.moveTo(50, 700).lineTo(550, 700).stroke();
+    doc.fontSize(8).font('Helvetica').text(
+      'Ce reçu a été généré automatiquement. Pour toute question, veuillez contacter l\'établissement.',
+      50,
+      720,
+      { align: 'center', width: 500 }
+    );
+
+    doc.end();
+  } catch (error) {
+    console.error('Erreur generatePaymentReceiptPDF:', error);
+    return res.status(500).json({ error: 'Erreur serveur lors de la génération du reçu' });
+  }
+}
+
 module.exports = {
   createFamilyEnrollmentPayment,
   createPaymentIntent,
@@ -1466,5 +1577,6 @@ module.exports = {
   uploadPaymentReceipt,
   getPaymentReceipt,
   downloadPaymentReceipt,
+  generatePaymentReceiptPDF,
   finalizeStripePayment,
 };

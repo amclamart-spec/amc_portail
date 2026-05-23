@@ -290,6 +290,7 @@ model Level {
   description String?
   sortOrder   Int      @default(0) @map("sort_order")
   minAge      Int?     @map("min_age")
+  maxAge      Int?     @map("max_age")
   createdAt   DateTime @default(now()) @map("created_at")
 
   pole    Pole    @relation(fields: [poleId], references: [id], onDelete: Cascade)
@@ -399,6 +400,7 @@ model Enrollment {
   classId          String           @map("class_id")
   status           EnrollmentStatus @default(PENDING)
   comment          String?
+  levelValidated   Boolean          @default(false) @map("level_validated")
   enrolledAt       DateTime         @default(now()) @map("enrolled_at")
   confirmedAt      DateTime?        @map("confirmed_at")
   cancelledAt      DateTime?        @map("cancelled_at")

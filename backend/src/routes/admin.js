@@ -47,6 +47,9 @@ const {
   sendMessageToClassFamilies,
   getEnrollmentPayments,
   createEnrollmentPayment,
+  updateEnrollmentPayment,
+  deleteEnrollmentPayment,
+  downloadEnrollmentPaymentReceipt,
   updateEnrollment,
 
   getTeachers,
@@ -71,6 +74,7 @@ const {
   sendMailing,
   getMailingPreview,
 } = require('../controllers/adminMailController');
+const { generatePaymentReceiptPDF } = require('../controllers/paymentController');
 
 // Configuration multer pour les pièces jointes
 const upload = multer({
@@ -115,7 +119,13 @@ router.put('/enrollments/registration-block', authorizePermission(PERMISSIONS.EN
 router.get('/students/:studentId/record', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getStudentAcademicRecord);
 router.get('/enrollments/:id/payments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollmentPayments);
 router.post('/enrollments/:id/payments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), createEnrollmentPayment);
+router.patch('/enrollments/:id/payments/:paymentId', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), updateEnrollmentPayment);
+router.delete('/enrollments/:id/payments/:paymentId', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), deleteEnrollmentPayment);
+router.get('/enrollments/:id/payments/:paymentId/receipt', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), downloadEnrollmentPaymentReceipt);
 router.put('/enrollments/:id', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), updateEnrollment);
+
+// Payment receipt route - admin can download receipts for any payment
+router.get('/payments/:paymentId/receipt/download', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), generatePaymentReceiptPDF);
 
 router.get('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getSchoolYears);
 router.post('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createSchoolYear);
