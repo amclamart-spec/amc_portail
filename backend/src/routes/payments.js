@@ -14,7 +14,11 @@ const {
   exportTransactions,
   requestRefund,
   processRefund,
+  getRefunds,
+  deleteRefund,
   getFamilyPaymentHistory,
+  generateRefundSecurityCode,
+  validateRefundSecurityCode,
   handleStripeConfirm,
   handleStripeCancel,
   handleGoCardlessReturn,
@@ -79,7 +83,13 @@ router.get('/transactions', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), ge
 router.get('/transactions/export', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), exportTransactions);
 router.get('/cheques/plans', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getChequePaymentPlans);
 router.patch('/cheques/installments/:installmentId', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), markChequeInstallmentStatus);
+router.get('/refunds', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), getRefunds);
 router.post('/refunds', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), requestRefund);
 router.patch('/refunds/:refundId', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), processRefund);
+router.delete('/refunds/:refundId', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), deleteRefund);
+
+// Security codes for refund access
+router.post('/refunds/security/generate', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), generateRefundSecurityCode);
+router.post('/refunds/security/validate', authorizeAnyPermission(PERMISSIONS.PAYMENTS_MANAGE, PERMISSIONS.PAYMENTS_REFUND), validateRefundSecurityCode);
 
 module.exports = router;

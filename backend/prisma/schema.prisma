@@ -46,6 +46,8 @@ model User {
   teacherProfile       Teacher?
   recordedTransactions PaymentTransaction[] @relation("RecordedByUser")
   refundsManaged       Refund[]             @relation("RefundManagedBy")
+  refundCodesGenerated RefundSecurityCode[] @relation("RefundCodeGenerator")
+  refundCodesUsed      RefundSecurityCode[] @relation("RefundCodeUser")
   sentMessages         ChatMessage[]        @relation("ChatMessageSender")
   receivedMessages     ChatMessage[]        @relation("ChatMessageRecipient")
 
@@ -736,6 +738,21 @@ model Refund {
   approvedBy User?   @relation("RefundManagedBy", fields: [approvedById], references: [id])
 
   @@map("refunds")
+}
+
+model RefundSecurityCode {
+  id            String    @id @default(uuid())
+  code          String    @unique
+  generatedBy   String    @map("generated_by")
+  usedBy        String?   @map("used_by")
+  usedAt        DateTime? @map("used_at")
+  expiresAt     DateTime  @map("expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  generator User  @relation("RefundCodeGenerator", fields: [generatedBy], references: [id])
+  user      User? @relation("RefundCodeUser", fields: [usedBy], references: [id])
+
+  @@map("refund_security_codes")
 }
 
 enum FinancialEntryType {

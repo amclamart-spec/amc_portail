@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 
@@ -20,11 +20,17 @@ export default function AdminEnrollments() {
   const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [paymentForm, setPaymentForm] = useState({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [refundAccessCode, setRefundAccessCode] = useState('');
+  const [refundCodeValidated, setRefundCodeValidated] = useState(false);
+  const [refundCodeValidating, setRefundCodeValidating] = useState(false);
+  const [refundForm, setRefundForm] = useState({ date: new Date().toISOString().slice(0, 10), amount: '', method: 'CHEQUE', comment: '' });
+  const [refunds, setRefunds] = useState([]);
   const [provisionalOnly, setProvisionalOnly] = useState(false);
   const [studentSearch, setStudentSearch] = useState('');
   const [selectedPole, setSelectedPole] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('');
+  const [expandedFamilies, setExpandedFamilies] = useState({});
   const [registrationsBlocked, setRegistrationsBlocked] = useState(false);
   const [registrationBlockLoading, setRegistrationBlockLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -174,6 +180,27 @@ export default function AdminEnrollments() {
   const pendingCount = visibleEnrollments.filter((e) => e.status === 'PENDING').length;
   const validationPendingCount = visibleEnrollments.filter((e) => e.student?.family?.user?.validationStatus === 'PENDING').length;
 
+  const groupedEnrollments = useMemo(() => {
+    const groups = visibleEnrollments.reduce((acc, enrollment) => {
+      const family = enrollment.student?.family;
+      const familyId = family?.id || `family-unknown-${enrollment.student?.id || 'anonymous'}`;
+      const familyName = family?.familyName || `${enrollment.student?.lastName || ''} ${enrollment.student?.firstName || ''}`.trim() || 'Famille inconnue';
+      if (!acc[familyId]) {
+        acc[familyId] = { familyId, familyName, enrollments: [] };
+      }
+      acc[familyId].enrollments.push(enrollment);
+      return acc;
+    }, {});
+
+    return Object.values(groups).sort((a, b) => a.familyName.localeCompare(b.familyName));
+  }, [visibleEnrollments]);
+
+  const toggleFamilyExpansion = (familyId) => {
+    setExpandedFamilies((prev) => ({ ...prev, [familyId]: !(prev[familyId] !== false) }));
+  };
+
+  const isFamilyExpanded = (familyId) => expandedFamilies[familyId] !== false;
+
   const handleStatusChange = (enrollmentId, value) => {
     setStatusUpdates((prev) => ({ ...prev, [enrollmentId]: value }));
   };
@@ -281,6 +308,11 @@ export default function AdminEnrollments() {
     setEnrollmentPayments([]);
     setEditingPaymentId(null);
     setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+    setRefundAccessCode('');
+    setRefundCodeValidated(false);
+    setRefundCodeValidating(false);
+    setRefundForm({ date: new Date().toISOString().slice(0, 10), amount: '', method: 'CHEQUE', comment: '' });
+    setRefunds([]);
     setModalOpen(true);
     fetchEnrollmentPayments(enrollment.id);
   };
@@ -378,6 +410,50 @@ export default function AdminEnrollments() {
       toast.success('Reçu téléchargé');
     } catch (error) {
       toast.error('Impossible de télécharger le reçu');
+    }
+  };
+
+  const addRefundEntry = () => {
+    if (!refundForm.date || !refundForm.amount || !refundForm.method) {
+      toast.error('Veuillez renseigner la date, le montant et le moyen du remboursement.');
+      return;
+    }
+
+    setRefunds((prev) => [
+      ...prev,
+      {
+        id: `refund-${Date.now()}`,
+        date: refundForm.date,
+        amount: Number(refundForm.amount).toFixed(2),
+        method: refundForm.method,
+        comment: refundForm.comment,
+      },
+    ]);
+    setRefundForm({ date: new Date().toISOString().slice(0, 10), amount: '', method: 'CHEQUE', comment: '' });
+  };
+
+  const deleteRefundEntry = (refundId) => {
+    setRefunds((prev) => prev.filter((refund) => refund.id !== refundId));
+  };
+
+  const validateRefundCode = async () => {
+    if (!refundAccessCode.trim()) {
+      toast.error('Veuillez saisir le code de sécurité');
+      return;
+    }
+
+    setRefundCodeValidating(true);
+    try {
+      await api.post('/payments/refunds/security/validate', {
+        code: refundAccessCode.trim(),
+      });
+      setRefundCodeValidated(true);
+      toast.success('Code de sécurité validé');
+    } catch (error) {
+      setRefundCodeValidated(false);
+      toast.error(error.response?.data?.error || 'Code invalide ou expiré');
+    } finally {
+      setRefundCodeValidating(false);
     }
   };
 
@@ -721,65 +797,81 @@ export default function AdminEnrollments() {
               <tbody>
                 {enrollments.length === 0 ? (
                   <tr><td colSpan="10" style={{ textAlign: 'center', color: '#6B7280', padding: '24px 0' }}>Aucune inscription</td></tr>
-                ) : enrollments.map((e) => {
-                  const selectedStatus = statusUpdates[e.id] || e.status;
-                  const waitlist = isEnrollmentWaitlist(e);
+                ) : groupedEnrollments.map((group) => {
+                  const expanded = isFamilyExpanded(group.familyId);
                   return (
-                    <tr key={e.id} style={{ background: '#FFFFFF', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)' }}>
-                      <td style={{ fontWeight: 700, padding: '16px 12px' }}>{e.registrationCode || '—'}</td>
-                      <td style={{ fontWeight: 700, padding: '16px 12px' }}>
-                        {e.student.lastName} {e.student.firstName}
-                        {e.isProvisional && (
-                          <div style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 8 }}>
-                            <span style={{ background: '#FEF3C7', color: '#92400E', padding: '4px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Affectation provisoire</span>
+                    <Fragment key={group.familyId}>
+                      <tr key={`family-${group.familyId}`} style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
+                        <td colSpan="10" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <span style={{ fontSize: 14, color: '#1D4ED8' }}>{expanded ? '▾' : '▸'}</span>
+                              <span>{group.familyName}</span>
+                              <span style={{ fontSize: 13, color: '#475569' }}>({group.enrollments.length} inscription{group.enrollments.length > 1 ? 's' : ''})</span>
+                            </div>
+                            <span style={{ fontSize: 13, color: '#6B7280' }}>Cliquer pour {expanded ? 'replier' : 'déplier'}</span>
                           </div>
-                        )}
-                      </td>
-                      <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.pole?.name || '—')}</td>
-                      <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.name || '—')}</td>
-                      <td style={{ padding: '16px 12px', textAlign: 'center' }}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(e.levelValidated)}
-                          onChange={(event) => handleLevelValidatedChange(e.id, event.target.checked)}
-                        />
-                      </td>
-                      <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'À affecter' : (e.class ? `${e.class.dayOfWeek} ${e.class.startTime}-${e.class.endTime}` : '—')}</td>
-                      <td style={{ padding: '16px 12px' }}>
-                        <span className={`badge ${waitlist ? 'badge-danger' : 'badge-success'}`}>
-                          {waitlist ? 'Oui' : 'Non'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '16px 12px' }}>{waitlist ? e.waitlistOrder || '—' : '—'}</td>
-                      <td style={{ padding: '16px 12px' }}>{statusBadge(selectedStatus, waitlist)}</td>
-                      <td className="table-actions" style={{ justifyContent: 'flex-end', padding: '16px 12px' }}>
-                        <select
-                          className="form-control"
-                          value={selectedStatus}
-                          onChange={(event) => handleStatusChange(e.id, event.target.value)}
-                          style={{ minWidth: 140, maxWidth: 160 }}
+                        </td>
+                      </tr>
+                      {expanded && group.enrollments.map((e) => {
+                        const selectedStatus = statusUpdates[e.id] || e.status;
+                        const waitlist = isEnrollmentWaitlist(e);
+                        return (
+                          <tr key={e.id} style={{ background: '#FFFFFF', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)' }}>
+                            <td style={{ fontWeight: 700, padding: '16px 12px' }}>{e.registrationCode || '—'}</td>
+                            <td style={{ fontWeight: 700, padding: '16px 12px', paddingLeft: 36 }}>
+                              {e.student.lastName} {e.student.firstName}
+                              {e.isProvisional && (
+                                <div style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 8 }}>
+                                  <span style={{ background: '#FEF3C7', color: '#92400E', padding: '4px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Affectation provisoire</span>
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.pole?.name || '—')}</td>
+                            <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.name || '—')}</td>
+                            <td style={{ padding: '16px 12px', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={Boolean(e.levelValidated)}
+                                onChange={(event) => handleLevelValidatedChange(e.id, event.target.checked)}
+                              />
+                            </td>
+                            <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'À affecter' : (e.class ? `${e.class.dayOfWeek} ${e.class.startTime}-${e.class.endTime}` : '—')}</td>
+                            <td style={{ padding: '16px 12px' }}>
+                              <span className={`badge ${waitlist ? 'badge-danger' : 'badge-success'}`}>
+                                {waitlist ? 'Oui' : 'Non'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '16px 12px' }}>{waitlist ? e.waitlistOrder || '—' : '—'}</td>
+                            <td style={{ padding: '16px 12px' }}>{statusBadge(selectedStatus, waitlist)}</td>
+                            <td className="table-actions" style={{ justifyContent: 'flex-end', padding: '16px 12px' }}>
+                              <select
+                                className="form-control"
+                                value={selectedStatus}
+                                onChange={(event) => handleStatusChange(e.id, event.target.value)}
+                                style={{ minWidth: 140, maxWidth: 160 }}
+                              >
+                                <option value="PENDING">En attente</option>
+                                <option value="CONFIRMED">Confirmée</option>
+                                <option value="CANCELLED">Annulée</option>
+                                <option value="ARCHIVED">Archivée</option>
+                              </select>
+                              <button
+                                className="btn btn-sm btn-primary"
+                                type="button"
+                                disabled={selectedStatus === e.status}
+                                onClick={() => saveStatus(e)}
+                                style={{ minWidth: 90, marginLeft: 8 }}
+                              >
+                                Enregistrer
+                              </button>
+                              <button
+                                className="btn btn-outline btn-sm"
+                                type="button"
+                                onClick={() => openRecordModal(e.student)}
+                                style={{ minWidth: 72, marginLeft: 8 }}
                         >
-                          <option value="PENDING">En attente</option>
-                          <option value="CONFIRMED">Confirmée</option>
-                          <option value="CANCELLED">Annulée</option>
-                          <option value="ARCHIVED">Archivée</option>
-                        </select>
-                        <button
-                          className="btn btn-sm btn-primary"
-                          type="button"
-                          disabled={selectedStatus === e.status}
-                          onClick={() => saveStatus(e)}
-                          style={{ minWidth: 90, marginLeft: 8 }}
-                        >
-                          Enregistrer
-                        </button>
-                        <button
-                          className="btn btn-outline btn-sm"
-                          type="button"
-                          onClick={() => openRecordModal(e.student)}
-                          style={{ minWidth: 72, marginLeft: 8 }}
-                        >
-                          Fiche
+                          Fiche pédagogique
                         </button>
                         <button
                           className="btn btn-outline btn-sm"
@@ -793,6 +885,9 @@ export default function AdminEnrollments() {
                     </tr>
                   );
                 })}
+              </Fragment>
+            );
+          })}
               </tbody>
             </table>
           </div>
@@ -1016,6 +1111,143 @@ export default function AdminEnrollments() {
                 <p>Aucun paiement enregistré pour cette inscription.</p>
               )}
             </div>
+
+            <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#F9FAFB', marginTop: 16 }}>
+              <h4>Accès remboursement</h4>
+              <div style={{ display: 'grid', gap: 12 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Code d'accès</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={refundAccessCode}
+                      onChange={(event) => {
+                        setRefundAccessCode(event.target.value);
+                        if (refundCodeValidated) {
+                          setRefundCodeValidated(false);
+                        }
+                      }}
+                      placeholder="Saisir le code d'accès généré par l'espace trésorier"
+                      disabled={refundCodeValidated}
+                      style={{ flex: 1 }}
+                    />
+                    {!refundCodeValidated && (
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={validateRefundCode}
+                        disabled={refundCodeValidating || !refundAccessCode.trim()}
+                      >
+                        {refundCodeValidating ? 'Validation...' : 'Valider'}
+                      </button>
+                    )}
+                    {refundCodeValidated && (
+                      <div style={{ display: 'flex', alignItems: 'center', color: 'var(--amc-success)', fontWeight: 'bold' }}>
+                        ✓ Validé
+                      </div>
+                    )}
+                  </div>
+                  <small style={{ color: '#6B7280', marginTop: 4, display: 'block' }}>
+                    {refundCodeValidated
+                      ? 'Code valide. Vous pouvez maintenant enregistrer des remboursements.'
+                      : 'Ce bloc sera affiché uniquement après validation du code.'}
+                  </small>
+                </div>
+              </div>
+            </div>
+
+            {refundCodeValidated && (
+              <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#FFFFFF', marginTop: 16 }}>
+                <h4>Remboursement</h4>
+                <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Date remboursement</label>
+                      <input
+                        type="date"
+                        className="form-control"
+                        value={refundForm.date}
+                        onChange={(event) => setRefundForm((prev) => ({ ...prev, date: event.target.value }))}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Montant</label>
+                      <input
+                        type="number"
+                        className="form-control"
+                        step="0.01"
+                        value={refundForm.amount}
+                        onChange={(event) => setRefundForm((prev) => ({ ...prev, amount: event.target.value }))}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Moyen</label>
+                      <select
+                        className="form-control"
+                        value={refundForm.method}
+                        onChange={(event) => setRefundForm((prev) => ({ ...prev, method: event.target.value }))}
+                      >
+                        <option value="CHEQUE">Chèque</option>
+                        <option value="ESPECES">Espèces</option>
+                        <option value="CB">Carte Bancaire</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Commentaire</label>
+                    <textarea
+                      className="form-control"
+                      rows={2}
+                      value={refundForm.comment}
+                      onChange={(event) => setRefundForm((prev) => ({ ...prev, comment: event.target.value }))}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                    <button type="button" className="btn btn-primary" onClick={addRefundEntry}>
+                      Ajouter un remboursement
+                    </button>
+                  </div>
+                </div>
+
+                {refunds.length > 0 ? (
+                  <div className="table-container">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date remboursement</th>
+                          <th>Montant</th>
+                          <th>Moyen</th>
+                          <th>Commentaire</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {refunds.map((refund) => (
+                          <tr key={refund.id}>
+                            <td>{refund.date}</td>
+                            <td>{refund.amount} €</td>
+                            <td>{refund.method}</td>
+                            <td>{refund.comment || '—'}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn btn-link text-danger"
+                                onClick={() => deleteRefundEntry(refund.id)}
+                              >
+                                Supprimer
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p>Aucun remboursement enregistré pour le moment.</p>
+                )}
+              </div>
+            )}
 
             <div className="form-section">
               <h4>Informations famille</h4>
