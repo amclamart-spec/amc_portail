@@ -601,10 +601,28 @@ export default function AdminEnrollments() {
 
       const { data } = await api.put(`/admin/enrollments/${editingEnrollment.id}`, payload);
       setEnrollments((prev) => prev.map((e) => (e.id === editingEnrollment.id ? data.enrollment : e)));
+      
       toast.success('Inscription mise à jour');
       setModalOpen(false);
       setEditingEnrollment(null);
       setEditForm(null);
+      
+      // Save any added refunds (separate from enrollment update)
+      if (refunds.length > 0 && enrollmentPayments.length > 0) {
+        const defaultPayment = enrollmentPayments[0];
+        for (const refund of refunds) {
+          try {
+            await api.post('/payments/refunds', {
+              paymentId: defaultPayment.paymentId,
+              amount: Number(refund.amount),
+              reason: `${refund.method} - ${refund.comment || 'N/A'}`,
+            });
+          } catch (err) {
+            console.warn(`Erreur lors de la sauvegarde du remboursement: ${err.message}`);
+            toast.error(`Impossible de créer le remboursement: ${err.response?.data?.error || err.message}`);
+          }
+        }
+      }
     } catch (error) {
       toast.error(error.response?.data?.error || 'Erreur lors de la mise à jour');
     }

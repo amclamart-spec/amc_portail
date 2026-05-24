@@ -90,6 +90,6 @@ router.delete('/refunds/:refundId', authorizePermission(PERMISSIONS.PAYMENTS_REF
 
 // Security codes for refund access
 router.post('/refunds/security/generate', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), generateRefundSecurityCode);
-router.post('/refunds/security/validate', authorizeAnyPermission(PERMISSIONS.PAYMENTS_MANAGE, PERMISSIONS.PAYMENTS_REFUND), validateRefundSecurityCode);
+router.post('/refunds/security/validate', authorizeAnyPermission(PERMISSIONS.PAYMENTS_MANAGE, PERMISSIONS.PAYMENTS_REFUND, PERMISSIONS.ENROLLMENTS_MANAGE), validateRefundSecurityCode);
 
 module.exports = router;
