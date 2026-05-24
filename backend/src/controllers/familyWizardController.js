@@ -830,24 +830,26 @@ async function completeExistingFamilyRegistration(req, res) {
       }
     }
 
-    // Envoi du mail d'inscription enregistrée
-    const studentById = new Map(result.students.map((s) => [s.id, s]));
-    const enrollmentDetailsHtml = result.enrollments.map((en) => {
-      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
-      const cls = classById.get(en.classId);
-      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
-      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
-    }).join('<br/>');
-    const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
-      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
-      <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
-      <strong>Échéances :</strong> ${result.installments.length}
-    </div>`;
+    // Envoi du mail d'inscription enregistrée uniquement si pas de checkout en ligne (ex: paiement offline)
+    if (!result.shouldCreateCheckout) {
+      const studentById = new Map(result.students.map((s) => [s.id, s]));
+      const enrollmentDetailsHtml = result.enrollments.map((en) => {
+        const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+        const cls = classById.get(en.classId);
+        const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+        return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+      }).join('<br/>');
+      const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
+        <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
+        <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
+        <strong>Échéances :</strong> ${result.installments.length}
+      </div>`;
 
-    // Envoi des emails en arrière-plan sans bloquer la réponse
-    sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
-      console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
-    });
+      // Envoi des emails en arrière-plan sans bloquer la réponse
+      sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+        console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+      });
+    }
 
     // Notify admins about provisional enrollments (if any were created)
     try {
@@ -1475,10 +1477,12 @@ async function completeFamilyRegistration(req, res) {
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    // Envoi des emails en arrière-plan sans bloquer la réponse
-    sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
-      console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
-    });
+    // Envoi des emails en arrière-plan sans bloquer la réponse (uniquement si pas de checkout en ligne)
+    if (!result.shouldCreateCheckout) {
+      sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+        console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+      });
+    }
 
     // Notify admins about provisional enrollments (if any were created)
     try {

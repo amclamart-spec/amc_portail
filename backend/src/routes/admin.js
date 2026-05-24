@@ -60,6 +60,10 @@ const {
   deleteTeacher,
 } = require('../controllers/adminController');
 const {
+  getFamilies,
+  getFamilyDetails,
+} = require('../controllers/adminFamilyController');
+const {
   exportStudents,
   exportAttendanceSheet,
   exportPlanning,
@@ -199,5 +203,9 @@ router.get('/teachers', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTeac
 router.get('/mailing/structure', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingStructure);
 router.post('/mailing/preview', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingPreview);
 router.post('/mailing/send', authorizePermission(PERMISSIONS.CLASSES_MANAGE), upload.single('attachment'), sendMailing);
+
+// Familles
+router.get('/families', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilies);
+router.get('/families/:id', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilyDetails);
 
 module.exports = router;

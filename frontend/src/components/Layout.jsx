@@ -31,8 +31,8 @@ const navSectionsByRole = {
     {
       title: 'Gestion des inscrits',
       items: [
-        { path: '/admin/users', icon: FiUsers, label: 'Familles' },
-        { path: '/admin/enrollments', icon: FiClipboard, label: 'Élèves' },
+        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
+        { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
       ],
     },
     {
@@ -104,8 +104,8 @@ const navSectionsByRole = {
     {
       title: 'Gestion des inscrits',
       items: [
-        { path: '/admin/users', icon: FiUsers, label: 'Familles' },
-        { path: '/admin/enrollments', icon: FiClipboard, label: 'Élèves' },
+        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
+        { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
       ],
     },
     {
@@ -173,6 +173,7 @@ const navSectionsByRole = {
       items: [
         { path: '/tresorier', icon: FiBarChart2, label: 'KPI financiers' },
         { path: '/tresorier/payments', icon: FiCreditCard, label: 'Paiements' },
+        { path: '/tresorier/refunds', icon: FiCreditCard, label: 'Remboursements' },
       ],
     },
   ],

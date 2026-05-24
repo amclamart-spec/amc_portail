@@ -135,6 +135,34 @@ async function handlePaymentCompletionForEnrollment(paymentId) {
 
   if (payment.status === 'COMPLETED') {
     await generateInvoiceForPayment(paymentId);
+    // Send enrollment confirmation email now that payment is completed
+    try {
+      let enrollmentIds = payment.metadata?.enrollmentIds || [];
+      let enrollments = [];
+      if (Array.isArray(enrollmentIds) && enrollmentIds.length > 0) {
+        enrollments = await prisma.enrollment.findMany({
+          where: { id: { in: enrollmentIds } },
+          include: { class: { include: { level: { include: { pole: true } } } }, student: true },
+        });
+      } else {
+        enrollments = await prisma.enrollment.findMany({
+          where: { familyId: payment.familyId, schoolYearId: payment.schoolYearId, status: { in: ['PENDING', 'CONFIRMED'] } },
+          include: { class: { include: { level: { include: { pole: true } } } }, student: true },
+        });
+      }
+
+      const enrollmentDetailsHtml = enrollments.map((en) => {
+        const cls = en.class || {};
+        const student = en.student || { firstName: 'Élève', lastName: '' };
+        const waitlistNote = en.comment === "Liste d'attente" ? " • Liste d'attente" : '';
+        return `• ${student.firstName} ${student.lastName} — ${cls.level?.pole?.name || 'Pôle'} / ${cls.level?.name || 'Niveau'} ${cls.dayOfWeek || ''} ${cls.startTime || ''}-${cls.endTime || ''}${waitlistNote}`;
+      }).join('<br/>');
+      const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;"><strong>Montant total :</strong> ${Number(payment.totalAmount || 0).toFixed(2)} €</div>`;
+
+      await sendEnrollmentConfirmationEmail(payment.family.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`);
+    } catch (err) {
+      console.error('[EMAIL] Erreur envoi email confirmation après paiement:', err?.message || err);
+    }
   }
 }
 
@@ -185,8 +213,8 @@ function normalizeInstallmentsByMethod(method, installmentsCount) {
   }
 
   if (method === 'CHEQUE' || method === 'ESPECES') {
-    if (installmentsCount < 1 || installmentsCount > 8) {
-      throw new Error('Paiement chèque ou espèces: 1 à 8 paiements autorisés');
+    if (installmentsCount < 1 || installmentsCount > 10) {
+      throw new Error('Paiement chèque ou espèces: 1 à 10 paiements autorisés');
     }
     return installmentsCount;
   }
@@ -858,21 +886,32 @@ async function requestRefund(req, res) {
 async function processRefund(req, res) {
   try {
     const { refundId } = req.params;
-    const { status } = req.body;
+    const { status, amount, reason } = req.body;
 
     const refund = await prisma.refund.findUnique({ where: { id: refundId } });
     if (!refund) return res.status(404).json({ error: 'Remboursement introuvable' });
 
+    const updateData = {
+      approvedById: req.user.id,
+      processedAt: new Date(),
+    };
+
+    if (status) {
+      updateData.status = status;
+    }
+    if (amount !== undefined) {
+      updateData.amount = toDecimal(amount);
+    }
+    if (reason !== undefined) {
+      updateData.reason = reason;
+    }
+
     const updated = await prisma.refund.update({
       where: { id: refundId },
-      data: {
-        status,
-        approvedById: req.user.id,
-        processedAt: new Date(),
-      },
+      data: updateData,
     });
 
-    if (status === 'PROCESSED') {
+    if (status === 'PROCESSED' && refund.status !== 'PROCESSED') {
       await prisma.payment.update({ where: { id: refund.paymentId }, data: { status: 'REFUNDED' } });
 
       const categoryId = await getOrCreateSystemCategory('Remboursements', 'EXPENSE');
@@ -881,8 +920,8 @@ async function processRefund(req, res) {
           categoryId,
           paymentId: refund.paymentId,
           entryType: 'EXPENSE',
-          amount: refund.amount,
-          description: refund.reason,
+          amount: updated.amount,
+          description: updated.reason,
         },
       });
     }
@@ -890,6 +929,41 @@ async function processRefund(req, res) {
     return res.json({ refund: updated });
   } catch (error) {
     console.error('Erreur processRefund:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function getRefunds(req, res) {
+  try {
+    const refunds = await prisma.refund.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        payment: {
+          include: {
+            family: true,
+          },
+        },
+        approvedBy: true,
+      },
+    });
+
+    return res.json({ refunds });
+  } catch (error) {
+    console.error('Erreur getRefunds:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteRefund(req, res) {
+  try {
+    const { refundId } = req.params;
+    const refund = await prisma.refund.findUnique({ where: { id: refundId } });
+    if (!refund) return res.status(404).json({ error: 'Remboursement introuvable' });
+
+    await prisma.refund.delete({ where: { id: refundId } });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Erreur deleteRefund:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -1555,6 +1629,79 @@ async function generatePaymentReceiptPDF(req, res) {
   }
 }
 
+async function generateRefundSecurityCode(req, res) {
+  try {
+    // Generate a 6-digit random code
+    const code = Math.random().toString().substring(2, 8).padStart(6, '0');
+    
+    // Code expires in 24 hours
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const securityCode = await prisma.refundSecurityCode.create({
+      data: {
+        code,
+        generatedBy: req.user.id,
+        expiresAt,
+      },
+    });
+
+    res.json({ 
+      code: securityCode.code, 
+      expiresAt: securityCode.expiresAt,
+      message: 'Code de sécurité généré avec succès'
+    });
+  } catch (error) {
+    console.error('Erreur generateRefundSecurityCode:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function validateRefundSecurityCode(req, res) {
+  try {
+    const { code } = req.body;
+    
+    if (!code || code.trim().length !== 6) {
+      return res.status(400).json({ error: 'Code invalide (6 chiffres requis)' });
+    }
+
+    const securityCode = await prisma.refundSecurityCode.findUnique({
+      where: { code: code.trim() },
+    });
+
+    if (!securityCode) {
+      return res.status(404).json({ error: 'Code non trouvé' });
+    }
+
+    // Check if code is expired
+    if (new Date() > securityCode.expiresAt) {
+      return res.status(400).json({ error: 'Code expiré' });
+    }
+
+    // Check if code has already been used
+    if (securityCode.usedAt) {
+      return res.status(400).json({ error: 'Code déjà utilisé' });
+    }
+
+    // Mark code as used
+    const updated = await prisma.refundSecurityCode.update({
+      where: { id: securityCode.id },
+      data: {
+        usedBy: req.user.id,
+        usedAt: new Date(),
+      },
+    });
+
+    res.json({ 
+      valid: true,
+      message: 'Code validé avec succès',
+      expiresAt: securityCode.expiresAt,
+    });
+  } catch (error) {
+    console.error('Erreur validateRefundSecurityCode:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   createFamilyEnrollmentPayment,
   createPaymentIntent,
@@ -1565,7 +1712,11 @@ module.exports = {
   exportTransactions,
   requestRefund,
   processRefund,
+  getRefunds,
+  deleteRefund,
   getFamilyPaymentHistory,
+  generateRefundSecurityCode,
+  validateRefundSecurityCode,
   handleStripeConfirm,
   handleStripeCancel,
   handleGoCardlessReturn,

@@ -110,6 +110,15 @@ function isClassAllowedForAge(cls, age) {
   return true;
 }
 
+function isLevelAllowedForAge(level, age) {
+  if (age === null) return true;
+  const minAge = level?.minAge;
+  const maxAge = level?.maxAge;
+  if (minAge !== undefined && minAge !== null && age < minAge) return false;
+  if (maxAge !== undefined && maxAge !== null && age > maxAge) return false;
+  return true;
+}
+
 export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const { user } = useAuth();
   const location = useLocation();
@@ -744,6 +753,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               <>
                 {wizard.members.map((member, memberIndex) => {
                   const isOldStudent = Boolean(member.isOldStudent);
+                  const memberAge = getAgeFromDate(member.dateOfBirth);
                   return (
                     <div key={`${member.firstName}-${memberIndex}`} style={{ marginBottom: 20, border: '1px solid #E2E8F0', borderRadius: 12, padding: 16, background: '#ffffff' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -808,7 +818,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                               // Coran: show Coran levels plus Sciences levels merged
                               if (isCoran) {
                                 const scienceLevels = (sciencePole && sciencePole.levels) || [];
-                                const mergedLevels = [...(pole.levels || []).map((l) => ({ ...l, poleId: pole.id })), ...scienceLevels.map((l) => ({ ...l, poleId: sciencePole?.id }))];
+                                const mergedLevels = [...(pole.levels || []).map((l) => ({ ...l, poleId: pole.id })), ...scienceLevels.map((l) => ({ ...l, poleId: sciencePole?.id }))]
+                                  .filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
 
                                 return (
                                   <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
@@ -862,7 +873,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                               }
 
                               // Default: show levels for other poles
-                              const levelList = pole.levels || [];
+                                  const levelList = (pole.levels || []).filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
                               return (
                                 <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
@@ -875,7 +886,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                                     </div>
                                   </div>
 
-                                  {levelList.length > 0 ? (
+                                      {levelList.length > 0 ? (
                                     <div style={{ display: 'grid', gap: 12 }}>
                                       {levelList.map((level) => {
                                         const levelSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.levelId === level.id);
@@ -916,7 +927,6 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                           </div>
                       ) : null}
                       {isOldStudent && classesGroupedByPole.length > 0 ? (() => {
-                        const memberAge = getAgeFromDate(member.dateOfBirth);
                         const filteredGroups = classesGroupedByPole.map((group) => ({
                           ...group,
                           classes: group.classes.filter((cls) => isClassAllowedForAge(cls, memberAge)),
@@ -1170,9 +1180,12 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               )}
             </div>
 
-            <div className="form-group">
+              <div className="form-group">
               <label>Mode de paiement</label>
-              <select className="form-control" value={wizard.payment.method} onChange={(e) => updateWizard('payment', { method: e.target.value })}>
+              <select className="form-control" value={wizard.payment.method} onChange={(e) => {
+                const method = e.target.value;
+                updateWizard('payment', { method, installmentsCount: method === 'STRIPE_CARD' ? 1 : wizard.payment.installmentsCount });
+              }}>
                 <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
                 <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
                 <option value="ESPECES">Espèces</option>
@@ -1190,14 +1203,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               </div>
             )}
 
-            {wizard.payment.method === 'STRIPE_CARD' && (
-              <div className="form-group">
-                <label>Nombre d'échéances (1, 2, 3, 4, 8)</label>
-                <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
-                  {[1, 2, 3, 4, 8].map((n) => <option key={n} value={n}>{n} fois</option>)}
-                </select>
-              </div>
-            )}
+            {/* Stripe payments are single payments in UI — no installments UI shown */}
 
             {wizard.payment.method === 'GO_CARDLESS_SEPA' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -1221,7 +1227,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                 <div className="form-group">
                   <label>Nombre de chèques (1 à 8)</label>
                   <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n} chèque(s)</option>)}
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n} chèque(s)</option>)}
                   </select>
                 </div>
                 <div className="card" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
