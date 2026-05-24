@@ -277,6 +277,8 @@ async function rejectUser(req, res) {
  */
 async function getStats(req, res) {
   try {
+    const scope = (req.query.scope || 'current').toLowerCase();
+
     const [totalUsers, pendingUsers, totalFamilies, totalStudents, totalEnrollments, schoolYears] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { validationStatus: 'PENDING' } }),
@@ -286,6 +288,51 @@ async function getStats(req, res) {
       prisma.schoolYear.findMany({ orderBy: { startDate: 'desc' }, take: 5 }),
     ]);
 
+    // Try to compute counts for the current school year when available
+    const currentYear = await prisma.schoolYear.findFirst({ where: { isCurrent: true } });
+
+    let currentEnrollments = null;
+    let currentStudents = null;
+    let currentFamilies = null;
+    // counts by status and test-required indicator
+    let enrollmentsByStatus = null;
+    let enrollmentsTestRequired = 0;
+    if (currentYear) {
+      const yearId = currentYear.id;
+      const [totalForYear, studentsForYear, familiesForYear, byStatus, testReq] = await Promise.all([
+        prisma.enrollment.count({ where: { schoolYearId: yearId } }),
+        prisma.student.count({ where: { enrollments: { some: { schoolYearId: yearId } } } }),
+        prisma.family.count({ where: { students: { some: { enrollments: { some: { schoolYearId: yearId } } } } } }),
+        // counts per status
+        prisma.enrollment.groupBy({ by: ['status'], where: { schoolYearId: yearId }, _count: { status: true } }).catch(() => []),
+        // test required = enrollments for the year where levelValidated is false and not cancelled
+        prisma.enrollment.count({ where: { schoolYearId: yearId, levelValidated: false, status: { in: ['PENDING', 'CONFIRMED'] } } }),
+      ]);
+
+      currentEnrollments = totalForYear;
+      currentStudents = studentsForYear;
+      currentFamilies = familiesForYear;
+
+      enrollmentsByStatus = (byStatus || []).reduce((acc, item) => {
+        acc[item.status] = item._count?.status || 0;
+        return acc;
+      }, {});
+      enrollmentsTestRequired = testReq || 0;
+    }
+
+    // Determine displayed counts according to requested scope
+    let displayEnrollments = totalEnrollments;
+    let displayStudents = totalStudents;
+    let displayFamilies = totalFamilies;
+    let displayLabel = null;
+
+    if (scope === 'current' && currentYear) {
+      displayEnrollments = currentEnrollments ?? totalEnrollments;
+      displayStudents = currentStudents ?? totalStudents;
+      displayFamilies = currentFamilies ?? totalFamilies;
+      displayLabel = currentYear.label;
+    }
+
     res.json({
       stats: {
         totalUsers,
@@ -293,6 +340,20 @@ async function getStats(req, res) {
         totalFamilies,
         totalStudents,
         totalEnrollments,
+        currentSchoolYear: currentYear ? { id: currentYear.id, label: currentYear.label } : null,
+        currentEnrollments,
+        currentStudents,
+        currentFamilies,
+        // breakdowns to drive frontend KPI widgets
+        enrollmentsByStatus: enrollmentsByStatus || null,
+        enrollmentsTestRequired: enrollmentsTestRequired || 0,
+        displayCounts: {
+          enrollments: displayEnrollments,
+          students: displayStudents,
+          families: displayFamilies,
+        },
+        displayScope: scope,
+        displayLabel,
       },
       schoolYears,
     });
