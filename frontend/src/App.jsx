@@ -27,6 +27,7 @@ import AdminExports from './pages/admin/Exports';
 import AdminMailing from './pages/admin/Mailing';
 import AdminPlanning from './pages/admin/Planning';
 import AdminChat from './pages/admin/Chat';
+import AdminPayments from './pages/admin/Payments';
 import EnrollmentDashboard from './pages/EnrollmentDashboard';
 
 import TresorierDashboard from './pages/tresorier/Dashboard';
@@ -63,6 +64,7 @@ function App() {
       <Route path="/admin/users" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminUsers /></Layout></PrivateRoute>} />
       <Route path="/admin/enrollments" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminEnrollments /></Layout></PrivateRoute>} />
       <Route path="/admin/settings" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminSettings /></Layout></PrivateRoute>} />
+      <Route path="/admin/payments" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminPayments /></Layout></PrivateRoute>} />
 
       <Route path="/admin/salles" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminRooms /></Layout></PrivateRoute>} />
       <Route path="/admin/creneaux" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminTimeslots /></Layout></PrivateRoute>} />

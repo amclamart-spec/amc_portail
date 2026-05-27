@@ -487,6 +487,7 @@ async function sendEnrollmentRejectedEmail(user, enrollmentSummary = '', reason 
 }
 
 async function sendPaymentConfirmationEmail(user, payment) {
+  const payerName = payment?.payerName || payment?.metadata?.payerName || payment?.metadata?.payer_name || 'N/A';
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
     <p>Nous confirmons la reception de votre paiement.</p>
@@ -494,6 +495,7 @@ async function sendPaymentConfirmationEmail(user, payment) {
       <li><strong>Reference:</strong> ${payment.id}</li>
       <li><strong>Montant:</strong> ${Number(payment.amount || payment.totalAmount || 0).toFixed(2)} &euro;</li>
       <li><strong>Methode:</strong> ${payment.method || payment.paymentMethod}</li>
+      <li><strong>Payeur:</strong> ${payerName}</li>
     </ul>
   `;
 
@@ -573,13 +575,15 @@ async function sendChildRegistrationConfirmationEmail(user, childName, enrollmen
 }
 
 async function sendOfflinePaymentConfirmationEmail(user, paymentData) {
+  const payerName = paymentData?.payerName || paymentData?.metadata?.payerName || paymentData?.metadata?.payer_name || 'N/A';
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
     <p>Nous avons bien enregistre votre demande de paiement par <strong>${paymentData.method || 'cheque/especes'}</strong>.</p>
     <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">
       <strong>Montant total :</strong> ${Number(paymentData.totalAmount || 0).toFixed(2)} &euro;<br/>
       <strong>Nombre d'echeances :</strong> ${paymentData.numberOfInstallments || 1}<br/>
-      <strong>Methode :</strong> ${paymentData.method || 'Cheque/Especes'}
+      <strong>Methode :</strong> ${paymentData.method || 'Cheque/Especes'}<br/>
+      <strong>Payeur :</strong> ${payerName}
     </div>
     <p>${paymentData.instructions || 'Suivez les instructions communiquees pour finaliser votre paiement.'}</p>
   `;
@@ -592,6 +596,7 @@ async function sendOfflinePaymentConfirmationEmail(user, paymentData) {
 }
 
 async function sendPaymentValidationEmail(user, paymentData) {
+  const payerName = paymentData?.payerName || paymentData?.metadata?.payerName || paymentData?.metadata?.payer_name || 'N/A';
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
     <p>Nous avons confirme votre paiement. Les inscriptions de vos enfants sont maintenant validees.</p>
@@ -599,6 +604,7 @@ async function sendPaymentValidationEmail(user, paymentData) {
       <strong>&#10003; Paiement confirme</strong><br/>
       Montant : ${Number(paymentData.totalAmount || paymentData.amount || 0).toFixed(2)} &euro;<br/>
       Methode : ${paymentData.method || 'Carte bancaire'}<br/>
+      Payeur : ${payerName}<br/>
       Reference : ${paymentData.id || 'N/A'}
     </div>
     <p>Votre inscription est desormais confirmee. Merci de votre confiance.</p>

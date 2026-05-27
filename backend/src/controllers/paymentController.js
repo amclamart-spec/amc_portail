@@ -5,7 +5,9 @@ const {
   createOnlineCheckout,
   completeGoCardlessRedirectFlow,
   captureStripePaymentIntent,
+  cancelStripePaymentIntent,
   getStripeCheckoutSession,
+  getStripePaymentIntent,
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,
 } = require('../services/paymentProviders');
@@ -103,8 +105,22 @@ async function generateInvoiceForPayment(paymentId) {
 
     console.log(`Génération facture pour ${paymentId} avec ${enrollments.length} inscriptions`);
 
+    // Fetch all children (students) of the family to include on the receipt
+    let children = [];
+    try {
+      children = await prisma.student.findMany({
+        where: { familyId: payment.familyId },
+        select: { id: true, firstName: true, lastName: true, dateOfBirth: true },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      });
+    } catch (err) {
+      console.warn('Impossible de récupérer les enfants de la famille pour la facture', err?.message || err);
+    }
+
+    const familyWithChildren = { ...payment.family, children };
+
     // Generate PDF invoice
-    const invoiceResult = await generateInvoicePDF(payment, payment.family, enrollments);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments);
     console.log(`✅ Facture générée: ${invoiceResult.filename}`);
 
     return invoiceResult;
@@ -400,6 +416,7 @@ async function createFamilyEnrollmentPayment(req, res) {
           enrollmentCount: enrollments.length,
           enrollmentIds: enrollments.map((e) => e.id),
           paymentPlanType: normalizedMethod,
+          payerName: payerName || family.user?.lastName || '',
         },
       },
     });
@@ -1023,11 +1040,16 @@ async function finalizeStripePayment(paymentId) {
     include: { family: { include: { user: true } }, paymentPlan: true },
   });
 
-  if (!payment || payment.status === 'COMPLETED') {
+  if (!payment) {
     return payment;
   }
 
-  const shouldHold = payment.provider === 'STRIPE' && await hasPendingEnrollmentsForPayment(payment);
+  const shouldVerifyStripe = payment.provider === 'STRIPE';
+  if (payment.status === 'COMPLETED' && !shouldVerifyStripe) {
+    return payment;
+  }
+
+  const shouldHold = shouldVerifyStripe && await hasPendingEnrollmentsForPayment(payment);
   if (shouldHold) {
     await prisma.payment.update({
       where: { id: paymentId },
@@ -1050,12 +1072,32 @@ async function finalizeStripePayment(paymentId) {
     }
   }
 
-  if (payment.provider === 'STRIPE' && paymentIntentId) {
+  if (payment.provider === 'STRIPE') {
+    if (!paymentIntentId) {
+      const msg = `Impossible de finaliser le paiement Stripe ${paymentId} : paymentIntentId manquant`;
+      console.error(msg);
+      throw new Error(msg);
+    }
+
+    let paymentIntent;
     try {
-      await captureStripePaymentIntent(paymentIntentId);
-    } catch (captureError) {
-      console.error(`Erreur capture Stripe pour le paiement ${paymentId}:`, captureError);
-      throw captureError;
+      paymentIntent = await getStripePaymentIntent(paymentIntentId);
+    } catch (intentError) {
+      console.error(`Impossible de récupérer le PaymentIntent Stripe ${paymentIntentId} pour le paiement ${paymentId}:`, intentError);
+      throw intentError;
+    }
+
+    if (String(paymentIntent.status) === 'requires_capture') {
+      try {
+        await captureStripePaymentIntent(paymentIntentId);
+      } catch (captureError) {
+        console.error(`Erreur capture Stripe pour le paiement ${paymentId}:`, captureError);
+        throw captureError;
+      }
+    } else if (String(paymentIntent.status) !== 'succeeded') {
+      const msg = `Le PaymentIntent Stripe ${paymentIntentId} n'est pas capturable (status=${paymentIntent.status})`;
+      console.error(msg);
+      throw new Error(msg);
     }
   }
 
@@ -1117,15 +1159,104 @@ async function finalizeStripePayment(paymentId) {
   return payment;
 }
 
+async function getStripePaymentIntentId(payment) {
+  let paymentIntentId = payment.metadata?.paymentIntentId;
+  if (!paymentIntentId && payment.externalPaymentId) {
+    try {
+      const session = await getStripeCheckoutSession(payment.externalPaymentId);
+      paymentIntentId = session.payment_intent || null;
+    } catch (sessionError) {
+      console.error(`Impossible de récupérer la session Stripe pour ${payment.id}:`, sessionError);
+    }
+  }
+  return paymentIntentId;
+}
+
+async function cancelStripePayment(paymentId) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+  });
+
+  if (!payment || payment.provider !== 'STRIPE') {
+    return payment;
+  }
+
+  const paymentIntentId = await getStripePaymentIntentId(payment);
+  if (!paymentIntentId) {
+    const msg = `Impossible d'annuler le paiement Stripe ${paymentId} : paymentIntentId manquant`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+
+  let paymentIntent;
+  try {
+    paymentIntent = await getStripePaymentIntent(paymentIntentId);
+  } catch (intentError) {
+    console.error(`Impossible de récupérer le PaymentIntent Stripe ${paymentIntentId} pour l'annulation du paiement ${paymentId}:`, intentError);
+    throw intentError;
+  }
+
+  const cancelableStatuses = [
+    'requires_capture',
+    'requires_payment_method',
+    'requires_confirmation',
+    'requires_action',
+    'processing',
+  ];
+
+  if (String(paymentIntent.status) === 'canceled') {
+    return payment;
+  }
+
+  if (!cancelableStatuses.includes(String(paymentIntent.status))) {
+    const msg = `Le PaymentIntent Stripe ${paymentIntentId} ne peut pas être annulé (status=${paymentIntent.status})`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+
+  try {
+    await cancelStripePaymentIntent(paymentIntentId);
+  } catch (cancelError) {
+    console.error(`Erreur lors de l'annulation du PaymentIntent Stripe ${paymentIntentId} pour le paiement ${paymentId}:`, cancelError);
+    throw cancelError;
+  }
+
+  await prisma.payment.update({
+    where: { id: paymentId },
+    data: {
+      status: 'CANCELLED',
+      metadata: {
+        ...(payment.metadata || {}),
+        paymentIntentId,
+      },
+    },
+  });
+
+  return payment;
+}
+
 async function handleStripeConfirm(req, res) {
   const paymentId = req.query.payment_id || null;
   let payment = null;
+  let finalizeError = null;
+
   if (paymentId) {
     try {
       payment = await finalizeStripePayment(paymentId);
     } catch (error) {
       console.error('Erreur finalisation paiement Stripe sur page de retour:', error);
+      finalizeError = error;
     }
+  }
+
+  if (finalizeError) {
+    return res.send(formatPaymentReturnPage(
+      'Erreur de validation Stripe',
+      `La validation de votre paiement Stripe a échoué : ${finalizeError.message || 'Erreur inconnue'}.`, 
+      paymentId,
+      'Vous pouvez réessayer depuis l’application ou contacter le support.',
+      `${frontendLoginUrl}?registration_message=${encodeURIComponent(REGISTRATION_PENDING_VALIDATION_MESSAGE)}`,
+    ));
   }
 
   const isEnrollmentPayment = payment?.metadata?.enrollmentIds?.length > 0;
@@ -1529,7 +1660,7 @@ async function generatePaymentReceiptPDF(req, res) {
       include: {
         family: { include: { user: true } },
         schoolYear: true,
-        transactions: { take: 1, orderBy: { createdAt: 'desc' } },
+        transactions: { orderBy: { createdAt: 'desc' } },
       },
     });
 
@@ -1539,90 +1670,33 @@ async function generatePaymentReceiptPDF(req, res) {
 
     // Vérifier les permissions
     const isOwnPayment = payment.family.userId === req.user.id;
-    const isAdminOrTresorier = hasPermission(req.user, PERMISSIONS.PAYMENTS_MANAGE) || 
-                               hasPermission(req.user, PERMISSIONS.FINANCE_VIEW);
+    const userRole = req.user && req.user.role ? req.user.role : null;
+    const isAdminOrTresorier = hasPermission(userRole, PERMISSIONS.PAYMENTS_MANAGE) || 
+                   hasPermission(userRole, PERMISSIONS.FINANCE_VIEW);
     
     if (!isOwnPayment && !isAdminOrTresorier) {
       return res.status(403).json({ error: 'Accès non autorisé' });
     }
 
-    const doc = new PDFDocument({ margin: 40, size: 'A4' });
-    const filename = `recu-${payment.id.substring(0, 8)}.pdf`;
+    // Use shared invoice generator to ensure consistent layout (with logos, transactions, reminder)
+    // Ensure family includes children list
+    let familyWithChildren = payment.family;
+    try {
+      const children = await prisma.student.findMany({ where: { familyId: payment.familyId }, select: { id: true, firstName: true, lastName: true, dateOfBirth: true }, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }] });
+      familyWithChildren = { ...payment.family, children };
+    } catch (err) {
+      console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
+    }
+
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, []);
+    if (!invoiceResult) {
+      console.error(`Échec génération reçu pour paiement ${paymentId}`);
+      return res.status(500).json({ error: 'Impossible de générer le reçu' });
+    }
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-
-    doc.pipe(res);
-
-    // En-tête
-    doc.fontSize(20).font('Helvetica-Bold').text('REÇU DE PAIEMENT', { align: 'center' });
-    doc.moveTo(50, 80).lineTo(550, 80).stroke();
-    doc.fontSize(10);
-
-    // Informations de l'établissement
-    doc.fontSize(12).font('Helvetica-Bold').text('AMC - Établissement Scolaire', 50, 100);
-    doc.fontSize(9).font('Helvetica').text('Centre de Formation Académique', 50, 120);
-
-    // Informations du reçu
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Numéro de reçu: ${payment.id.substring(0, 8)}`, 50, 160);
-    doc.text(`Date: ${new Date(payment.updatedAt || payment.createdAt).toLocaleDateString('fr-FR')}`, 50, 180);
-    doc.text(`Année scolaire: ${payment.schoolYear?.name || 'N/A'}`, 50, 200);
-
-    // Informations de la famille
-    doc.fontSize(12).font('Helvetica-Bold').text('FAMILLE', 50, 240);
-    doc.fontSize(10).font('Helvetica');
-    const familyName = payment.family.user?.firstName && payment.family.user?.lastName
-      ? `${payment.family.user.firstName} ${payment.family.user.lastName}`
-      : payment.family.familyName || 'N/A';
-    doc.text(`Nom: ${familyName}`, 50, 260);
-    if (payment.family.user?.email) {
-      doc.text(`Email: ${payment.family.user.email}`, 50, 280);
-    }
-
-    // Détails du paiement
-    doc.fontSize(12).font('Helvetica-Bold').text('DÉTAILS DU PAIEMENT', 50, 320);
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Statut: ${payment.status === 'COMPLETED' ? 'Payé' : payment.status === 'PENDING' ? 'En attente' : payment.status}`, 50, 340);
-    doc.text(`Méthode: ${payment.paymentMethod || 'Non spécifiée'}`, 50, 360);
-    doc.text(`Fournisseur: ${payment.provider}`, 50, 380);
-    doc.text(`Montant total: ${Number(payment.totalAmount).toFixed(2)} €`, 50, 400);
-    doc.text(`Montant payé: ${Number(payment.paidAmount).toFixed(2)} €`, 50, 420);
-
-    // Détails des frais si présents
-    if (Number(payment.registrationFee) > 0) {
-      doc.text(`Frais d'inscription: ${Number(payment.registrationFee).toFixed(2)} €`, 50, 440);
-    }
-    if (Number(payment.arabicFee) > 0) {
-      doc.text(`Frais Arabe: ${Number(payment.arabicFee).toFixed(2)} €`, 50, 460);
-    }
-    if (Number(payment.coranScienceFee) > 0) {
-      doc.text(`Frais Coran-Science: ${Number(payment.coranScienceFee).toFixed(2)} €`, 50, 480);
-    }
-
-    // Dernier paiement si existe
-    if (payment.transactions && payment.transactions.length > 0) {
-      const lastTransaction = payment.transactions[0];
-      doc.fontSize(12).font('Helvetica-Bold').text('DERNIÈRE TRANSACTION', 50, 520);
-      doc.fontSize(10).font('Helvetica');
-      doc.text(`Date: ${new Date(lastTransaction.createdAt).toLocaleDateString('fr-FR')}`, 50, 540);
-      doc.text(`Montant: ${Number(lastTransaction.amount).toFixed(2)} €`, 50, 560);
-      doc.text(`Statut: ${lastTransaction.status}`, 50, 580);
-      if (lastTransaction.payerName) {
-        doc.text(`Payeur: ${lastTransaction.payerName}`, 50, 600);
-      }
-    }
-
-    // Pied de page
-    doc.moveTo(50, 700).lineTo(550, 700).stroke();
-    doc.fontSize(8).font('Helvetica').text(
-      'Ce reçu a été généré automatiquement. Pour toute question, veuillez contacter l\'établissement.',
-      50,
-      720,
-      { align: 'center', width: 500 }
-    );
-
-    doc.end();
+    res.setHeader('Content-Disposition', `attachment; filename="${invoiceResult.filename}"`);
+    return res.sendFile(invoiceResult.filePath);
   } catch (error) {
     console.error('Erreur generatePaymentReceiptPDF:', error);
     return res.status(500).json({ error: 'Erreur serveur lors de la génération du reçu' });

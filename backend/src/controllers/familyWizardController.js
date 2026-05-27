@@ -681,6 +681,7 @@ async function completeExistingFamilyRegistration(req, res) {
             sepaFee: pricing.fraisPrelevement,
             ipAddress,
             draftId: payload.draftId || null,
+            payerName: payment.payerName || null,
           },
         },
       });
@@ -801,6 +802,7 @@ async function completeExistingFamilyRegistration(req, res) {
               amount: toDecimal(paymentTotal),
               status: checkout.configured ? 'INITIATED' : 'FAILED',
               externalRef: checkout.externalPaymentId || null,
+              payerName: payment.payerName || `${req.user.firstName} ${req.user.lastName}`,
               description: 'Paiement inscription membre existant',
               metadata: checkout,
             },
@@ -1332,6 +1334,7 @@ async function completeFamilyRegistration(req, res) {
             sepaFee: pricing.fraisPrelevement,
             ipAddress,
             draftId: payload.draftId || null,
+            payerName: payment.payerName || null,
           },
         },
       });
@@ -1455,6 +1458,7 @@ async function completeFamilyRegistration(req, res) {
           amount: toDecimal(result.payment.totalAmount),
           status: checkout.configured ? 'INITIATED' : 'FAILED',
           externalRef: checkout.externalPaymentId || null,
+          payerName: payment.payerName || `${user.firstName} ${user.lastName}`,
           description: 'Paiement inscription initiale',
           metadata: checkout,
         },

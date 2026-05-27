@@ -49,7 +49,7 @@ const navSectionsByRole = {
     {
       title: 'Finance',
       items: [
-        { icon: FiCreditCard, label: 'Paiements', disabled: true },
+        { path: '/admin/payments', icon: FiCreditCard, label: 'Paiements' },
         { icon: FiCreditCard, label: 'Échéanciers', disabled: true },
         { icon: FiCreditCard, label: 'Impayés', disabled: true },
         { icon: FiCreditCard, label: 'Remboursements', disabled: true },
@@ -122,7 +122,7 @@ const navSectionsByRole = {
     {
       title: 'Finance',
       items: [
-        { icon: FiCreditCard, label: 'Paiements', disabled: true },
+        { path: '/admin/payments', icon: FiCreditCard, label: 'Paiements' },
         { icon: FiCreditCard, label: 'Échéanciers', disabled: true },
         { icon: FiCreditCard, label: 'Impayés', disabled: true },
         { icon: FiCreditCard, label: 'Remboursements', disabled: true },

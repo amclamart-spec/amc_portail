@@ -160,6 +160,12 @@ export default function AdminEnrollments() {
     return date.toLocaleDateString('fr-FR', { year: 'numeric', month: '2-digit', day: '2-digit' });
   };
 
+  const formatDateTime = (dateString) => {
+    if (!dateString) return '—';
+    const date = new Date(dateString);
+    return date.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+
   const getPoleOptions = () => {
     const poles = classes
       .map((cls) => cls.level?.pole)
@@ -186,20 +192,27 @@ export default function AdminEnrollments() {
       const familyId = family?.id || `family-unknown-${enrollment.student?.id || 'anonymous'}`;
       const familyName = family?.familyName || `${enrollment.student?.lastName || ''} ${enrollment.student?.firstName || ''}`.trim() || 'Famille inconnue';
       if (!acc[familyId]) {
-        acc[familyId] = { familyId, familyName, enrollments: [] };
+        acc[familyId] = { familyId, familyName, enrollments: [], latestCreatedAt: null };
       }
       acc[familyId].enrollments.push(enrollment);
+      const createdAt = new Date(enrollment.createdAt).getTime();
+      if (!acc[familyId].latestCreatedAt || createdAt > acc[familyId].latestCreatedAt) {
+        acc[familyId].latestCreatedAt = createdAt;
+      }
       return acc;
     }, {});
 
-    return Object.values(groups).sort((a, b) => a.familyName.localeCompare(b.familyName));
+    return Object.values(groups).map((group) => ({
+      ...group,
+      enrollments: group.enrollments.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    })).sort((a, b) => b.latestCreatedAt - a.latestCreatedAt);
   }, [visibleEnrollments]);
 
   const toggleFamilyExpansion = (familyId) => {
-    setExpandedFamilies((prev) => ({ ...prev, [familyId]: !(prev[familyId] !== false) }));
+    setExpandedFamilies((prev) => ({ ...prev, [familyId]: !prev[familyId] }));
   };
 
-  const isFamilyExpanded = (familyId) => expandedFamilies[familyId] !== false;
+  const isFamilyExpanded = (familyId) => Boolean(expandedFamilies[familyId]);
 
   const handleStatusChange = (enrollmentId, value) => {
     setStatusUpdates((prev) => ({ ...prev, [enrollmentId]: value }));
@@ -333,25 +346,20 @@ export default function AdminEnrollments() {
 
     setPaymentLoading(true);
     try {
+      const requestBody = {
+        payerName: paymentForm.payerName,
+        date: paymentForm.date,
+        method: paymentForm.method,
+        status: paymentForm.status,
+        comment: paymentForm.comment,
+        amount: Number(paymentForm.amount),
+      };
+
       if (editingPaymentId) {
-        await api.patch(`/admin/enrollments/${editingEnrollment.id}/payments/${editingPaymentId}`, {
-          payerName: paymentForm.payerName,
-          date: paymentForm.date,
-          method: paymentForm.method,
-          status: paymentForm.status,
-          comment: paymentForm.comment,
-          amount: Number(paymentForm.amount),
-        });
-        toast.success('Paiement mis à jour');
+        await api.patch(`/admin/enrollments/${editingEnrollment.id}/payments/${editingPaymentId}`, requestBody);
+        toast.success('Paiement modifié');
       } else {
-        await api.post(`/admin/enrollments/${editingEnrollment.id}/payments`, {
-          payerName: paymentForm.payerName,
-          date: paymentForm.date,
-          method: paymentForm.method,
-          status: paymentForm.status,
-          comment: paymentForm.comment,
-          amount: Number(paymentForm.amount),
-        });
+        await api.post(`/admin/enrollments/${editingEnrollment.id}/payments`, requestBody);
         toast.success('Paiement enregistré');
       }
 
@@ -371,7 +379,7 @@ export default function AdminEnrollments() {
       payerName: payment.payerName || '',
       date: payment.processedAt ? new Date(payment.processedAt).toISOString().slice(0, 10) : (payment.createdAt ? new Date(payment.createdAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)),
       method: payment.method || 'CHEQUE',
-      status: payment.status === 'SUCCEEDED' ? 'validé' : 'non validé',
+      status: payment.status === 'SUCCEEDED' ? 'validé' : payment.status === 'CANCELLED' ? 'annulé' : 'non validé',
       comment: payment.description || '',
       amount: payment.amount || '',
     });
@@ -397,6 +405,8 @@ export default function AdminEnrollments() {
       toast.error(error.response?.data?.error || 'Impossible de supprimer le paiement');
     }
   };
+
+  const canEditPayment = (payment) => String(payment.status) !== 'SUCCEEDED';
 
   const downloadEnrollmentPaymentReceipt = (payment) => {
     if (!editingEnrollment) return;
@@ -801,6 +811,7 @@ export default function AdminEnrollments() {
               <thead>
                 <tr>
                   <th>Réf. inscription</th>
+                  <th>Date inscription</th>
                   <th>Élève</th>
                   <th>Pôle</th>
                   <th>Niveau</th>
@@ -814,13 +825,13 @@ export default function AdminEnrollments() {
               </thead>
               <tbody>
                 {enrollments.length === 0 ? (
-                  <tr><td colSpan="10" style={{ textAlign: 'center', color: '#6B7280', padding: '24px 0' }}>Aucune inscription</td></tr>
+                  <tr><td colSpan="11" style={{ textAlign: 'center', color: '#6B7280', padding: '24px 0' }}>Aucune inscription</td></tr>
                 ) : groupedEnrollments.map((group) => {
                   const expanded = isFamilyExpanded(group.familyId);
                   return (
                     <Fragment key={group.familyId}>
                       <tr key={`family-${group.familyId}`} style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                        <td colSpan="10" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
+                        <td colSpan="11" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                               <span style={{ fontSize: 14, color: '#1D4ED8' }}>{expanded ? '▾' : '▸'}</span>
@@ -837,6 +848,7 @@ export default function AdminEnrollments() {
                         return (
                           <tr key={e.id} style={{ background: '#FFFFFF', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)' }}>
                             <td style={{ fontWeight: 700, padding: '16px 12px' }}>{e.registrationCode || '—'}</td>
+                            <td style={{ padding: '16px 12px' }}>{formatDateTime(e.createdAt)}</td>
                             <td style={{ fontWeight: 700, padding: '16px 12px', paddingLeft: 36 }}>
                               {e.student.lastName} {e.student.firstName}
                               {e.isProvisional && (
@@ -1026,6 +1038,7 @@ export default function AdminEnrollments() {
                     >
                       <option value="validé">validé</option>
                       <option value="non validé">non validé</option>
+                      <option value="annulé">annulé</option>
                     </select>
                   </div>
                   <div className="form-group" style={{ margin: 0 }}>
@@ -1055,7 +1068,7 @@ export default function AdminEnrollments() {
                     onClick={submitEnrollmentPayment}
                     disabled={paymentLoading}
                   >
-                    {paymentLoading ? 'Enregistrement...' : (editingPaymentId ? 'Mettre à jour le paiement' : 'Ajouter le paiement')}
+                    {paymentLoading ? 'Enregistrement...' : editingPaymentId ? 'Mettre à jour le paiement' : 'Ajouter le paiement'}
                   </button>
                   {editingPaymentId && (
                     <button
@@ -1099,25 +1112,35 @@ export default function AdminEnrollments() {
                               <button
                                 type="button"
                                 className="btn btn-link"
-                                onClick={() => editEnrollmentPayment(payment)}
-                              >
-                                Modifier
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-link"
                                 onClick={() => downloadEnrollmentPaymentReceipt(payment)}
                                 title="Télécharger le reçu"
                               >
                                 📥 Reçu
                               </button>
-                              <button
-                                type="button"
-                                className="btn btn-link text-danger"
-                                onClick={() => deleteEnrollmentPayment(payment.id)}
-                              >
-                                Supprimer
-                              </button>
+                              {canEditPayment(payment) ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn-link"
+                                    onClick={() => editEnrollmentPayment(payment)}
+                                    title="Modifier le paiement"
+                                  >
+                                    ✏️ Modifier
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-link text-danger"
+                                    onClick={() => deleteEnrollmentPayment(payment.id)}
+                                    title="Supprimer le paiement"
+                                  >
+                                    🗑️ Supprimer
+                                  </button>
+                                </>
+                              ) : (
+                                <span style={{ color: '#16a34a', fontWeight: 600, marginLeft: 8 }}>
+                                  Validé
+                                </span>
+                              )}
                             </td>
                           </tr>
                         ))}
