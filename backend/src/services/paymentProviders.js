@@ -213,6 +213,47 @@ async function captureStripePaymentIntent(paymentIntentId) {
   return data;
 }
 
+async function cancelStripePaymentIntent(paymentIntentId) {
+  if (!hasConfigValue(config.payments.stripeSecretKey)) {
+    throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
+  }
+
+  const response = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}/cancel`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.payments.stripeSecretKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || 'Erreur Stripe lors de l’annulation du paiement');
+  }
+
+  return data;
+}
+
+async function getStripePaymentIntent(paymentIntentId) {
+  if (!hasConfigValue(config.payments.stripeSecretKey)) {
+    throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
+  }
+
+  const response = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${config.payments.stripeSecretKey}`,
+    },
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || 'Erreur Stripe lors de la récupération du PaymentIntent');
+  }
+
+  return data;
+}
+
 async function getStripeCheckoutSession(sessionId) {
   if (!hasConfigValue(config.payments.stripeSecretKey)) {
     throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
@@ -300,7 +341,9 @@ module.exports = {
   createOnlineCheckout,
   completeGoCardlessRedirectFlow,
   captureStripePaymentIntent,
+  cancelStripePaymentIntent,
   getStripeCheckoutSession,
+  getStripePaymentIntent,
   providerConfigured,
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,

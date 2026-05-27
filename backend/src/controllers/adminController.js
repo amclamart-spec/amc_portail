@@ -9,6 +9,7 @@ const { savePhotoBase64 } = require('../utils/photoUtils');
 const { isProvisionalClass, getProvisionalClassFilter } = require('../utils/provisionalClassUtils');
 const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
 const { getReceiptInfo } = require('../utils/receiptUtils');
+const { generateInvoicePDF } = require('../utils/invoiceUtils');
 
 const prisma = new PrismaClient();
 
@@ -279,12 +280,13 @@ async function getStats(req, res) {
   try {
     const scope = (req.query.scope || 'current').toLowerCase();
 
+    const activeEnrollmentStatuses = ['PENDING', 'CONFIRMED'];
     const [totalUsers, pendingUsers, totalFamilies, totalStudents, totalEnrollments, schoolYears] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { validationStatus: 'PENDING' } }),
       prisma.family.count(),
       prisma.student.count(),
-      prisma.enrollment.count(),
+      prisma.enrollment.count({ where: { status: { in: activeEnrollmentStatuses } } }),
       prisma.schoolYear.findMany({ orderBy: { startDate: 'desc' }, take: 5 }),
     ]);
 
@@ -294,30 +296,33 @@ async function getStats(req, res) {
     let currentEnrollments = null;
     let currentStudents = null;
     let currentFamilies = null;
-    // counts by status and test-required indicator
-    let enrollmentsByStatus = null;
-    let enrollmentsTestRequired = 0;
+
+    const yearWhere = scope === 'current' && currentYear ? { schoolYearId: currentYear.id } : {};
+    const [scopeEnrollmentsByStatusRaw, scopeEnrollmentsTestRequired] = await Promise.all([
+      prisma.enrollment.groupBy({
+        by: ['status'],
+        where: { ...yearWhere, status: { in: activeEnrollmentStatuses } },
+        _count: { status: true },
+      }).catch(() => []),
+      prisma.enrollment.count({ where: { ...yearWhere, levelValidated: false, status: { in: activeEnrollmentStatuses } } }),
+    ]);
+
+    const scopeEnrollmentsByStatus = (scopeEnrollmentsByStatusRaw || []).reduce((acc, item) => {
+      acc[item.status] = item._count?.status || 0;
+      return acc;
+    }, {});
+
     if (currentYear) {
       const yearId = currentYear.id;
-      const [totalForYear, studentsForYear, familiesForYear, byStatus, testReq] = await Promise.all([
-        prisma.enrollment.count({ where: { schoolYearId: yearId } }),
-        prisma.student.count({ where: { enrollments: { some: { schoolYearId: yearId } } } }),
-        prisma.family.count({ where: { students: { some: { enrollments: { some: { schoolYearId: yearId } } } } } }),
-        // counts per status
-        prisma.enrollment.groupBy({ by: ['status'], where: { schoolYearId: yearId }, _count: { status: true } }).catch(() => []),
-        // test required = enrollments for the year where levelValidated is false and not cancelled
-        prisma.enrollment.count({ where: { schoolYearId: yearId, levelValidated: false, status: { in: ['PENDING', 'CONFIRMED'] } } }),
+      const [totalForYear, studentsForYear, familiesForYear] = await Promise.all([
+        prisma.enrollment.count({ where: { schoolYearId: yearId, status: { in: activeEnrollmentStatuses } } }),
+        prisma.student.count({ where: { enrollments: { some: { schoolYearId: yearId, status: { in: activeEnrollmentStatuses } } } } }),
+        prisma.family.count({ where: { students: { some: { enrollments: { some: { schoolYearId: yearId, status: { in: activeEnrollmentStatuses } } } } } } }),
       ]);
 
       currentEnrollments = totalForYear;
       currentStudents = studentsForYear;
       currentFamilies = familiesForYear;
-
-      enrollmentsByStatus = (byStatus || []).reduce((acc, item) => {
-        acc[item.status] = item._count?.status || 0;
-        return acc;
-      }, {});
-      enrollmentsTestRequired = testReq || 0;
     }
 
     // Determine displayed counts according to requested scope
@@ -345,8 +350,8 @@ async function getStats(req, res) {
         currentStudents,
         currentFamilies,
         // breakdowns to drive frontend KPI widgets
-        enrollmentsByStatus: enrollmentsByStatus || null,
-        enrollmentsTestRequired: enrollmentsTestRequired || 0,
+        enrollmentsByStatus: scopeEnrollmentsByStatus,
+        enrollmentsTestRequired: scopeEnrollmentsTestRequired || 0,
         displayCounts: {
           enrollments: displayEnrollments,
           students: displayStudents,
@@ -393,7 +398,7 @@ async function updateRegistrationBlockStatus(req, res) {
  */
 async function getEnrollments(req, res) {
   try {
-    const { schoolYearId, status, studentName, poleId, classId, page = 1, limit = 20 } = req.query;
+    const { schoolYearId, status, studentName, poleId, classId, page = 1, limit = 20, testRequired } = req.query;
     const waitlist = req.query.waitlist === 'true';
     const where = {};
     if (schoolYearId) where.schoolYearId = schoolYearId;
@@ -409,6 +414,10 @@ async function getEnrollments(req, res) {
           { lastName: { contains: studentName, mode: 'insensitive' } },
         ],
       };
+    }
+
+    if (testRequired === 'true') {
+      where.levelValidated = false;
     }
 
     const classWhere = {};
@@ -458,10 +467,26 @@ async function getEnrollments(req, res) {
     ]);
 
     // add provisional flag when enrollment.class indicates provisional assignment
+    // Ajout du statut de paiement principal pour chaque inscription
+    const enrollmentIds = enrollments.map(e => e.id);
+    const paymentsByEnrollment = {};
+    if (enrollmentIds.length > 0) {
+      const payments = await prisma.payment.findMany({
+        where: {
+          metadata: { path: ['enrollmentIds'], array_contains: enrollmentIds },
+        },
+        select: { id: true, status: true, metadata: true },
+      });
+      for (const eid of enrollmentIds) {
+        const payment = payments.find(p => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(eid));
+        paymentsByEnrollment[eid] = payment ? payment.status : null;
+      }
+    }
     const enhanced = enrollments.map((e) => {
       const isProvisional = isProvisionalClass(e.class);
       const isWaitlist = e.status === 'PENDING' && (e.class?.status === 'FULL' || String(e.comment || '').toLowerCase().includes('liste d\'attente'));
-      return { ...e, isProvisional, isWaitlist, waitlistOrder: null };
+      const paymentStatus = paymentsByEnrollment[e.id] || null;
+      return { ...e, isProvisional, isWaitlist, waitlistOrder: null, paymentStatus };
     });
 
     const waitlistClassIds = [...new Set(enhanced.filter((e) => e.isWaitlist && e.classId).map((e) => e.classId))];
@@ -676,6 +701,10 @@ async function updateEnrollmentPayment(req, res) {
   try {
     const { payerName, date, method, status, comment, amount } = req.body;
     const { transaction } = await findEnrollmentTransaction(req.params.id, req.params.paymentId);
+
+    if (String(transaction.status) === 'SUCCEEDED') {
+      return res.status(403).json({ error: 'Impossible de modifier un paiement validé.' });
+    }
     const updateData = {};
 
     if (payerName !== undefined) {
@@ -691,11 +720,11 @@ async function updateEnrollmentPayment(req, res) {
     }
 
     if (status !== undefined) {
-      const allowedStatuses = ['validé', 'non validé'];
+      const allowedStatuses = ['validé', 'non validé', 'annulé'];
       if (!allowedStatuses.includes(status)) {
         return res.status(400).json({ error: 'Statut de paiement invalide' });
       }
-      updateData.status = status === 'validé' ? 'SUCCEEDED' : 'INITIATED';
+      updateData.status = status === 'validé' ? 'SUCCEEDED' : status === 'annulé' ? 'CANCELLED' : 'INITIATED';
     }
 
     if (amount !== undefined) {
@@ -729,6 +758,36 @@ async function updateEnrollmentPayment(req, res) {
 
     await recalculatePaymentAggregate(transaction.paymentId);
 
+    // If this transaction is a Stripe transaction and has just been marked succeeded,
+    // ensure the Stripe payment intent is captured / finalized.
+    if (String(updatedTransaction.provider) === 'STRIPE') {
+      if (String(updatedTransaction.status) === 'SUCCEEDED') {
+        try {
+          await finalizeStripePayment(updatedTransaction.paymentId);
+        } catch (captureErr) {
+          console.error(`Erreur lors de la finalisation Stripe pour le paiement ${updatedTransaction.paymentId}:`, captureErr);
+          await prisma.paymentTransaction.update({
+            where: { id: updatedTransaction.id },
+            data: { status: 'INITIATED' },
+          });
+          await recalculatePaymentAggregate(updatedTransaction.paymentId);
+          return res.status(500).json({ error: `Impossible de finaliser le paiement Stripe : ${captureErr.message}` });
+        }
+      } else if (String(updatedTransaction.status) === 'CANCELLED') {
+        try {
+          await cancelStripePayment(updatedTransaction.paymentId);
+        } catch (cancelErr) {
+          console.error(`Erreur lors de l'annulation Stripe pour le paiement ${updatedTransaction.paymentId}:`, cancelErr);
+          await prisma.paymentTransaction.update({
+            where: { id: updatedTransaction.id },
+            data: { status: 'INITIATED' },
+          });
+          await recalculatePaymentAggregate(updatedTransaction.paymentId);
+          return res.status(500).json({ error: `Impossible d'annuler le paiement Stripe : ${cancelErr.message}` });
+        }
+      }
+    }
+
     return res.json({
       transaction: {
         id: updatedTransaction.id,
@@ -753,6 +812,11 @@ async function updateEnrollmentPayment(req, res) {
 async function deleteEnrollmentPayment(req, res) {
   try {
     const { transaction } = await findEnrollmentTransaction(req.params.id, req.params.paymentId);
+
+    if (String(transaction.status) === 'SUCCEEDED') {
+      return res.status(403).json({ error: 'Impossible de supprimer un paiement validé.' });
+    }
+
     await prisma.paymentTransaction.delete({ where: { id: transaction.id } });
     await recalculatePaymentAggregate(transaction.paymentId);
     return res.json({ message: 'Paiement supprimé avec succès' });
@@ -767,76 +831,46 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
   try {
     const { id: enrollmentId, paymentId: transactionId } = req.params;
     const { enrollment, transaction } = await findEnrollmentTransaction(enrollmentId, transactionId);
-
     const payment = await prisma.payment.findUnique({
       where: { id: transaction.paymentId },
-      include: { family: { include: { user: true } } },
+      include: {
+        family: { include: { user: true } },
+        transactions: { orderBy: { createdAt: 'desc' } },
+        schoolYear: true,
+      },
     });
 
     if (!payment) {
       return res.status(404).json({ error: 'Paiement introuvable' });
     }
 
-    // Générer le reçu PDF
-    const doc = new PDFDocument({ margin: 40, size: 'A4' });
-    const filename = `recu-${transaction.id}.pdf`;
-    
+    // Fetch full enrollment info (for course/level details)
+    const enrollmentFull = await prisma.enrollment.findUnique({
+      where: { id: enrollment.id },
+      include: {
+        class: { include: { level: { include: { pole: true } } } },
+        student: true,
+      },
+    });
+
+    // Ensure family includes children list
+    let familyWithChildren = payment.family;
+    try {
+      const children = await prisma.student.findMany({ where: { familyId: payment.familyId }, select: { id: true, firstName: true, lastName: true, dateOfBirth: true }, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }] });
+      familyWithChildren = { ...payment.family, children };
+    } catch (err) {
+      console.warn('Impossible de récupérer les enfants pour le reçu (adminController):', err?.message || err);
+    }
+
+    // Generate invoice-like PDF file using shared utility
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollmentFull ? [enrollmentFull] : []);
+    if (!invoiceResult) {
+      return res.status(500).json({ error: 'Impossible de générer le reçu' });
+    }
+
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-
-    doc.pipe(res);
-
-    // En-tête
-    doc.fontSize(20).font('Helvetica-Bold').text('REÇU DE PAIEMENT', { align: 'center' });
-    doc.moveTo(50, 80).lineTo(550, 80).stroke();
-    doc.fontSize(10);
-
-    // Informations de l'établissement
-    doc.fontSize(12).font('Helvetica-Bold').text('AMC', 50, 100);
-    doc.fontSize(10).font('Helvetica').text('Établissement scolaire', 50, 120);
-
-    // Informations du reçu
-    doc.fontSize(10);
-    doc.text(`Numéro de reçu: ${transaction.id}`, 50, 160);
-    doc.text(`Date: ${new Date(transaction.processedAt || transaction.createdAt).toLocaleDateString('fr-FR')}`, 50, 180);
-
-    // Informations de la famille
-    doc.fontSize(12).font('Helvetica-Bold').text('Famille', 50, 220);
-    doc.fontSize(10).font('Helvetica');
-    const familyName = payment.family.user?.firstName && payment.family.user?.lastName
-      ? `${payment.family.user.firstName} ${payment.family.user.lastName}`
-      : payment.family.familyName;
-    doc.text(`Nom: ${familyName}`, 50, 240);
-
-    // Informations de l'inscription
-    doc.fontSize(12).font('Helvetica-Bold').text('Inscription', 50, 280);
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`ID: ${enrollment.id}`, 50, 300);
-    doc.text(`Niveau: ${enrollment.class?.level?.name || 'N/A'}`, 50, 320);
-
-    // Détails du paiement
-    doc.fontSize(12).font('Helvetica-Bold').text('Détails du paiement', 50, 360);
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Moyen: ${transaction.method}`, 50, 380);
-    doc.text(`Montant: ${Number(transaction.amount).toFixed(2)} €`, 50, 400);
-    doc.text(`Statut: ${transaction.status === 'SUCCEEDED' ? 'Validé' : 'En attente'}`, 50, 420);
-    if (transaction.payerName) {
-      doc.text(`Payeur: ${transaction.payerName}`, 50, 440);
-    }
-    if (transaction.description) {
-      doc.text(`Commentaire: ${transaction.description}`, 50, 460);
-    }
-
-    // Pied de page
-    doc.moveTo(50, 520).lineTo(550, 520).stroke();
-    doc.fontSize(9).font('Helvetica').text(
-      'Ce reçu a été généré automatiquement. Pour toute question, veuillez contacter l\'établissement.',
-      50,
-      540,
-      { align: 'center', width: 500 }
-    );
-
-    doc.end();
+    res.setHeader('Content-Disposition', `attachment; filename="${invoiceResult.filename}"`);
+    return res.sendFile(invoiceResult.filePath);
   } catch (error) {
     console.error('Erreur downloadEnrollmentPaymentReceipt:', error);
     if (error.status) return res.status(error.status).json({ error: error.message });
@@ -855,7 +889,7 @@ async function createEnrollmentPayment(req, res) {
     if (!allowedMethods.includes(method)) {
       return res.status(400).json({ error: 'Moyen de paiement invalide' });
     }
-    const allowedStatuses = ['validé', 'non validé'];
+    const allowedStatuses = ['validé', 'non validé', 'annulé'];
     if (!allowedStatuses.includes(status)) {
       return res.status(400).json({ error: 'Statut de paiement invalide' });
     }
@@ -866,7 +900,7 @@ async function createEnrollmentPayment(req, res) {
 
     const { enrollment, payment } = await findEnrollmentAndPayment(req.params.id);
     let targetPayment = payment;
-    const transactionStatus = status === 'validé' ? 'SUCCEEDED' : 'INITIATED';
+    const transactionStatus = status === 'validé' ? 'SUCCEEDED' : status === 'annulé' ? 'CANCELLED' : 'INITIATED';
     const defaultPayer = [enrollment.student.family.user?.firstName, enrollment.student.family.user?.lastName]
       .filter(Boolean)
       .join(' ') || enrollment.student.family.familyName;
@@ -1179,6 +1213,34 @@ async function updateEnrollment(req, res) {
     const targetStatus = status || currentStatus;
     const classChanged = classId && classId !== enrollment.classId;
     const enrollmentUpdates = {};
+
+    if (currentStatus !== 'CONFIRMED' && targetStatus === 'CONFIRMED') {
+      // Vérifier que le niveau est validé
+      if (!enrollment.levelValidated && !levelValidated) {
+        return res.status(400).json({ error: 'Impossible de confirmer l’inscription : le niveau doit être validé.' });
+      }
+      // Vérifier que tous les paiements sont validés
+      const attachedPayments = await prisma.payment.findMany({
+        where: {
+          familyId: enrollment.student.familyId,
+          schoolYearId: enrollment.schoolYearId,
+        },
+        include: { transactions: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const enrollmentPayments = attachedPayments.filter((payment) =>
+        Array.isArray(payment.metadata?.enrollmentIds) && payment.metadata.enrollmentIds.includes(enrollment.id)
+      );
+
+      const unvalidatedPayment = enrollmentPayments.find((payment) =>
+        !payment.transactions.some((tx) => String(tx.status) === 'SUCCEEDED')
+      );
+
+      if (unvalidatedPayment) {
+        return res.status(400).json({ error: 'Impossible de confirmer l’inscription : tous les paiements liés doivent être validés.' });
+      }
+    }
 
     if (status) {
       enrollmentUpdates.status = status;
