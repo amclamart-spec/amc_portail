@@ -1180,19 +1180,30 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               )}
             </div>
 
-              <div className="form-group">
-              <label>Mode de paiement</label>
-              <select className="form-control" value={wizard.payment.method} onChange={(e) => {
-                const method = e.target.value;
-                updateWizard('payment', { method, installmentsCount: method === 'STRIPE_CARD' ? 1 : wizard.payment.installmentsCount });
-              }}>
-                <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
-                <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
-                <option value="ESPECES">Espèces</option>
-                <option value="CHEQUE">Chèque</option>
-              </select>
-              
-            </div>
+              <div className="form-group" style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <label>Mode de paiement</label>
+                  <select className="form-control" value={wizard.payment.method} onChange={(e) => {
+                    const method = e.target.value;
+                    updateWizard('payment', { method, installmentsCount: method === 'STRIPE_CARD' ? 1 : wizard.payment.installmentsCount });
+                  }}>
+                    <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
+                    <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
+                    <option value="ESPECES">Espèces</option>
+                    <option value="CHEQUE">Chèque</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label>Payeur</label>
+                  <input
+                    className="form-control"
+                    type="text"
+                    value={wizard.payment.payerName ?? wizard.address.familyName ?? ''}
+                    onChange={e => updateWizard('payment', { payerName: e.target.value })}
+                    placeholder="Nom du payeur"
+                  />
+                </div>
+              </div>
             {pricingPreview && wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
               <div className="card" style={{ marginBottom: 14, background: '#FEF3C7' }}>
                 <strong>Frais de prélèvement</strong>

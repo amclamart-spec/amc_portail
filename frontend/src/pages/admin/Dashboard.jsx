@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
-import { FiUsers, FiUserCheck, FiBookOpen, FiClipboard } from 'react-icons/fi';
+import { FiUsers, FiUserCheck, FiBookOpen, FiClipboard, FiCheckCircle, FiClock, FiAlertTriangle } from 'react-icons/fi';
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
@@ -60,6 +60,27 @@ export default function AdminDashboard() {
           <div className="stat-info">
             <h4>{stats?.displayCounts?.enrollments ?? stats?.totalEnrollments ?? 0}</h4>
             <p>Inscriptions{stats?.displayScope === 'current' ? ' (année en cours)' : ''}</p>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon success"><FiCheckCircle /></div>
+          <div className="stat-info">
+            <h4>{stats?.enrollmentsByStatus?.CONFIRMED ?? 0}</h4>
+            <p>Inscrits validés</p>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon warning"><FiClock /></div>
+          <div className="stat-info">
+            <h4>{stats?.enrollmentsByStatus?.PENDING ?? 0}</h4>
+            <p>Inscriptions en attente</p>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon danger"><FiAlertTriangle /></div>
+          <div className="stat-info">
+            <h4>{stats?.enrollmentsTestRequired ?? 0}</h4>
+            <p>Test de niveau requis</p>
           </div>
         </div>
       </div>

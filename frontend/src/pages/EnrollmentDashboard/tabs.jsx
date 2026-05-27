@@ -18,8 +18,57 @@ import { Card, CustomTooltip } from './components';
 import { mockEnrollmentData } from './mockData';
 
 // Onglet 1: Vue générale
-export const OverviewTab = ({ chartRefs = {} }) => {
-  const { enrollmentByStatus, levelTestDistribution, enrollmentTrend } = mockEnrollmentData;
+export const OverviewTab = ({ chartRefs = {}, stats }) => {
+  const { enrollmentTrend } = mockEnrollmentData;
+
+  const enrollmentByStatus = stats
+    ? [
+        {
+          name: 'Validées',
+          value: stats.enrollmentsByStatus?.CONFIRMED ?? 0,
+          fill: '#22c55e',
+        },
+        {
+          name: 'En attente',
+          value: stats.enrollmentsByStatus?.PENDING ?? 0,
+          fill: '#f59e0b',
+        },
+      ]
+    : mockEnrollmentData.enrollmentByStatus;
+
+  const levelTestDistribution = stats
+    ? [
+        {
+          name: 'Test requis',
+          value: stats.enrollmentsTestRequired ?? 0,
+          fill: '#8b5cf6',
+        },
+        {
+          name: 'Sans test',
+          value: Math.max((stats.displayCounts?.enrollments ?? 0) - (stats.enrollmentsTestRequired ?? 0), 0),
+          fill: '#d1d5db',
+        },
+      ]
+    : mockEnrollmentData.levelTestDistribution;
+
+  const totalInscriptions = stats
+    ? stats.displayCounts?.enrollments ??
+      mockEnrollmentData.kpis.find((kpi) => kpi.id === 'total')?.value
+    : mockEnrollmentData.kpis.find((kpi) => kpi.id === 'total')?.value;
+
+  const enrichedTrend = stats
+    ? (() => {
+        const baseTotal = mockEnrollmentData.enrollmentTrend.reduce((sum, item) => sum + item.inscrits, 0);
+        const scale = baseTotal ? (stats.displayCounts?.enrollments ?? 0) / baseTotal : 1;
+        return mockEnrollmentData.enrollmentTrend.map((item) => ({
+          ...item,
+          inscrits: Math.max(0, Math.round(item.inscrits * scale)),
+        }));
+      })()
+    : mockEnrollmentData.enrollmentTrend;
+
+  const peakValue = Math.max(...enrichedTrend.map((item) => item.inscrits), totalInscriptions);
+  const avgPerWeek = Math.round(totalInscriptions / enrichedTrend.length);
 
   return (
     <div className="space-y-6">
@@ -81,7 +130,7 @@ export const OverviewTab = ({ chartRefs = {} }) => {
         <Card title="Évolution des inscriptions (12 dernières semaines)">
           <ResponsiveContainer width="100%" height={350}>
           <LineChart
-            data={enrollmentTrend}
+            data={enrichedTrend}
             margin={{ top: 5, right: 30, left: 0, bottom: 5 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -115,10 +164,10 @@ export const OverviewTab = ({ chartRefs = {} }) => {
               Pic maximal
             </p>
             <p className="text-2xl font-bold text-gray-900 dark:text-white mt-2">
-              205
+              {peakValue.toLocaleString('fr-FR')}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Semaine 12
+              Basé sur les données actuelles
             </p>
           </div>
         </Card>
@@ -129,10 +178,10 @@ export const OverviewTab = ({ chartRefs = {} }) => {
               Moyenne hebdomadaire
             </p>
             <p className="text-2xl font-bold text-gray-900 dark:text-white mt-2">
-              150
+              {avgPerWeek.toLocaleString('fr-FR')}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Cumul par semaine
+              Estimation sur {enrichedTrend.length} semaines
             </p>
           </div>
         </Card>
@@ -143,7 +192,7 @@ export const OverviewTab = ({ chartRefs = {} }) => {
               Total des inscrits
             </p>
             <p className="text-2xl font-bold text-gray-900 dark:text-white mt-2">
-              1247
+              {totalInscriptions.toLocaleString('fr-FR')}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Année scolaire

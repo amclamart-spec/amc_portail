@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { toPng } from 'html-to-image';
@@ -9,8 +9,13 @@ import {
   FiSun,
   FiDownload,
   FiChevronDown,
+  FiClipboard,
+  FiCheckCircle,
+  FiClock,
+  FiAlertTriangle,
 } from 'react-icons/fi';
-import { KPICard, Card, FilterBar, TabButton } from './components';
+import api from '../../api/axios';
+import { KPICard, FilterBar, TabButton } from './components';
 import { OverviewTab, WeeklyTab, ClassesTab } from './tabs';
 import { mockEnrollmentData } from './mockData';
 
@@ -21,6 +26,31 @@ const EnrollmentDashboard = () => {
   const [schoolYear, setSchoolYear] = useState('2024-2025');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    setLoadingStats(true);
+
+    api.get('/admin/stats', { params: { scope: 'current' } })
+      .then(({ data }) => {
+        if (isMounted) {
+          setDashboardStats(data.stats);
+          setSchoolYear(data.stats?.displayLabel || schoolYear);
+        }
+      })
+      .catch((error) => {
+        console.error('Erreur chargement dashboard inscriptions :', error);
+      })
+      .finally(() => {
+        if (isMounted) setLoadingStats(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const overviewStatusRef = useRef(null);
   const overviewTestRef = useRef(null);
@@ -28,7 +58,53 @@ const EnrollmentDashboard = () => {
   const weeklyChartRef = useRef(null);
   const classesChartRef = useRef(null);
 
-  const { header, kpis } = mockEnrollmentData;
+  const header = {
+    ...mockEnrollmentData.header,
+    subtitle: dashboardStats?.displayLabel
+      ? `Année scolaire ${dashboardStats.displayLabel}`
+      : mockEnrollmentData.header.subtitle,
+  };
+
+  const kpis = dashboardStats
+    ? [
+        {
+          id: 'enrollments',
+          label: 'Inscriptions',
+          value: dashboardStats.displayCounts?.enrollments ?? 0,
+          trend: 0,
+          color: 'primary',
+          icon: FiClipboard,
+          details: dashboardStats.displayLabel ? `Année ${dashboardStats.displayLabel}` : 'Année en cours',
+        },
+        {
+          id: 'confirmed',
+          label: 'Inscrits validés',
+          value: dashboardStats.enrollmentsByStatus?.CONFIRMED ?? 0,
+          trend: 0,
+          color: 'success',
+          icon: FiCheckCircle,
+          details: 'Inscriptions confirmées',
+        },
+        {
+          id: 'pending',
+          label: 'En attente',
+          value: dashboardStats.enrollmentsByStatus?.PENDING ?? 0,
+          trend: 0,
+          color: 'warning',
+          icon: FiClock,
+          details: 'Inscriptions non traitées',
+        },
+        {
+          id: 'testRequired',
+          label: 'Test de niveau requis',
+          value: dashboardStats.enrollmentsTestRequired ?? 0,
+          trend: 0,
+          color: 'danger',
+          icon: FiAlertTriangle,
+          details: 'À organiser avec le secrétariat',
+        },
+      ]
+    : mockEnrollmentData.kpis;
 
   const captureChartImage = async (node) => {
     if (!node) return null;
@@ -313,13 +389,14 @@ const EnrollmentDashboard = () => {
                 testChart: overviewTestRef,
                 trendChart: overviewTrendRef,
               }}
+              stats={dashboardStats}
             />
           )}
           {activeTab === 'weekly' && (
-            <WeeklyTab chartRef={weeklyChartRef} />
+            <WeeklyTab chartRef={weeklyChartRef} stats={dashboardStats} />
           )}
           {activeTab === 'classes' && (
-            <ClassesTab chartRef={classesChartRef} />
+            <ClassesTab chartRef={classesChartRef} stats={dashboardStats} />
           )}
         </div>
 
