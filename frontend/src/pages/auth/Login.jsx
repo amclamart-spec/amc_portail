@@ -11,9 +11,15 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [registrationMessage, setRegistrationMessage] = useState('');
+  const [registrationsBlocked, setRegistrationsBlocked] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
+    const apiBase = import.meta.env.VITE_API_URL || '/api';
+    fetch(`${apiBase}/enrollments/registration-block`).then((r) => r.json()).then((data) => {
+      setRegistrationsBlocked(Boolean(data?.blocked));
+    }).catch(() => {});
+
     let messageTimer;
     const oauthError = searchParams.get('oauth_error');
     if (oauthError) {
@@ -195,7 +201,10 @@ export default function Login() {
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, fontSize: 14 }}>
             <Link to="/forgot-password" style={{ color: '#213B88', fontWeight: 700 }}>Mot de passe oublié ?</Link>
-            <Link to="/register" style={{ color: '#6B7280' }}>Pas encore de compte ?</Link>
+            {registrationsBlocked
+              ? <span style={{ color: '#B91C1C' }}>Inscriptions fermées</span>
+              : <Link to="/register" style={{ color: '#6B7280' }}>Pas encore de compte ?</Link>
+            }
           </div>
         </div>
       </div>
