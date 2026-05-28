@@ -8,6 +8,19 @@ const { isRegistrationBlocked } = require('../services/systemService');
 const prisma = new PrismaClient();
 
 /**
+ * GET /api/enrollments/registration-block (public)
+ */
+async function getRegistrationBlockPublic(req, res) {
+  try {
+    const blocked = await isRegistrationBlocked();
+    res.json({ blocked });
+  } catch (error) {
+    console.error('Erreur getRegistrationBlockPublic:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
  * GET /api/enrollments/poles — liste des pôles avec niveaux
  */
 async function getPolesAndLevels(req, res) {
@@ -241,5 +254,10 @@ async function cancelEnrollment(req, res) {
 }
 
 module.exports = {
-  getPolesAndLevels, getAvailableClasses, createEnrollment, getEnrollmentSummary, cancelEnrollment,
+  getPolesAndLevels,
+  getAvailableClasses,
+  createEnrollment,
+  getEnrollmentSummary,
+  cancelEnrollment,
+  getRegistrationBlockPublic,
 };

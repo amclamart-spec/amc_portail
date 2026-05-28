@@ -9,6 +9,9 @@ const router = Router();
 // Lecture publique pour le wizard d'inscription famille
 router.get('/poles', getPolesAndLevels);
 router.get('/classes', getAvailableClasses);
+// Statut public des inscriptions (ouvertes/fermées)
+const { getRegistrationBlockPublic } = require('../controllers/enrollmentController');
+router.get('/registration-block', getRegistrationBlockPublic);
 
 // Routes authentifiées
 router.use(authenticate);

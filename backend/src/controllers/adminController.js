@@ -761,11 +761,14 @@ async function updateEnrollmentPayment(req, res) {
     // If this transaction is a Stripe transaction and has just been marked succeeded,
     // ensure the Stripe payment intent is captured / finalized.
     if (String(updatedTransaction.provider) === 'STRIPE') {
+      console.log(`[ADMIN STRIPE] Transaction Stripe ${updatedTransaction.id} avec statut ${updatedTransaction.status}`);
       if (String(updatedTransaction.status) === 'SUCCEEDED') {
+        console.log(`[ADMIN STRIPE] Tentative de finalisation pour paiement ${updatedTransaction.paymentId}`);
         try {
           await finalizeStripePayment(updatedTransaction.paymentId);
+          console.log(`[ADMIN STRIPE] ✅ Finalisation réussie pour paiement ${updatedTransaction.paymentId}`);
         } catch (captureErr) {
-          console.error(`Erreur lors de la finalisation Stripe pour le paiement ${updatedTransaction.paymentId}:`, captureErr);
+          console.error(`[ADMIN STRIPE] Erreur lors de la finalisation Stripe pour le paiement ${updatedTransaction.paymentId}:`, captureErr);
           await prisma.paymentTransaction.update({
             where: { id: updatedTransaction.id },
             data: { status: 'INITIATED' },
@@ -2229,7 +2232,25 @@ async function updateClass(req, res) {
 async function deleteClass(req, res) {
   try {
     const { id } = req.params;
-    await prisma.class.delete({ where: { id } });
+    
+    // Vérifier que la classe existe
+    const cls = await prisma.class.findUnique({ where: { id } });
+    if (!cls) {
+      return res.status(404).json({ error: 'Classe non trouvée' });
+    }
+
+    // Supprimer en cascade : enrollments → lessons (avec evaluations) → homeworkMessages
+    await prisma.$transaction([
+      // Supprimer les inscriptions
+      prisma.enrollment.deleteMany({ where: { classId: id } }),
+      // Supprimer les leçons (et leurs évaluations via onDelete: Cascade)
+      prisma.lesson.deleteMany({ where: { classId: id } }),
+      // Supprimer les messages de devoir
+      prisma.homeworkMessage.deleteMany({ where: { classId: id } }),
+      // Finalement supprimer la classe
+      prisma.class.delete({ where: { id } }),
+    ]);
+    
     res.json({ message: 'Classe supprimée avec succès' });
   } catch (error) {
     console.error('Erreur deleteClass:', error);

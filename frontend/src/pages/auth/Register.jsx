@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { FiCheckCircle } from 'react-icons/fi';
+import { useEffect } from 'react';
 
 const PROFILE_OPTIONS = [
   { value: 'FAMILLE', label: 'Famille' },
@@ -25,6 +26,14 @@ export default function Register() {
     accountOnly: false,
   });
   const [errors, setErrors] = useState({});
+  const [registrationsBlocked, setRegistrationsBlocked] = useState(false);
+
+  useEffect(() => {
+    const apiBase = import.meta.env.VITE_API_URL || '/api';
+    fetch(`${apiBase}/enrollments/registration-block`).then((r) => r.json()).then((data) => {
+      setRegistrationsBlocked(Boolean(data?.blocked));
+    }).catch(() => {});
+  }, []);
 
   const validate = () => {
     const e = {};
@@ -136,6 +145,12 @@ export default function Register() {
             Portail d'Inscription Scolaire AMC
           </p>
 
+          {registrationsBlocked && (
+            <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
+              Les inscriptions sont temporairement fermées. Vous pouvez créer un compte sans inscription complète en cochant "Option compte seul".
+            </div>
+          )}
+
           <form onSubmit={handleSubmit}>
             <div className="form-group">
               <label>Profil *</label>
@@ -204,7 +219,7 @@ export default function Register() {
               </div>
             )}
 
-            <button type="submit" className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 8 }} disabled={loading}>
+            <button type="submit" className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 8 }} disabled={loading || (registrationsBlocked && form.profile === 'FAMILLE' && !form.accountOnly)}>
               {loading
                 ? 'Traitement...'
                 : form.profile === 'FAMILLE'

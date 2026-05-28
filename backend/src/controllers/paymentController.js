@@ -30,6 +30,10 @@ function toDecimal(value) {
   return new Prisma.Decimal(value || 0);
 }
 
+function isStripeProvider(provider) {
+  return provider === 'STRIPE' || provider === 'STRIPE_CARD';
+}
+
 async function hasPendingEnrollmentsForPayment(payment) {
   if (!payment?.metadata?.enrollmentIds?.length) {
     return false;
@@ -483,6 +487,7 @@ async function createFamilyEnrollmentPayment(req, res) {
           metadata: {
             ...(payment.metadata || {}),
             checkout,
+            paymentIntentId: checkout.paymentIntentId || null,
           },
         },
       });
@@ -552,6 +557,8 @@ async function createFamilyEnrollmentPayment(req, res) {
 async function createPaymentIntent(req, res) {
   try {
     const { familyId, amount, provider, method, description, installments = 1 } = req.body;
+    const normalizedProvider = provider === 'STRIPE_CARD' ? 'STRIPE' : provider === 'GO_CARDLESS_SEPA' ? 'GOCARDLESS' : provider;
+    const normalizedMethod = provider === 'STRIPE_CARD' ? 'CB' : method;
     const currentYear = await ensureCurrentSchoolYear();
 
     const payment = await prisma.payment.create({
@@ -559,17 +566,17 @@ async function createPaymentIntent(req, res) {
         familyId,
         schoolYearId: currentYear.id,
         totalAmount: toDecimal(amount),
-        paymentMethod: method,
-        provider,
+        paymentMethod: normalizedMethod,
+        provider: normalizedProvider,
         status: 'PENDING',
         numberOfInstallments: Number(installments) || 1,
         metadata: { description: description || null },
       },
     });
 
-    const urls = getPaymentReturnUrls(req, provider);
+    const urls = getPaymentReturnUrls(req, normalizedProvider);
     const checkout = await createOnlineCheckout({
-      provider,
+      provider: normalizedProvider,
       amount,
       paymentId: payment.id,
       installments: Number(installments) || 1,
@@ -577,11 +584,22 @@ async function createPaymentIntent(req, res) {
       cancelUrl: urls.cancelUrl,
     });
 
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        externalPaymentId: checkout.externalPaymentId || null,
+        metadata: {
+          ...(payment.metadata || {}),
+          paymentIntentId: checkout.paymentIntentId || null,
+        },
+      },
+    });
+
     await prisma.paymentTransaction.create({
       data: {
         paymentId: payment.id,
-        provider,
-        method,
+        provider: normalizedProvider,
+        method: normalizedMethod,
         amount: toDecimal(amount),
         status: checkout.configured ? 'INITIATED' : 'FAILED',
         externalRef: checkout.externalPaymentId,
@@ -1035,16 +1053,19 @@ function getStripeSessionPayerName(session, fallback = null) {
 }
 
 async function finalizeStripePayment(paymentId) {
+  console.log(`[FINALIZE STRIPE] Début de finalisation pour paiement ${paymentId}`);
+  
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     include: { family: { include: { user: true } }, paymentPlan: true },
   });
 
   if (!payment) {
+    console.log(`[FINALIZE STRIPE] Paiement ${paymentId} non trouvé`);
     return payment;
   }
 
-  const shouldVerifyStripe = payment.provider === 'STRIPE';
+  const shouldVerifyStripe = isStripeProvider(payment.provider);
   if (payment.status === 'COMPLETED' && !shouldVerifyStripe) {
     return payment;
   }
@@ -1062,42 +1083,75 @@ async function finalizeStripePayment(paymentId) {
 
   let paymentIntentId = payment.metadata?.paymentIntentId;
   let payerName = payment.metadata?.payerName || null;
-  if (payment.provider === 'STRIPE' && !payerName && payment.externalPaymentId) {
+  
+  console.log(`[FINALIZE STRIPE] paymentIntentId depuis metadata: ${paymentIntentId}, externalPaymentId: ${payment.externalPaymentId}`);
+  
+  // Tentative 1 : Récupération depuis la session Stripe (si pas encore en metadata)
+  if (isStripeProvider(payment.provider) && !paymentIntentId && payment.externalPaymentId) {
+    console.log(`[FINALIZE STRIPE] Récupération du PaymentIntent depuis la session Stripe ${payment.externalPaymentId}`);
     try {
       const session = await getStripeCheckoutSession(payment.externalPaymentId);
-      paymentIntentId = paymentIntentId || session.payment_intent || null;
-      payerName = getStripeSessionPayerName(session, payerName);
+      paymentIntentId = session.payment_intent || null;
+      if (!payerName) payerName = getStripeSessionPayerName(session, payerName);
+      console.log(`[FINALIZE STRIPE] Session retrouvée: paymentIntentId=${paymentIntentId}`);
     } catch (sessionError) {
-      console.error(`Impossible de récupérer la session Stripe pour ${paymentId}:`, sessionError);
+      console.warn(`[FINALIZE STRIPE] Session Stripe expirée ou introuvable pour ${payment.externalPaymentId}, tentative de récupération via metadata ou API:`, sessionError?.message);
+    }
+  }
+  
+  // Fallback : chercher directement le PaymentIntent via les transactions Stripe enregistrées
+  if (isStripeProvider(payment.provider) && !paymentIntentId) {
+    console.log(`[FINALIZE STRIPE] Tentative de récupération du PaymentIntent depuis les transactions Stripe`);
+    try {
+      const existingTransaction = await prisma.paymentTransaction.findFirst({
+        where: {
+          paymentId,
+          provider: 'STRIPE',
+          externalRef: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      
+      if (existingTransaction?.externalRef && existingTransaction.externalRef.startsWith('pi_')) {
+        paymentIntentId = existingTransaction.externalRef;
+        console.log(`[FINALIZE STRIPE] PaymentIntent retrouvé dans les transactions: ${paymentIntentId}`);
+      }
+    } catch (txError) {
+      console.warn(`[FINALIZE STRIPE] Impossible de récupérer depuis les transactions:`, txError?.message);
     }
   }
 
-  if (payment.provider === 'STRIPE') {
+  if (isStripeProvider(payment.provider)) {
     if (!paymentIntentId) {
       const msg = `Impossible de finaliser le paiement Stripe ${paymentId} : paymentIntentId manquant`;
-      console.error(msg);
+      console.error(`[FINALIZE STRIPE] ${msg}`);
       throw new Error(msg);
     }
 
     let paymentIntent;
     try {
+      console.log(`[FINALIZE STRIPE] Récupération du statut du PaymentIntent ${paymentIntentId}`);
       paymentIntent = await getStripePaymentIntent(paymentIntentId);
+      console.log(`[FINALIZE STRIPE] PaymentIntent retrouvé: status=${paymentIntent.status}`);
     } catch (intentError) {
-      console.error(`Impossible de récupérer le PaymentIntent Stripe ${paymentIntentId} pour le paiement ${paymentId}:`, intentError);
+      console.error(`[FINALIZE STRIPE] Impossible de récupérer le PaymentIntent Stripe ${paymentIntentId} pour le paiement ${paymentId}:`, intentError);
       throw intentError;
     }
 
     if (String(paymentIntent.status) === 'requires_capture') {
+      console.log(`[FINALIZE STRIPE] PaymentIntent en requires_capture, appel de capture`);
       try {
         await captureStripePaymentIntent(paymentIntentId);
       } catch (captureError) {
-        console.error(`Erreur capture Stripe pour le paiement ${paymentId}:`, captureError);
+        console.error(`[FINALIZE STRIPE] Erreur capture Stripe pour le paiement ${paymentId}:`, captureError);
         throw captureError;
       }
     } else if (String(paymentIntent.status) !== 'succeeded') {
       const msg = `Le PaymentIntent Stripe ${paymentIntentId} n'est pas capturable (status=${paymentIntent.status})`;
-      console.error(msg);
+      console.error(`[FINALIZE STRIPE] ${msg}`);
       throw new Error(msg);
+    } else {
+      console.log(`[FINALIZE STRIPE] PaymentIntent déjà succeeded`);
     }
   }
 
@@ -1166,7 +1220,24 @@ async function getStripePaymentIntentId(payment) {
       const session = await getStripeCheckoutSession(payment.externalPaymentId);
       paymentIntentId = session.payment_intent || null;
     } catch (sessionError) {
-      console.error(`Impossible de récupérer la session Stripe pour ${payment.id}:`, sessionError);
+      console.warn(`Session Stripe expirée ou introuvable pour ${payment.id}:`, sessionError?.message);
+      // Fallback : chercher dans les transactions Stripe
+      try {
+        const existingTransaction = await prisma.paymentTransaction.findFirst({
+          where: {
+            paymentId: payment.id,
+            provider: 'STRIPE',
+            externalRef: { not: null },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (existingTransaction?.externalRef?.startsWith('pi_')) {
+          paymentIntentId = existingTransaction.externalRef;
+          console.log(`PaymentIntent retrouvé dans les transactions: ${paymentIntentId}`);
+        }
+      } catch (txError) {
+        console.warn(`Fallback transaction échoué: ${txError?.message}`);
+      }
     }
   }
   return paymentIntentId;
@@ -1177,7 +1248,7 @@ async function cancelStripePayment(paymentId) {
     where: { id: paymentId },
   });
 
-  if (!payment || payment.provider !== 'STRIPE') {
+  if (!payment || !isStripeProvider(payment.provider)) {
     return payment;
   }
 
@@ -1237,12 +1308,14 @@ async function cancelStripePayment(paymentId) {
 
 async function handleStripeConfirm(req, res) {
   const paymentId = req.query.payment_id || null;
+  console.log(`[STRIPE CONFIRM] Retour Stripe reçu avec payment_id=${paymentId}`);
   let payment = null;
   let finalizeError = null;
 
   if (paymentId) {
     try {
       payment = await finalizeStripePayment(paymentId);
+      console.log(`[STRIPE CONFIRM] Finalisation demandée pour payment_id=${paymentId}, paymentIntentId=${payment?.metadata?.paymentIntentId || 'null'}`);
     } catch (error) {
       console.error('Erreur finalisation paiement Stripe sur page de retour:', error);
       finalizeError = error;
@@ -1403,6 +1476,10 @@ async function handleStripeWebhook(req, res) {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const paymentId = session.metadata?.payment_id;
+      const paymentIntentId = session.payment_intent || null;
+      console.log(`[STRIPE WEBHOOK] checkout.session.completed reçu: payment_id=${paymentId}, session_id=${session.id}, paymentIntentId=${paymentIntentId}`);
+      // Breakpoint for debugging webhook processing
+      debugger;
 
       if (paymentId) {
         const payment = await prisma.payment.findUnique({
@@ -1412,7 +1489,7 @@ async function handleStripeWebhook(req, res) {
 
         if (payment) {
           const paymentIntentId = session.payment_intent || null;
-          const shouldHold = payment.provider === 'STRIPE' && await hasPendingEnrollmentsForPayment(payment);
+          const shouldHold = isStripeProvider(payment.provider) && await hasPendingEnrollmentsForPayment(payment);
           const payerName = getStripeSessionPayerName(session, payment.metadata?.payerName);
 
           const updateData = {
@@ -1434,7 +1511,7 @@ async function handleStripeWebhook(req, res) {
                 method: payment.paymentMethod || 'CB',
                 amount: payment.totalAmount,
                 status: 'SUCCEEDED',
-                externalRef: session.id,
+                externalRef: paymentIntentId || session.id,
                 payerName,
                 description: 'Paiement Stripe en attente de validation de l’inscription',
                 metadata: event,
@@ -1479,7 +1556,7 @@ async function handleStripeWebhook(req, res) {
                 method: payment.paymentMethod || 'CB',
                 amount: payment.totalAmount,
                 status: 'SUCCEEDED',
-                externalRef: session.id,
+                externalRef: paymentIntentId || session.id,
                 payerName,
                 processedAt: new Date(),
                 metadata: event,
