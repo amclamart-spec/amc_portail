@@ -63,6 +63,8 @@ async function createStripeCheckout({ amount, currency = 'eur', paymentId, retur
     formData[`metadata[${key}]`] = String(value);
   });
 
+  console.log(`[DEBUG STRIPE] Creating checkout session for paymentId=${paymentId}, amount=${amount}`);
+  debugger;
   const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
     method: 'POST',
     headers: {
@@ -77,12 +79,32 @@ async function createStripeCheckout({ amount, currency = 'eur', paymentId, retur
     throw new Error(data?.error?.message || 'Erreur Stripe lors de la création Checkout');
   }
 
+  let paymentIntentId = null;
+  if (data.payment_intent) {
+    paymentIntentId = typeof data.payment_intent === 'string'
+      ? data.payment_intent
+      : data.payment_intent.id || null;
+  }
+
+  if (!paymentIntentId && data.id) {
+    try {
+      const session = await getStripeCheckoutSession(data.id);
+      const sessionPaymentIntent = session.payment_intent;
+      paymentIntentId = typeof sessionPaymentIntent === 'string'
+        ? sessionPaymentIntent
+        : sessionPaymentIntent?.id || null;
+    } catch (sessionError) {
+      console.warn(`[STRIPE CHECKOUT] Impossible de récupérer payment_intent depuis la session ${data.id}:`, sessionError?.message || sessionError);
+    }
+  }
+
   return {
     configured: true,
     provider: 'STRIPE',
     paymentId,
     status: 'CHECKOUT_CREATED',
     externalPaymentId: data.id,
+    paymentIntentId,
     checkoutUrl: data.url,
     raw: data,
   };
@@ -197,6 +219,10 @@ async function captureStripePaymentIntent(paymentIntentId) {
     throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
   }
 
+  console.log(`[STRIPE CAPTURE] Tentative de capture du PaymentIntent: ${paymentIntentId}`);
+  console.log(`[DEBUG STRIPE] About to capture paymentIntentId=${paymentIntentId}`);
+  debugger;
+
   const response = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}/capture`, {
     method: 'POST',
     headers: {
@@ -206,8 +232,55 @@ async function captureStripePaymentIntent(paymentIntentId) {
   });
 
   const data = await response.json();
+  
+  console.log(`[STRIPE CAPTURE] Réponse Stripe (status=${response.status}):`, data);
+  
   if (!response.ok) {
-    throw new Error(data?.error?.message || 'Erreur Stripe lors de la capture du paiement');
+    const errorMsg = data?.error?.message || 'Erreur Stripe lors de la capture du paiement';
+    console.error(`[STRIPE CAPTURE] Erreur: ${errorMsg}`, data?.error);
+    throw new Error(errorMsg);
+  }
+
+  console.log(`[STRIPE CAPTURE] ✅ Capture réussie pour ${paymentIntentId}`);
+  return data;
+}
+
+async function cancelStripePaymentIntent(paymentIntentId) {
+  if (!hasConfigValue(config.payments.stripeSecretKey)) {
+    throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
+  }
+
+  const response = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}/cancel`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.payments.stripeSecretKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || 'Erreur Stripe lors de l’annulation du paiement');
+  }
+
+  return data;
+}
+
+async function getStripePaymentIntent(paymentIntentId) {
+  if (!hasConfigValue(config.payments.stripeSecretKey)) {
+    throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
+  }
+
+  const response = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${config.payments.stripeSecretKey}`,
+    },
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || 'Erreur Stripe lors de la récupération du PaymentIntent');
   }
 
   return data;
@@ -300,7 +373,9 @@ module.exports = {
   createOnlineCheckout,
   completeGoCardlessRedirectFlow,
   captureStripePaymentIntent,
+  cancelStripePaymentIntent,
   getStripeCheckoutSession,
+  getStripePaymentIntent,
   providerConfigured,
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,

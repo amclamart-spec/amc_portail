@@ -14,7 +14,11 @@ const {
   exportTransactions,
   requestRefund,
   processRefund,
+  getRefunds,
+  deleteRefund,
   getFamilyPaymentHistory,
+  generateRefundSecurityCode,
+  validateRefundSecurityCode,
   handleStripeConfirm,
   handleStripeCancel,
   handleGoCardlessReturn,
@@ -26,6 +30,7 @@ const {
   uploadPaymentReceipt,
   getPaymentReceipt,
   downloadPaymentReceipt,
+  generatePaymentReceiptPDF,
 } = require('../controllers/paymentController');
 
 const receiptsUploadDir = path.join(__dirname, '../../uploads/receipts');
@@ -65,7 +70,7 @@ router.post('/family-enrollment', authorizePermission(PERMISSIONS.FAMILY_SELF_PA
 
 // Receipt routes (invoice and receipt are the same)
 router.get('/:paymentId/invoice', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), getPaymentInvoice);
-router.get('/:paymentId/invoice/download', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), downloadInvoice);
+router.get('/:paymentId/invoice/download', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), generatePaymentReceiptPDF);
 
 // Receipt upload and download routes
 router.post('/:paymentId/receipt', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), upload.single('receipt'), uploadPaymentReceipt);
@@ -78,7 +83,13 @@ router.get('/transactions', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), ge
 router.get('/transactions/export', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), exportTransactions);
 router.get('/cheques/plans', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getChequePaymentPlans);
 router.patch('/cheques/installments/:installmentId', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), markChequeInstallmentStatus);
+router.get('/refunds', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), getRefunds);
 router.post('/refunds', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), requestRefund);
 router.patch('/refunds/:refundId', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), processRefund);
+router.delete('/refunds/:refundId', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), deleteRefund);
+
+// Security codes for refund access
+router.post('/refunds/security/generate', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), generateRefundSecurityCode);
+router.post('/refunds/security/validate', authorizeAnyPermission(PERMISSIONS.PAYMENTS_MANAGE, PERMISSIONS.PAYMENTS_REFUND, PERMISSIONS.ENROLLMENTS_MANAGE), validateRefundSecurityCode);
 
 module.exports = router;

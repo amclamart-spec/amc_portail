@@ -1,10 +1,13 @@
 const { PrismaClient, Prisma } = require('@prisma/client');
 const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
 const {
   createOnlineCheckout,
   completeGoCardlessRedirectFlow,
   captureStripePaymentIntent,
+  cancelStripePaymentIntent,
   getStripeCheckoutSession,
+  getStripePaymentIntent,
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,
 } = require('../services/paymentProviders');
@@ -25,6 +28,10 @@ const REGISTRATION_PENDING_VALIDATION_MESSAGE = 'Votre inscription a bien été 
 
 function toDecimal(value) {
   return new Prisma.Decimal(value || 0);
+}
+
+function isStripeProvider(provider) {
+  return provider === 'STRIPE' || provider === 'STRIPE_CARD';
 }
 
 async function hasPendingEnrollmentsForPayment(payment) {
@@ -102,8 +109,22 @@ async function generateInvoiceForPayment(paymentId) {
 
     console.log(`Génération facture pour ${paymentId} avec ${enrollments.length} inscriptions`);
 
+    // Fetch all children (students) of the family to include on the receipt
+    let children = [];
+    try {
+      children = await prisma.student.findMany({
+        where: { familyId: payment.familyId },
+        select: { id: true, firstName: true, lastName: true, dateOfBirth: true },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      });
+    } catch (err) {
+      console.warn('Impossible de récupérer les enfants de la famille pour la facture', err?.message || err);
+    }
+
+    const familyWithChildren = { ...payment.family, children };
+
     // Generate PDF invoice
-    const invoiceResult = await generateInvoicePDF(payment, payment.family, enrollments);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments);
     console.log(`✅ Facture générée: ${invoiceResult.filename}`);
 
     return invoiceResult;
@@ -134,6 +155,34 @@ async function handlePaymentCompletionForEnrollment(paymentId) {
 
   if (payment.status === 'COMPLETED') {
     await generateInvoiceForPayment(paymentId);
+    // Send enrollment confirmation email now that payment is completed
+    try {
+      let enrollmentIds = payment.metadata?.enrollmentIds || [];
+      let enrollments = [];
+      if (Array.isArray(enrollmentIds) && enrollmentIds.length > 0) {
+        enrollments = await prisma.enrollment.findMany({
+          where: { id: { in: enrollmentIds } },
+          include: { class: { include: { level: { include: { pole: true } } } }, student: true },
+        });
+      } else {
+        enrollments = await prisma.enrollment.findMany({
+          where: { familyId: payment.familyId, schoolYearId: payment.schoolYearId, status: { in: ['PENDING', 'CONFIRMED'] } },
+          include: { class: { include: { level: { include: { pole: true } } } }, student: true },
+        });
+      }
+
+      const enrollmentDetailsHtml = enrollments.map((en) => {
+        const cls = en.class || {};
+        const student = en.student || { firstName: 'Élève', lastName: '' };
+        const waitlistNote = en.comment === "Liste d'attente" ? " • Liste d'attente" : '';
+        return `• ${student.firstName} ${student.lastName} — ${cls.level?.pole?.name || 'Pôle'} / ${cls.level?.name || 'Niveau'} ${cls.dayOfWeek || ''} ${cls.startTime || ''}-${cls.endTime || ''}${waitlistNote}`;
+      }).join('<br/>');
+      const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;"><strong>Montant total :</strong> ${Number(payment.totalAmount || 0).toFixed(2)} €</div>`;
+
+      await sendEnrollmentConfirmationEmail(payment.family.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`);
+    } catch (err) {
+      console.error('[EMAIL] Erreur envoi email confirmation après paiement:', err?.message || err);
+    }
   }
 }
 
@@ -184,8 +233,8 @@ function normalizeInstallmentsByMethod(method, installmentsCount) {
   }
 
   if (method === 'CHEQUE' || method === 'ESPECES') {
-    if (installmentsCount < 1 || installmentsCount > 8) {
-      throw new Error('Paiement chèque ou espèces: 1 à 8 paiements autorisés');
+    if (installmentsCount < 1 || installmentsCount > 10) {
+      throw new Error('Paiement chèque ou espèces: 1 à 10 paiements autorisés');
     }
     return installmentsCount;
   }
@@ -371,6 +420,7 @@ async function createFamilyEnrollmentPayment(req, res) {
           enrollmentCount: enrollments.length,
           enrollmentIds: enrollments.map((e) => e.id),
           paymentPlanType: normalizedMethod,
+          payerName: payerName || family.user?.lastName || '',
         },
       },
     });
@@ -437,6 +487,7 @@ async function createFamilyEnrollmentPayment(req, res) {
           metadata: {
             ...(payment.metadata || {}),
             checkout,
+            paymentIntentId: checkout.paymentIntentId || null,
           },
         },
       });
@@ -506,6 +557,8 @@ async function createFamilyEnrollmentPayment(req, res) {
 async function createPaymentIntent(req, res) {
   try {
     const { familyId, amount, provider, method, description, installments = 1 } = req.body;
+    const normalizedProvider = provider === 'STRIPE_CARD' ? 'STRIPE' : provider === 'GO_CARDLESS_SEPA' ? 'GOCARDLESS' : provider;
+    const normalizedMethod = provider === 'STRIPE_CARD' ? 'CB' : method;
     const currentYear = await ensureCurrentSchoolYear();
 
     const payment = await prisma.payment.create({
@@ -513,17 +566,17 @@ async function createPaymentIntent(req, res) {
         familyId,
         schoolYearId: currentYear.id,
         totalAmount: toDecimal(amount),
-        paymentMethod: method,
-        provider,
+        paymentMethod: normalizedMethod,
+        provider: normalizedProvider,
         status: 'PENDING',
         numberOfInstallments: Number(installments) || 1,
         metadata: { description: description || null },
       },
     });
 
-    const urls = getPaymentReturnUrls(req, provider);
+    const urls = getPaymentReturnUrls(req, normalizedProvider);
     const checkout = await createOnlineCheckout({
-      provider,
+      provider: normalizedProvider,
       amount,
       paymentId: payment.id,
       installments: Number(installments) || 1,
@@ -531,11 +584,22 @@ async function createPaymentIntent(req, res) {
       cancelUrl: urls.cancelUrl,
     });
 
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        externalPaymentId: checkout.externalPaymentId || null,
+        metadata: {
+          ...(payment.metadata || {}),
+          paymentIntentId: checkout.paymentIntentId || null,
+        },
+      },
+    });
+
     await prisma.paymentTransaction.create({
       data: {
         paymentId: payment.id,
-        provider,
-        method,
+        provider: normalizedProvider,
+        method: normalizedMethod,
         amount: toDecimal(amount),
         status: checkout.configured ? 'INITIATED' : 'FAILED',
         externalRef: checkout.externalPaymentId,
@@ -857,21 +921,32 @@ async function requestRefund(req, res) {
 async function processRefund(req, res) {
   try {
     const { refundId } = req.params;
-    const { status } = req.body;
+    const { status, amount, reason } = req.body;
 
     const refund = await prisma.refund.findUnique({ where: { id: refundId } });
     if (!refund) return res.status(404).json({ error: 'Remboursement introuvable' });
 
+    const updateData = {
+      approvedById: req.user.id,
+      processedAt: new Date(),
+    };
+
+    if (status) {
+      updateData.status = status;
+    }
+    if (amount !== undefined) {
+      updateData.amount = toDecimal(amount);
+    }
+    if (reason !== undefined) {
+      updateData.reason = reason;
+    }
+
     const updated = await prisma.refund.update({
       where: { id: refundId },
-      data: {
-        status,
-        approvedById: req.user.id,
-        processedAt: new Date(),
-      },
+      data: updateData,
     });
 
-    if (status === 'PROCESSED') {
+    if (status === 'PROCESSED' && refund.status !== 'PROCESSED') {
       await prisma.payment.update({ where: { id: refund.paymentId }, data: { status: 'REFUNDED' } });
 
       const categoryId = await getOrCreateSystemCategory('Remboursements', 'EXPENSE');
@@ -880,8 +955,8 @@ async function processRefund(req, res) {
           categoryId,
           paymentId: refund.paymentId,
           entryType: 'EXPENSE',
-          amount: refund.amount,
-          description: refund.reason,
+          amount: updated.amount,
+          description: updated.reason,
         },
       });
     }
@@ -889,6 +964,41 @@ async function processRefund(req, res) {
     return res.json({ refund: updated });
   } catch (error) {
     console.error('Erreur processRefund:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function getRefunds(req, res) {
+  try {
+    const refunds = await prisma.refund.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        payment: {
+          include: {
+            family: true,
+          },
+        },
+        approvedBy: true,
+      },
+    });
+
+    return res.json({ refunds });
+  } catch (error) {
+    console.error('Erreur getRefunds:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteRefund(req, res) {
+  try {
+    const { refundId } = req.params;
+    const refund = await prisma.refund.findUnique({ where: { id: refundId } });
+    if (!refund) return res.status(404).json({ error: 'Remboursement introuvable' });
+
+    await prisma.refund.delete({ where: { id: refundId } });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Erreur deleteRefund:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -943,16 +1053,24 @@ function getStripeSessionPayerName(session, fallback = null) {
 }
 
 async function finalizeStripePayment(paymentId) {
+  console.log(`[FINALIZE STRIPE] Début de finalisation pour paiement ${paymentId}`);
+  
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     include: { family: { include: { user: true } }, paymentPlan: true },
   });
 
-  if (!payment || payment.status === 'COMPLETED') {
+  if (!payment) {
+    console.log(`[FINALIZE STRIPE] Paiement ${paymentId} non trouvé`);
     return payment;
   }
 
-  const shouldHold = payment.provider === 'STRIPE' && await hasPendingEnrollmentsForPayment(payment);
+  const shouldVerifyStripe = isStripeProvider(payment.provider);
+  if (payment.status === 'COMPLETED' && !shouldVerifyStripe) {
+    return payment;
+  }
+
+  const shouldHold = shouldVerifyStripe && await hasPendingEnrollmentsForPayment(payment);
   if (shouldHold) {
     await prisma.payment.update({
       where: { id: paymentId },
@@ -965,22 +1083,75 @@ async function finalizeStripePayment(paymentId) {
 
   let paymentIntentId = payment.metadata?.paymentIntentId;
   let payerName = payment.metadata?.payerName || null;
-  if (payment.provider === 'STRIPE' && !payerName && payment.externalPaymentId) {
+  
+  console.log(`[FINALIZE STRIPE] paymentIntentId depuis metadata: ${paymentIntentId}, externalPaymentId: ${payment.externalPaymentId}`);
+  
+  // Tentative 1 : Récupération depuis la session Stripe (si pas encore en metadata)
+  if (isStripeProvider(payment.provider) && !paymentIntentId && payment.externalPaymentId) {
+    console.log(`[FINALIZE STRIPE] Récupération du PaymentIntent depuis la session Stripe ${payment.externalPaymentId}`);
     try {
       const session = await getStripeCheckoutSession(payment.externalPaymentId);
-      paymentIntentId = paymentIntentId || session.payment_intent || null;
-      payerName = getStripeSessionPayerName(session, payerName);
+      paymentIntentId = session.payment_intent || null;
+      if (!payerName) payerName = getStripeSessionPayerName(session, payerName);
+      console.log(`[FINALIZE STRIPE] Session retrouvée: paymentIntentId=${paymentIntentId}`);
     } catch (sessionError) {
-      console.error(`Impossible de récupérer la session Stripe pour ${paymentId}:`, sessionError);
+      console.warn(`[FINALIZE STRIPE] Session Stripe expirée ou introuvable pour ${payment.externalPaymentId}, tentative de récupération via metadata ou API:`, sessionError?.message);
+    }
+  }
+  
+  // Fallback : chercher directement le PaymentIntent via les transactions Stripe enregistrées
+  if (isStripeProvider(payment.provider) && !paymentIntentId) {
+    console.log(`[FINALIZE STRIPE] Tentative de récupération du PaymentIntent depuis les transactions Stripe`);
+    try {
+      const existingTransaction = await prisma.paymentTransaction.findFirst({
+        where: {
+          paymentId,
+          provider: 'STRIPE',
+          externalRef: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      
+      if (existingTransaction?.externalRef && existingTransaction.externalRef.startsWith('pi_')) {
+        paymentIntentId = existingTransaction.externalRef;
+        console.log(`[FINALIZE STRIPE] PaymentIntent retrouvé dans les transactions: ${paymentIntentId}`);
+      }
+    } catch (txError) {
+      console.warn(`[FINALIZE STRIPE] Impossible de récupérer depuis les transactions:`, txError?.message);
     }
   }
 
-  if (payment.provider === 'STRIPE' && paymentIntentId) {
+  if (isStripeProvider(payment.provider)) {
+    if (!paymentIntentId) {
+      const msg = `Impossible de finaliser le paiement Stripe ${paymentId} : paymentIntentId manquant`;
+      console.error(`[FINALIZE STRIPE] ${msg}`);
+      throw new Error(msg);
+    }
+
+    let paymentIntent;
     try {
-      await captureStripePaymentIntent(paymentIntentId);
-    } catch (captureError) {
-      console.error(`Erreur capture Stripe pour le paiement ${paymentId}:`, captureError);
-      throw captureError;
+      console.log(`[FINALIZE STRIPE] Récupération du statut du PaymentIntent ${paymentIntentId}`);
+      paymentIntent = await getStripePaymentIntent(paymentIntentId);
+      console.log(`[FINALIZE STRIPE] PaymentIntent retrouvé: status=${paymentIntent.status}`);
+    } catch (intentError) {
+      console.error(`[FINALIZE STRIPE] Impossible de récupérer le PaymentIntent Stripe ${paymentIntentId} pour le paiement ${paymentId}:`, intentError);
+      throw intentError;
+    }
+
+    if (String(paymentIntent.status) === 'requires_capture') {
+      console.log(`[FINALIZE STRIPE] PaymentIntent en requires_capture, appel de capture`);
+      try {
+        await captureStripePaymentIntent(paymentIntentId);
+      } catch (captureError) {
+        console.error(`[FINALIZE STRIPE] Erreur capture Stripe pour le paiement ${paymentId}:`, captureError);
+        throw captureError;
+      }
+    } else if (String(paymentIntent.status) !== 'succeeded') {
+      const msg = `Le PaymentIntent Stripe ${paymentIntentId} n'est pas capturable (status=${paymentIntent.status})`;
+      console.error(`[FINALIZE STRIPE] ${msg}`);
+      throw new Error(msg);
+    } else {
+      console.log(`[FINALIZE STRIPE] PaymentIntent déjà succeeded`);
     }
   }
 
@@ -1042,15 +1213,123 @@ async function finalizeStripePayment(paymentId) {
   return payment;
 }
 
+async function getStripePaymentIntentId(payment) {
+  let paymentIntentId = payment.metadata?.paymentIntentId;
+  if (!paymentIntentId && payment.externalPaymentId) {
+    try {
+      const session = await getStripeCheckoutSession(payment.externalPaymentId);
+      paymentIntentId = session.payment_intent || null;
+    } catch (sessionError) {
+      console.warn(`Session Stripe expirée ou introuvable pour ${payment.id}:`, sessionError?.message);
+      // Fallback : chercher dans les transactions Stripe
+      try {
+        const existingTransaction = await prisma.paymentTransaction.findFirst({
+          where: {
+            paymentId: payment.id,
+            provider: 'STRIPE',
+            externalRef: { not: null },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (existingTransaction?.externalRef?.startsWith('pi_')) {
+          paymentIntentId = existingTransaction.externalRef;
+          console.log(`PaymentIntent retrouvé dans les transactions: ${paymentIntentId}`);
+        }
+      } catch (txError) {
+        console.warn(`Fallback transaction échoué: ${txError?.message}`);
+      }
+    }
+  }
+  return paymentIntentId;
+}
+
+async function cancelStripePayment(paymentId) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+  });
+
+  if (!payment || !isStripeProvider(payment.provider)) {
+    return payment;
+  }
+
+  const paymentIntentId = await getStripePaymentIntentId(payment);
+  if (!paymentIntentId) {
+    const msg = `Impossible d'annuler le paiement Stripe ${paymentId} : paymentIntentId manquant`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+
+  let paymentIntent;
+  try {
+    paymentIntent = await getStripePaymentIntent(paymentIntentId);
+  } catch (intentError) {
+    console.error(`Impossible de récupérer le PaymentIntent Stripe ${paymentIntentId} pour l'annulation du paiement ${paymentId}:`, intentError);
+    throw intentError;
+  }
+
+  const cancelableStatuses = [
+    'requires_capture',
+    'requires_payment_method',
+    'requires_confirmation',
+    'requires_action',
+    'processing',
+  ];
+
+  if (String(paymentIntent.status) === 'canceled') {
+    return payment;
+  }
+
+  if (!cancelableStatuses.includes(String(paymentIntent.status))) {
+    const msg = `Le PaymentIntent Stripe ${paymentIntentId} ne peut pas être annulé (status=${paymentIntent.status})`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+
+  try {
+    await cancelStripePaymentIntent(paymentIntentId);
+  } catch (cancelError) {
+    console.error(`Erreur lors de l'annulation du PaymentIntent Stripe ${paymentIntentId} pour le paiement ${paymentId}:`, cancelError);
+    throw cancelError;
+  }
+
+  await prisma.payment.update({
+    where: { id: paymentId },
+    data: {
+      status: 'CANCELLED',
+      metadata: {
+        ...(payment.metadata || {}),
+        paymentIntentId,
+      },
+    },
+  });
+
+  return payment;
+}
+
 async function handleStripeConfirm(req, res) {
   const paymentId = req.query.payment_id || null;
+  console.log(`[STRIPE CONFIRM] Retour Stripe reçu avec payment_id=${paymentId}`);
   let payment = null;
+  let finalizeError = null;
+
   if (paymentId) {
     try {
       payment = await finalizeStripePayment(paymentId);
+      console.log(`[STRIPE CONFIRM] Finalisation demandée pour payment_id=${paymentId}, paymentIntentId=${payment?.metadata?.paymentIntentId || 'null'}`);
     } catch (error) {
       console.error('Erreur finalisation paiement Stripe sur page de retour:', error);
+      finalizeError = error;
     }
+  }
+
+  if (finalizeError) {
+    return res.send(formatPaymentReturnPage(
+      'Erreur de validation Stripe',
+      `La validation de votre paiement Stripe a échoué : ${finalizeError.message || 'Erreur inconnue'}.`, 
+      paymentId,
+      'Vous pouvez réessayer depuis l’application ou contacter le support.',
+      `${frontendLoginUrl}?registration_message=${encodeURIComponent(REGISTRATION_PENDING_VALIDATION_MESSAGE)}`,
+    ));
   }
 
   const isEnrollmentPayment = payment?.metadata?.enrollmentIds?.length > 0;
@@ -1197,6 +1476,10 @@ async function handleStripeWebhook(req, res) {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const paymentId = session.metadata?.payment_id;
+      const paymentIntentId = session.payment_intent || null;
+      console.log(`[STRIPE WEBHOOK] checkout.session.completed reçu: payment_id=${paymentId}, session_id=${session.id}, paymentIntentId=${paymentIntentId}`);
+      // Breakpoint for debugging webhook processing
+      debugger;
 
       if (paymentId) {
         const payment = await prisma.payment.findUnique({
@@ -1206,7 +1489,7 @@ async function handleStripeWebhook(req, res) {
 
         if (payment) {
           const paymentIntentId = session.payment_intent || null;
-          const shouldHold = payment.provider === 'STRIPE' && await hasPendingEnrollmentsForPayment(payment);
+          const shouldHold = isStripeProvider(payment.provider) && await hasPendingEnrollmentsForPayment(payment);
           const payerName = getStripeSessionPayerName(session, payment.metadata?.payerName);
 
           const updateData = {
@@ -1228,7 +1511,7 @@ async function handleStripeWebhook(req, res) {
                 method: payment.paymentMethod || 'CB',
                 amount: payment.totalAmount,
                 status: 'SUCCEEDED',
-                externalRef: session.id,
+                externalRef: paymentIntentId || session.id,
                 payerName,
                 description: 'Paiement Stripe en attente de validation de l’inscription',
                 metadata: event,
@@ -1273,7 +1556,7 @@ async function handleStripeWebhook(req, res) {
                 method: payment.paymentMethod || 'CB',
                 amount: payment.totalAmount,
                 status: 'SUCCEEDED',
-                externalRef: session.id,
+                externalRef: paymentIntentId || session.id,
                 payerName,
                 processedAt: new Date(),
                 metadata: event,
@@ -1444,6 +1727,132 @@ async function downloadInvoice(req, res) {
   }
 }
 
+// Fonction générique pour générer un reçu de paiement
+async function generatePaymentReceiptPDF(req, res) {
+  try {
+    const { paymentId } = req.params;
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        family: { include: { user: true } },
+        schoolYear: true,
+        transactions: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Paiement introuvable' });
+    }
+
+    // Vérifier les permissions
+    const isOwnPayment = payment.family.userId === req.user.id;
+    const userRole = req.user && req.user.role ? req.user.role : null;
+    const isAdminOrTresorier = hasPermission(userRole, PERMISSIONS.PAYMENTS_MANAGE) || 
+                   hasPermission(userRole, PERMISSIONS.FINANCE_VIEW);
+    
+    if (!isOwnPayment && !isAdminOrTresorier) {
+      return res.status(403).json({ error: 'Accès non autorisé' });
+    }
+
+    // Use shared invoice generator to ensure consistent layout (with logos, transactions, reminder)
+    // Ensure family includes children list
+    let familyWithChildren = payment.family;
+    try {
+      const children = await prisma.student.findMany({ where: { familyId: payment.familyId }, select: { id: true, firstName: true, lastName: true, dateOfBirth: true }, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }] });
+      familyWithChildren = { ...payment.family, children };
+    } catch (err) {
+      console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
+    }
+
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, []);
+    if (!invoiceResult) {
+      console.error(`Échec génération reçu pour paiement ${paymentId}`);
+      return res.status(500).json({ error: 'Impossible de générer le reçu' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${invoiceResult.filename}"`);
+    return res.sendFile(invoiceResult.filePath);
+  } catch (error) {
+    console.error('Erreur generatePaymentReceiptPDF:', error);
+    return res.status(500).json({ error: 'Erreur serveur lors de la génération du reçu' });
+  }
+}
+
+async function generateRefundSecurityCode(req, res) {
+  try {
+    // Generate a 6-digit random code
+    const code = Math.random().toString().substring(2, 8).padStart(6, '0');
+    
+    // Code expires in 24 hours
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const securityCode = await prisma.refundSecurityCode.create({
+      data: {
+        code,
+        generatedBy: req.user.id,
+        expiresAt,
+      },
+    });
+
+    res.json({ 
+      code: securityCode.code, 
+      expiresAt: securityCode.expiresAt,
+      message: 'Code de sécurité généré avec succès'
+    });
+  } catch (error) {
+    console.error('Erreur generateRefundSecurityCode:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function validateRefundSecurityCode(req, res) {
+  try {
+    const { code } = req.body;
+    
+    if (!code || code.trim().length !== 6) {
+      return res.status(400).json({ error: 'Code invalide (6 chiffres requis)' });
+    }
+
+    const securityCode = await prisma.refundSecurityCode.findUnique({
+      where: { code: code.trim() },
+    });
+
+    if (!securityCode) {
+      return res.status(404).json({ error: 'Code non trouvé' });
+    }
+
+    // Check if code is expired
+    if (new Date() > securityCode.expiresAt) {
+      return res.status(400).json({ error: 'Code expiré' });
+    }
+
+    // Check if code has already been used
+    if (securityCode.usedAt) {
+      return res.status(400).json({ error: 'Code déjà utilisé' });
+    }
+
+    // Mark code as used
+    const updated = await prisma.refundSecurityCode.update({
+      where: { id: securityCode.id },
+      data: {
+        usedBy: req.user.id,
+        usedAt: new Date(),
+      },
+    });
+
+    res.json({ 
+      valid: true,
+      message: 'Code validé avec succès',
+      expiresAt: securityCode.expiresAt,
+    });
+  } catch (error) {
+    console.error('Erreur validateRefundSecurityCode:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   createFamilyEnrollmentPayment,
   createPaymentIntent,
@@ -1454,7 +1863,11 @@ module.exports = {
   exportTransactions,
   requestRefund,
   processRefund,
+  getRefunds,
+  deleteRefund,
   getFamilyPaymentHistory,
+  generateRefundSecurityCode,
+  validateRefundSecurityCode,
   handleStripeConfirm,
   handleStripeCancel,
   handleGoCardlessReturn,
@@ -1466,5 +1879,6 @@ module.exports = {
   uploadPaymentReceipt,
   getPaymentReceipt,
   downloadPaymentReceipt,
+  generatePaymentReceiptPDF,
   finalizeStripePayment,
 };

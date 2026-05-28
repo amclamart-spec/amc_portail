@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
@@ -86,6 +86,37 @@ function getDefaultState(prefill = {}) {
       chequeInstructionsAccepted: false,
     },
   };
+}
+
+function getAgeFromDate(dateString) {
+  if (!dateString) return null;
+  const dob = new Date(dateString);
+  if (Number.isNaN(dob.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const monthDiff = today.getMonth() - dob.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+    age -= 1;
+  }
+  return age;
+}
+
+function isClassAllowedForAge(cls, age) {
+  if (age === null) return true;
+  const minAge = cls.level?.minAge;
+  const maxAge = cls.level?.maxAge;
+  if (minAge !== undefined && minAge !== null && age < minAge) return false;
+  if (maxAge !== undefined && maxAge !== null && age > maxAge) return false;
+  return true;
+}
+
+function isLevelAllowedForAge(level, age) {
+  if (age === null) return true;
+  const minAge = level?.minAge;
+  const maxAge = level?.maxAge;
+  if (minAge !== undefined && minAge !== null && age < minAge) return false;
+  if (maxAge !== undefined && maxAge !== null && age > maxAge) return false;
+  return true;
 }
 
 export default function FamilyRegistrationWizard({ existingFamily = false }) {
@@ -199,14 +230,41 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     }
   }, [wizard.members]);
 
+  const levelsById = useMemo(() => {
+    return new Map(
+      poles.flatMap((pole) => (pole.levels || []).map((level) => [level.id, { ...level, poleId: pole.id, poleName: pole.name }]))
+    );
+  }, [poles]);
+
+  const sciencePole = useMemo(() => poles.find((p) => String(p.name || '').toLowerCase().includes('sciences')), [poles]);
+  const coranPole = useMemo(() => poles.find((p) => String(p.name || '').toLowerCase().includes('coran')), [poles]);
+
   const selectedEnrollmentsLabel = useMemo(() => {
     return wizard.courseSelections.map((selection) => {
       const member = wizard.members[selection.memberIndex];
-      const cls = allClasses.find((c) => c.id === selection.classId);
-      if (!member || !cls) return null;
-      return `${member.firstName} ${member.lastName} — ${cls.level?.pole?.name || ''} / ${cls.level?.name || ''} (${cls.dayOfWeek} ${cls.startTime}-${cls.endTime})`;
+      if (!member) return null;
+
+      if (selection.classId) {
+        const cls = allClasses.find((c) => c.id === selection.classId);
+        if (!cls) return null;
+        return `${member.firstName} ${member.lastName} — ${cls.level?.pole?.name || ''} / ${cls.level?.name || ''} (${cls.dayOfWeek} ${cls.startTime}-${cls.endTime})`;
+      }
+
+      if (selection.levelId) {
+        const level = levelsById.get(selection.levelId);
+        if (!level) return null;
+        return `${member.firstName} ${member.lastName} — ${level.poleName || ''} / ${level.name}`;
+      }
+
+      if (selection.poleId) {
+        const pole = poles.find((p) => p.id === selection.poleId);
+        if (!pole) return null;
+        return `${member.firstName} ${member.lastName} — ${pole.name}`;
+      }
+
+      return null;
     }).filter(Boolean);
-  }, [wizard.courseSelections, wizard.members, allClasses]);
+  }, [wizard.courseSelections, wizard.members, allClasses, poles, levelsById]);
 
   const classesGroupedByPole = useMemo(() => {
     const poleOrder = new Map(poles.map((pole, index) => [pole.id, index]));
@@ -508,6 +566,16 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     });
   };
 
+  const toggleLevelSelection = (memberIndex, poleId, levelId) => {
+    setWizard((prev) => {
+      const exists = prev.courseSelections.find((s) => s.memberIndex === memberIndex && s.levelId === levelId);
+      const nextSelections = exists
+        ? prev.courseSelections.filter((s) => !(s.memberIndex === memberIndex && s.levelId === levelId))
+        : [...prev.courseSelections, { memberIndex, poleId, levelId }];
+      return { ...prev, courseSelections: nextSelections };
+    });
+  };
+
   const activeHealthForm = wizard.healthForms[activeHealthMember] || emptyHealthForm;
 
   const updateActiveHealthForm = (partial) => {
@@ -685,6 +753,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               <>
                 {wizard.members.map((member, memberIndex) => {
                   const isOldStudent = Boolean(member.isOldStudent);
+                  const memberAge = getAgeFromDate(member.dateOfBirth);
                   return (
                     <div key={`${member.firstName}-${memberIndex}`} style={{ marginBottom: 20, border: '1px solid #E2E8F0', borderRadius: 12, padding: 16, background: '#ffffff' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -701,13 +770,203 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                         </label>
                       </div>
                       {!isOldStudent ? (
-                        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E' }}>
-                          <strong>Test de niveau requis :</strong> Un test de niveau est nécessaire pour pouvoir choisir une classe et finaliser l'inscription. Veuillez contacter le secrétariat pour organiser le test.
+                        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', marginBottom: 16 }}>
+                          <strong>Nouveau cours :</strong> Sélectionnez les pôles et cours disponibles. Un test de niveau sera organisé avec le secrétariat.
                         </div>
-                      ) : (
+                      ) : null}
+                      {!isOldStudent && poles.length > 0 ? (
                         <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
-                          {classesGroupedByPole.map((group) => (
-                            <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                          {poles.map((pole) => {
+                              // If science levels are merged into coran block, skip rendering the standalone science pole
+                              if (sciencePole && coranPole && pole.id === sciencePole.id) return null;
+
+                              const isArabic = String(pole.name || '').toLowerCase().includes('arabe');
+                              const isCoran = String(pole.name || '').toLowerCase().includes('coran');
+
+                              // Arabic: simple checkbox for the pole
+                              if (isArabic) {
+                                const poleSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId);
+                                return (
+                                  <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                      <div>
+                                        <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name}</div>
+                                        <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Cours de langue arabe'}</div>
+                                      </div>
+                                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={poleSelected}
+                                          onChange={() => {
+                                            setWizard((prev) => {
+                                              const exists = prev.courseSelections.some((s) => s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId);
+                                              const nextSelections = exists
+                                                ? prev.courseSelections.filter((s) => !(s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId))
+                                                : [...prev.courseSelections, { memberIndex, poleId: pole.id }];
+                                              return { ...prev, courseSelections: nextSelections };
+                                            });
+                                          }}
+                                          style={{ cursor: 'pointer' }}
+                                        />
+                                        Sélectionner
+                                      </label>
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              // Coran: show Coran levels plus Sciences levels merged
+                              if (isCoran) {
+                                const scienceLevels = (sciencePole && sciencePole.levels) || [];
+                                const mergedLevels = [...(pole.levels || []).map((l) => ({ ...l, poleId: pole.id })), ...scienceLevels.map((l) => ({ ...l, poleId: sciencePole?.id }))]
+                                  .filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
+
+                                return (
+                                  <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                      <div>
+                                        <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name} & Sciences islamiques</div>
+                                        <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Choisissez un ou plusieurs niveaux'}</div>
+                                      </div>
+                                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
+                                        {mergedLevels.length} niveau(s)
+                                      </div>
+                                    </div>
+
+                                    {mergedLevels.length > 0 ? (
+                                      <div style={{ display: 'grid', gap: 12 }}>
+                                        {mergedLevels.map((level) => {
+                                          const levelSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.levelId === level.id);
+                                          return (
+                                            <label
+                                              key={level.id}
+                                              style={{
+                                                borderRadius: 14,
+                                                border: '1px solid',
+                                                borderColor: levelSelected ? '#2563EB' : '#E2E8F0',
+                                                background: levelSelected ? '#EFF6FF' : '#FFFFFF',
+                                                padding: 14,
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                cursor: 'pointer',
+                                              }}
+                                            >
+                                              <div>
+                                                <div style={{ fontSize: 14, fontWeight: 700 }}>{level.name}</div>
+                                                <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>{level.code || 'Niveau'}</div>
+                                              </div>
+                                              <input
+                                                type="checkbox"
+                                                checked={levelSelected}
+                                                onChange={() => toggleLevelSelection(memberIndex, level.poleId, level.id)}
+                                              />
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div style={{ fontSize: 13, color: '#64748B', padding: '12px 0' }}>Aucun niveau disponible pour ce pôle.</div>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              // Default: show levels for other poles
+                                  const levelList = (pole.levels || []).filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
+                              return (
+                                <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                    <div>
+                                      <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name}</div>
+                                      <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Sélectionnez un niveau pour ce pôle'}</div>
+                                    </div>
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
+                                      {levelList.length} niveau(s)
+                                    </div>
+                                  </div>
+
+                                      {levelList.length > 0 ? (
+                                    <div style={{ display: 'grid', gap: 12 }}>
+                                      {levelList.map((level) => {
+                                        const levelSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.levelId === level.id);
+                                        return (
+                                          <label
+                                            key={level.id}
+                                            style={{
+                                              borderRadius: 14,
+                                              border: '1px solid',
+                                              borderColor: levelSelected ? '#2563EB' : '#E2E8F0',
+                                              background: levelSelected ? '#EFF6FF' : '#FFFFFF',
+                                              padding: 14,
+                                              display: 'flex',
+                                              justifyContent: 'space-between',
+                                              alignItems: 'center',
+                                              cursor: 'pointer',
+                                            }}
+                                          >
+                                            <div>
+                                              <div style={{ fontSize: 14, fontWeight: 700 }}>{level.name}</div>
+                                              <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>{level.code || 'Niveau'}</div>
+                                            </div>
+                                            <input
+                                              type="checkbox"
+                                              checked={levelSelected}
+                                              onChange={() => toggleLevelSelection(memberIndex, pole.id, level.id)}
+                                            />
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: 13, color: '#64748B', padding: '12px 0' }}>Aucun niveau disponible pour ce pôle.</div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                      ) : null}
+                      {isOldStudent && classesGroupedByPole.length > 0 ? (() => {
+                        const filteredGroups = classesGroupedByPole.map((group) => ({
+                          ...group,
+                          classes: group.classes.filter((cls) => isClassAllowedForAge(cls, memberAge)),
+                        }));
+                        const hasAnyClass = filteredGroups.some((group) => group.classes.length > 0);
+                        return (
+                          <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
+                            <div style={{ borderRadius: 16, background: '#F8FAFC', border: '1px solid #E2E8F0', padding: 16 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                <div>
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>Niveaux disponibles par pôle</div>
+                                  <div style={{ color: '#64748B', fontSize: 13 }}>Affichage des niveaux par pôle en plus des cours Arabe et Coran.</div>
+                                </div>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
+                                  {filteredGroups.length} pôles
+                                </div>
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                                {filteredGroups.map((group) => {
+                                  const uniqueLevels = Array.from(new Set(group.classes.map((cls) => cls.level?.name).filter(Boolean)));
+                                  return (
+                                    <div key={`${group.poleId}-levels`} style={{ borderRadius: 14, background: '#FFFFFF', border: '1px solid #E2E8F0', padding: 12 }}>
+                                      <div style={{ fontSize: 14, fontWeight: 700, color: '#1D4ED8', marginBottom: 8 }}>{group.poleName}</div>
+                                      <div style={{ fontSize: 12, color: '#475569', minHeight: 32 }}>
+                                        {uniqueLevels.length > 0 ? uniqueLevels.join(', ') : 'Aucun niveau défini'}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {!hasAnyClass ? (
+                              <div style={{ padding: 16, borderRadius: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' }}>
+                                Aucune classe disponible pour cet âge ({memberAge !== null ? `${memberAge} ans` : 'date de naissance invalide'}).
+                              </div>
+                            ) : null}
+
+                            {filteredGroups.map((group) => (
+                              <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
                                 <div>
                                   <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
@@ -766,7 +1025,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                             </div>
                           ))}
                         </div>
-                      )}
+                        );
+                      })() : null}
                     </div>
                   );
                 })}
@@ -779,7 +1039,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                     <div>Frais inscription (1 fois par famille): {Number(pricingPreview.registrationFee).toFixed(2)} €</div>
                     <div style={{ fontSize: 12, color: '#475569', marginBottom: 12 }}>Ce montant est facturé une seule fois, quel que soit le nombre d’enfants inscrits.</div>
                     <div>Arabe ({pricingPreview.arabicCount} élève(s)): {Number(pricingPreview.arabicFee).toFixed(2)} €</div>
-                    <div>Coran/Sciences: {Number(pricingPreview.coranScienceFee).toFixed(2)} €</div>
+                    <div>Coran: {Number(pricingPreview.coranFee ?? pricingPreview.coranScienceFee).toFixed(2)} €</div>
+                    <div>Sciences islamiques: {Number(pricingPreview.sciencesFee || 0).toFixed(2)} €</div>
                     {wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
                       <div>Frais prélèvement SEPA: {Number(pricingPreview.fraisPrelevement).toFixed(2)} €</div>
                     )}
@@ -919,22 +1180,30 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               )}
             </div>
 
-            <div className="form-group">
-              <label>Mode de paiement</label>
-              <select className="form-control" value={wizard.payment.method} onChange={(e) => updateWizard('payment', { method: e.target.value })}>
-                {!wizard.members.some((member) => !member.isOldStudent) ? (
-                  <>
+              <div className="form-group" style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <label>Mode de paiement</label>
+                  <select className="form-control" value={wizard.payment.method} onChange={(e) => {
+                    const method = e.target.value;
+                    updateWizard('payment', { method, installmentsCount: method === 'STRIPE_CARD' ? 1 : wizard.payment.installmentsCount });
+                  }}>
                     <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
                     <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
-                  </>
-                ) : null}
-                <option value="ESPECES">Espèces</option>
-                <option value="CHEQUE">Chèque</option>
-              </select>
-              {wizard.members.some((member) => !member.isOldStudent) && (
-                <small style={{ color: '#475569' }}>Les paiements en ligne (Carte / SEPA) ne sont pas disponibles tant qu’au moins un enfant est nouveau.</small>
-              )}
-            </div>
+                    <option value="ESPECES">Espèces</option>
+                    <option value="CHEQUE">Chèque</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label>Payeur</label>
+                  <input
+                    className="form-control"
+                    type="text"
+                    value={wizard.payment.payerName ?? wizard.address.familyName ?? ''}
+                    onChange={e => updateWizard('payment', { payerName: e.target.value })}
+                    placeholder="Nom du payeur"
+                  />
+                </div>
+              </div>
             {pricingPreview && wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
               <div className="card" style={{ marginBottom: 14, background: '#FEF3C7' }}>
                 <strong>Frais de prélèvement</strong>
@@ -945,14 +1214,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               </div>
             )}
 
-            {wizard.payment.method === 'STRIPE_CARD' && (
-              <div className="form-group">
-                <label>Nombre d'échéances (1, 2, 3, 4, 8)</label>
-                <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
-                  {[1, 2, 3, 4, 8].map((n) => <option key={n} value={n}>{n} fois</option>)}
-                </select>
-              </div>
-            )}
+            {/* Stripe payments are single payments in UI — no installments UI shown */}
 
             {wizard.payment.method === 'GO_CARDLESS_SEPA' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -976,7 +1238,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                 <div className="form-group">
                   <label>Nombre de chèques (1 à 8)</label>
                   <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n} chèque(s)</option>)}
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n} chèque(s)</option>)}
                   </select>
                 </div>
                 <div className="card" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
@@ -1007,3 +1269,4 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     </div>
   );
 }
+

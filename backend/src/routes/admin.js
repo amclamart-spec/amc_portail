@@ -47,6 +47,9 @@ const {
   sendMessageToClassFamilies,
   getEnrollmentPayments,
   createEnrollmentPayment,
+  updateEnrollmentPayment,
+  deleteEnrollmentPayment,
+  downloadEnrollmentPaymentReceipt,
   updateEnrollment,
 
   getTeachers,
@@ -56,6 +59,10 @@ const {
   resetTeacherPassword,
   deleteTeacher,
 } = require('../controllers/adminController');
+const {
+  getFamilies,
+  getFamilyDetails,
+} = require('../controllers/adminFamilyController');
 const {
   exportStudents,
   exportAttendanceSheet,
@@ -71,6 +78,7 @@ const {
   sendMailing,
   getMailingPreview,
 } = require('../controllers/adminMailController');
+const { generatePaymentReceiptPDF } = require('../controllers/paymentController');
 
 // Configuration multer pour les pièces jointes
 const upload = multer({
@@ -115,7 +123,13 @@ router.put('/enrollments/registration-block', authorizePermission(PERMISSIONS.EN
 router.get('/students/:studentId/record', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getStudentAcademicRecord);
 router.get('/enrollments/:id/payments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollmentPayments);
 router.post('/enrollments/:id/payments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), createEnrollmentPayment);
+router.patch('/enrollments/:id/payments/:paymentId', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), updateEnrollmentPayment);
+router.delete('/enrollments/:id/payments/:paymentId', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), deleteEnrollmentPayment);
+router.get('/enrollments/:id/payments/:paymentId/receipt', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), downloadEnrollmentPaymentReceipt);
 router.put('/enrollments/:id', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), updateEnrollment);
+
+// Payment receipt route - admin can download receipts for any payment
+router.get('/payments/:paymentId/receipt/download', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), generatePaymentReceiptPDF);
 
 router.get('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getSchoolYears);
 router.post('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createSchoolYear);
@@ -189,5 +203,9 @@ router.get('/teachers', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTeac
 router.get('/mailing/structure', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingStructure);
 router.post('/mailing/preview', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingPreview);
 router.post('/mailing/send', authorizePermission(PERMISSIONS.CLASSES_MANAGE), upload.single('attachment'), sendMailing);
+
+// Familles
+router.get('/families', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilies);
+router.get('/families/:id', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilyDetails);
 
 module.exports = router;

@@ -105,22 +105,66 @@ async function getDraft(req, res) {
 async function getPricingPreview(req, res) {
   try {
     const { courseSelections = [] } = req.body || {};
+    
+    // Handle both classId (old students) and poleId (new students)
     const classIds = [...new Set(courseSelections.map((s) => s.classId).filter(Boolean))];
+    const poleIds = [...new Set(courseSelections.map((s) => s.poleId).filter(Boolean))];
+    const levelIds = [...new Set(courseSelections.map((s) => s.levelId).filter(Boolean))];
 
     const classes = await prisma.class.findMany({
       where: { id: { in: classIds } },
       include: { level: { include: { pole: true } }, pole: true },
     });
 
+    const poles = await prisma.pole.findMany({
+      where: { id: { in: poleIds } },
+      include: { levels: true },
+    });
+
+    const levels = await prisma.level.findMany({
+      where: { id: { in: levelIds } },
+      include: { pole: true },
+    });
+
     const classById = new Map(classes.map((c) => [c.id, c]));
+    const poleById = new Map(poles.map((p) => [p.id, p]));
+    const levelById = new Map(levels.map((l) => [l.id, l]));
+
     const enrollments = courseSelections
       .map((selection) => {
-        const cls = classById.get(selection.classId);
-        if (!cls) return null;
-        return {
-          poleName: cls.level?.pole?.name || cls.pole?.name || '',
-          levelCode: cls.level?.code || '',
-        };
+        if (selection.classId) {
+          // Old student: has selected a specific class
+          const cls = classById.get(selection.classId);
+          if (!cls) return null;
+          return {
+            poleId: cls.level?.pole?.id || cls.pole?.id || '',
+            poleName: cls.level?.pole?.name || cls.pole?.name || '',
+            levelId: cls.level?.id || '',
+            levelCode: cls.level?.code || '',
+          };
+        } else if (selection.levelId) {
+          const level = levelById.get(selection.levelId);
+          if (!level) return null;
+          return {
+            poleId: level.pole?.id || '',
+            poleName: level.pole?.name || '',
+            levelId: level.id,
+            levelCode: level.code || '',
+          };
+        } else if (selection.poleId) {
+          // New student: has only selected a pole, estimate based on pole
+          const pole = poleById.get(selection.poleId);
+          if (!pole) return null;
+          
+          const firstLevel = pole.levels && pole.levels[0];
+          return {
+            poleId: pole.id,
+            poleName: pole.name || '',
+            levelId: firstLevel?.id || '',
+            levelCode: firstLevel?.code || '',
+          };
+        }
+        return null;
       })
       .filter(Boolean);
 
@@ -252,11 +296,27 @@ async function completeExistingFamilyRegistration(req, res) {
     }
 
     const selectedClassIds = [...new Set(courseSelections.map((c) => c.classId).filter(Boolean))];
+    const selectedPoleIds = [...new Set(courseSelections.map((c) => c.poleId).filter(Boolean))];
+    const selectedLevelIds = [...new Set(courseSelections.map((c) => c.levelId).filter(Boolean))];
+    
     const classes = await prisma.class.findMany({
       where: { id: { in: selectedClassIds }, schoolYearId: currentYear.id },
       include: { level: { include: { pole: true } } },
     });
     const classById = new Map(classes.map((c) => [c.id, c]));
+
+    // Fetch poles for new students
+    const poles = await prisma.pole.findMany({
+      where: { id: { in: selectedPoleIds } },
+      include: { levels: true },
+    });
+    const poleById = new Map(poles.map((p) => [p.id, p]));
+
+    const levels = await prisma.level.findMany({
+      where: { id: { in: selectedLevelIds } },
+      include: { pole: true },
+    });
+    const levelById = new Map(levels.map((l) => [l.id, l]));
 
     // ensure there is a fictive / provisional class for new students without class selection
     let fictiveClass = await prisma.class.findFirst({
@@ -286,13 +346,37 @@ async function completeExistingFamilyRegistration(req, res) {
 
     const pricingConfig = await resolvePricingConfig(prisma);
     const enrollmentForPricing = courseSelections
-      .map((selection) => {
-        const cls = classById.get(selection.classId);
-        if (!cls) return null;
-        return {
-          poleName: cls.level.pole.name,
-          levelCode: cls.level.code,
-        };
+      .flatMap((selection) => {
+        const result = [];
+        
+        if (selection.classId) {
+          const cls = classById.get(selection.classId);
+          if (cls) {
+            result.push({
+              poleName: cls.level.pole.name,
+              levelCode: cls.level.code,
+            });
+          }
+        } else if (selection.levelId) {
+          const level = levelById.get(selection.levelId);
+          if (level) {
+            result.push({
+              poleName: level.pole?.name || '',
+              levelCode: level.code,
+            });
+          }
+        } else if (selection.poleId) {
+          const pole = poleById.get(selection.poleId);
+          if (pole) {
+            const firstLevel = pole.levels && pole.levels[0];
+            result.push({
+              poleName: pole.name,
+              levelCode: firstLevel?.code || '',
+            });
+          }
+        }
+        
+        return result;
       })
       .filter(Boolean);
 
@@ -371,41 +455,83 @@ async function completeExistingFamilyRegistration(req, res) {
 
       const createdEnrollments = [];
       for (const selection of courseSelections) {
-        const cls = classById.get(selection.classId);
-        if (!cls) continue;
-
         const studentIndex = Number(selection.memberIndex);
         const student = students[studentIndex];
         if (!student) continue;
 
-        const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
-        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
-        const enrollmentData = {
-          registrationCode,
-          studentId: student.id,
-          classId: cls.id,
-          schoolYearId: currentYear.id,
-          status: 'PENDING',
-        };
+        // Old student: has selected a specific class
+        if (selection.classId) {
+          const cls = classById.get(selection.classId);
+          if (!cls) continue;
 
-        if (isFull) {
-          // Put on waitlist (do not increment enrolledCount)
-          enrollmentData.comment = 'Liste d\'attente';
+          const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollmentData = {
+            registrationCode,
+            studentId: student.id,
+            classId: cls.id,
+            schoolYearId: currentYear.id,
+            status: 'PENDING',
+          };
+
+          if (isFull) {
+            // Put on waitlist (do not increment enrolledCount)
+            enrollmentData.comment = 'Liste d\'attente';
+          }
+
+          const enrollment = await tx.enrollment.create({ data: enrollmentData });
+
+          if (!isFull) {
+            await tx.class.update({
+              where: { id: cls.id },
+              data: {
+                enrolledCount: { increment: 1 },
+                status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+              },
+            });
+          }
+
+          createdEnrollments.push(enrollment);
         }
+        // New student: has selected a specific level
+        else if (selection.levelId) {
+          const level = levelById.get(selection.levelId);
+          if (!level) continue;
 
-        const enrollment = await tx.enrollment.create({ data: enrollmentData });
+          const pole = poleById.get(selection.poleId) || level.pole;
+          if (!pole) continue;
 
-        if (!isFull) {
-          await tx.class.update({
-            where: { id: cls.id },
-            data: {
-              enrolledCount: { increment: 1 },
-              status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
-            },
-          });
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollmentData = {
+            registrationCode,
+            studentId: student.id,
+            classId: fictiveClass.id,
+            schoolYearId: currentYear.id,
+            status: 'PENDING',
+            comment: `Affectation provisoire - ${pole.name} / ${level.name} - Test de niveau à organiser`,
+          };
+
+          const enrollment = await tx.enrollment.create({ data: enrollmentData });
+          createdEnrollments.push(enrollment);
         }
+        // New student: fallback selection by pole only
+        else if (selection.poleId) {
+          const pole = poleById.get(selection.poleId);
+          if (!pole) continue;
 
-        createdEnrollments.push(enrollment);
+          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const enrollmentData = {
+            registrationCode,
+            studentId: student.id,
+            classId: fictiveClass.id,
+            schoolYearId: currentYear.id,
+            status: 'PENDING',
+            comment: 'Affectation provisoire - ' + (pole?.name || 'Pôle') + ' - Test de niveau à organiser',
+          };
+
+          const enrollment = await tx.enrollment.create({ data: enrollmentData });
+          createdEnrollments.push(enrollment);
+        }
       }
 
       for (let i = 0; i < students.length; i += 1) {
@@ -555,6 +681,7 @@ async function completeExistingFamilyRegistration(req, res) {
             sepaFee: pricing.fraisPrelevement,
             ipAddress,
             draftId: payload.draftId || null,
+            payerName: payment.payerName || null,
           },
         },
       });
@@ -591,64 +718,6 @@ async function completeExistingFamilyRegistration(req, res) {
         },
       });
 
-      let checkout = null;
-      if (provider !== 'OFFLINE') {
-        const urls = getPaymentReturnUrls(req, provider);
-        checkout = await createOnlineCheckout({
-          provider,
-          amount: paymentTotal,
-          paymentId: paymentRecord.id,
-          returnUrl: urls.returnUrl,
-          cancelUrl: urls.cancelUrl,
-          installments: installmentsCount,
-          customer: {
-            firstName: req.user.firstName,
-            lastName: req.user.lastName,
-            email: req.user.email,
-          },
-          metadata: {
-            source: 'family_wizard_existing',
-            plan_id: paymentPlan.id,
-          },
-        });
-
-        await tx.payment.update({
-          where: { id: paymentRecord.id },
-          data: {
-            externalPaymentId: checkout.externalPaymentId || null,
-            metadata: {
-              ...(paymentRecord.metadata || {}),
-              checkout,
-            },
-          },
-        });
-
-        await tx.paymentPlan.update({
-          where: { id: paymentPlan.id },
-          data: {
-            status: checkout.configured ? 'PENDING' : 'FAILED',
-            providerRef: checkout.externalPaymentId || null,
-            metadata: {
-              ...(paymentPlan.metadata || {}),
-              checkout,
-            },
-          },
-        });
-
-        await tx.paymentTransaction.create({
-          data: {
-            paymentId: paymentRecord.id,
-            provider,
-            method: paymentMethod,
-            amount: toDecimal(paymentTotal),
-            status: checkout.configured ? 'INITIATED' : 'FAILED',
-            externalRef: checkout.externalPaymentId || null,
-            description: 'Paiement inscription membre existant',
-            metadata: checkout,
-          },
-        });
-      }
-
       if (provider === 'OFFLINE') {
         const isCheque = paymentMethod === 'CHEQUE';
         await tx.paymentTransaction.create({
@@ -677,29 +746,112 @@ async function completeExistingFamilyRegistration(req, res) {
         enrollments: createdEnrollments,
         payment: paymentRecord,
         paymentPlan,
-        checkout,
         installments,
+        shouldCreateCheckout: provider !== 'OFFLINE',
       };
     });
 
-    // Envoi du mail d'inscription enregistrée
-    const studentById = new Map(result.students.map((s) => [s.id, s]));
-    const enrollmentDetailsHtml = result.enrollments.map((en) => {
-      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
-      const cls = classById.get(en.classId);
-      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
-      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
-    }).join('<br/>');
-    const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
-      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
-      <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
-      <strong>Échéances :</strong> ${result.installments.length}
-    </div>`;
+    if (result.shouldCreateCheckout) {
+      try {
+        const urls = getPaymentReturnUrls(req, provider);
+        const checkout = await createOnlineCheckout({
+          provider,
+          amount: paymentTotal,
+          paymentId: result.payment.id,
+          returnUrl: urls.returnUrl,
+          cancelUrl: urls.cancelUrl,
+          installments: installmentsCount,
+          customer: {
+            firstName: req.user.firstName,
+            lastName: req.user.lastName,
+            email: req.user.email,
+          },
+          metadata: {
+            source: 'family_wizard_existing',
+            plan_id: result.paymentPlan.id,
+          },
+        });
 
-    // Envoi des emails en arrière-plan sans bloquer la réponse
-    sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
-      console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
-    });
+        await prisma.$transaction([
+          prisma.payment.update({
+            where: { id: result.payment.id },
+            data: {
+              externalPaymentId: checkout.externalPaymentId || null,
+              metadata: {
+                ...(result.payment.metadata || {}),
+                checkout,
+              },
+            },
+          }),
+          prisma.paymentPlan.update({
+            where: { id: result.paymentPlan.id },
+            data: {
+              status: checkout.configured ? 'PENDING' : 'FAILED',
+              providerRef: checkout.externalPaymentId || null,
+              metadata: {
+                ...(result.paymentPlan.metadata || {}),
+                checkout,
+              },
+            },
+          }),
+          prisma.paymentTransaction.create({
+            data: {
+              paymentId: result.payment.id,
+              provider,
+              method: paymentMethod,
+              amount: toDecimal(paymentTotal),
+              status: checkout.configured ? 'INITIATED' : 'FAILED',
+              externalRef: checkout.externalPaymentId || null,
+              payerName: payment.payerName || `${req.user.firstName} ${req.user.lastName}`,
+              description: 'Paiement inscription membre existant',
+              metadata: checkout,
+            },
+          }),
+        ]);
+
+        result.checkout = checkout;
+      } catch (checkoutError) {
+        console.error('Erreur création Stripe Checkout hors transaction:', checkoutError);
+        await prisma.paymentPlan.update({
+          where: { id: result.paymentPlan.id },
+          data: { status: 'FAILED' },
+        });
+        await prisma.paymentTransaction.create({
+          data: {
+            paymentId: result.payment.id,
+            provider,
+            method: paymentMethod,
+            amount: toDecimal(paymentTotal),
+            status: 'FAILED',
+            description: 'Échec création Stripe Checkout',
+            metadata: {
+              error: checkoutError?.message || 'Stripe checkout error',
+            },
+          },
+        });
+      }
+    }
+
+    // Envoi du mail d'inscription enregistrée uniquement si pas de checkout en ligne (ex: paiement offline)
+    if (!result.shouldCreateCheckout) {
+      const studentById = new Map(result.students.map((s) => [s.id, s]));
+      const enrollmentDetailsHtml = result.enrollments.map((en) => {
+        const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+        const cls = classById.get(en.classId);
+        const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+        return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+      }).join('<br/>');
+      const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
+        <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
+        <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
+        <strong>Échéances :</strong> ${result.installments.length}
+      </div>`;
+
+      // Envoi des emails en arrière-plan sans bloquer la réponse
+      sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+        console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+      });
+    }
 
     // Notify admins about provisional enrollments (if any were created)
     try {
@@ -871,11 +1023,17 @@ async function completeFamilyRegistration(req, res) {
     const currentYear = await ensureCurrentSchoolYear();
 
     const selectedClassIds = [...new Set(courseSelections.map((c) => c.classId).filter(Boolean))];
+    const selectedPoleIds = [...new Set(courseSelections.map((c) => c.poleId).filter(Boolean))];
     const classes = await prisma.class.findMany({
       where: { id: { in: selectedClassIds }, schoolYearId: currentYear.id },
       include: { level: { include: { pole: true } } },
     });
+    const poles = await prisma.pole.findMany({
+      where: { id: { in: selectedPoleIds } },
+      include: { levels: true },
+    });
     const classById = new Map(classes.map((c) => [c.id, c]));
+    const poleById = new Map(poles.map((p) => [p.id, p]));
 
     let fictiveClass = await prisma.class.findFirst({
       where: {
@@ -906,12 +1064,27 @@ async function completeFamilyRegistration(req, res) {
 
     const enrollmentForPricing = courseSelections
       .map((selection) => {
-        const cls = classById.get(selection.classId);
-        if (!cls) return null;
-        return {
-          poleName: cls.level.pole.name,
-          levelCode: cls.level.code,
-        };
+        if (selection.classId) {
+          const cls = classById.get(selection.classId);
+          if (!cls) return null;
+          return {
+            poleId: cls.level.pole.id,
+            levelId: cls.level.id,
+            poleName: cls.level.pole.name,
+            levelCode: cls.level.code,
+          };
+        } else if (selection.poleId) {
+          const pole = poleById.get(selection.poleId);
+          if (!pole) return null;
+          const firstLevel = pole.levels && pole.levels[0];
+          return {
+            poleId: pole.id,
+            levelId: firstLevel?.id || '',
+            poleName: pole.name,
+            levelCode: firstLevel?.code || '',
+          };
+        }
+        return null;
       })
       .filter(Boolean);
 
@@ -927,8 +1100,6 @@ async function completeFamilyRegistration(req, res) {
     const userAgent = req.headers['user-agent'] || null;
 
     const passwordHash = await bcrypt.hash(account.password, 12);
-    const emailVerifyToken = uuidv4();
-
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -940,7 +1111,6 @@ async function completeFamilyRegistration(req, res) {
           phone: account.phone || address.phonePrimary,
           role: 'FAMILLE',
           validationStatus: 'APPROVED',
-          emailVerifyToken,
         },
       });
 
@@ -1164,6 +1334,7 @@ async function completeFamilyRegistration(req, res) {
             sepaFee: pricing.fraisPrelevement,
             ipAddress,
             draftId: payload.draftId || null,
+            payerName: payment.payerName || null,
           },
         },
       });
@@ -1200,64 +1371,6 @@ async function completeFamilyRegistration(req, res) {
         },
       });
 
-      let checkout = null;
-      if (provider !== 'OFFLINE') {
-        const urls = getPaymentReturnUrls(req, provider);
-        checkout = await createOnlineCheckout({
-          provider,
-          amount: paymentTotal,
-          paymentId: paymentRecord.id,
-          returnUrl: urls.returnUrl,
-          cancelUrl: urls.cancelUrl,
-          installments: installmentsCount,
-          customer: {
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-          },
-          metadata: {
-            source: 'family_wizard',
-            plan_id: paymentPlan.id,
-          },
-        });
-
-        await tx.payment.update({
-          where: { id: paymentRecord.id },
-          data: {
-            externalPaymentId: checkout.externalPaymentId || null,
-            metadata: {
-              ...(paymentRecord.metadata || {}),
-              checkout,
-            },
-          },
-        });
-
-        await tx.paymentPlan.update({
-          where: { id: paymentPlan.id },
-          data: {
-            status: checkout.configured ? 'PENDING' : 'FAILED',
-            providerRef: checkout.externalPaymentId || null,
-            metadata: {
-              ...(paymentPlan.metadata || {}),
-              checkout,
-            },
-          },
-        });
-
-        await tx.paymentTransaction.create({
-          data: {
-            paymentId: paymentRecord.id,
-            provider,
-            method: paymentMethod,
-            amount: toDecimal(paymentTotal),
-            status: checkout.configured ? 'INITIATED' : 'FAILED',
-            externalRef: checkout.externalPaymentId || null,
-            description: 'Paiement inscription initiale',
-            metadata: checkout,
-          },
-        });
-      }
-
       if (provider === 'OFFLINE') {
         const isCheque = paymentMethod === 'CHEQUE';
         await tx.paymentTransaction.create({
@@ -1289,12 +1402,72 @@ async function completeFamilyRegistration(req, res) {
         enrollments: createdEnrollments,
         payment: paymentRecord,
         paymentPlan,
-        checkout,
         installments,
+        shouldCreateCheckout: provider !== 'OFFLINE',
       };
     });
 
-    // Envoi du mail d'inscription enregistrée (avec activation si nécessaire)
+    if (result.shouldCreateCheckout) {
+      const urls = getPaymentReturnUrls(req, result.payment.provider);
+      const checkout = await createOnlineCheckout({
+        provider: result.payment.provider,
+        amount: Number(result.payment.totalAmount || 0),
+        paymentId: result.payment.id,
+        returnUrl: urls.returnUrl,
+        cancelUrl: urls.cancelUrl,
+        installments: result.installments.length,
+        customer: {
+          firstName: result.user.firstName,
+          lastName: result.user.lastName,
+          email: result.user.email,
+        },
+        metadata: {
+          source: 'family_wizard',
+          plan_id: result.paymentPlan.id,
+        },
+      });
+
+      await prisma.payment.update({
+        where: { id: result.payment.id },
+        data: {
+          externalPaymentId: checkout.externalPaymentId || null,
+          metadata: {
+            ...(result.payment.metadata || {}),
+            checkout,
+          },
+        },
+      });
+
+      await prisma.paymentPlan.update({
+        where: { id: result.paymentPlan.id },
+        data: {
+          status: checkout.configured ? 'PENDING' : 'FAILED',
+          providerRef: checkout.externalPaymentId || null,
+          metadata: {
+            ...(result.paymentPlan.metadata || {}),
+            checkout,
+          },
+        },
+      });
+
+      await prisma.paymentTransaction.create({
+        data: {
+          paymentId: result.payment.id,
+          provider: result.payment.provider,
+          method: result.payment.paymentMethod,
+          amount: toDecimal(result.payment.totalAmount),
+          status: checkout.configured ? 'INITIATED' : 'FAILED',
+          externalRef: checkout.externalPaymentId || null,
+          payerName: payment.payerName || `${user.firstName} ${user.lastName}`,
+          description: 'Paiement inscription initiale',
+          metadata: checkout,
+        },
+      });
+
+      result.checkout = checkout;
+    }
+
+    // Envoi du mail de confirmation d'inscription
     const studentById = new Map(result.students.map((s) => [s.id, s]));
     const enrollmentDetailsHtml = result.enrollments.map((en) => {
       const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
@@ -1302,21 +1475,18 @@ async function completeFamilyRegistration(req, res) {
       const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
       return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
     }).join('<br/>');
-    const verifyUrl = `${config.frontendUrl}/verify-email?token=${emailVerifyToken}`;
-    const activationHtml = `<p>Pour activer votre compte famille, cliquez sur le bouton ci-dessous :</p>
-      <p style="text-align:center;">
-        <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;">Activer mon compte</a>
-      </p>`;
     const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
       <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
       <strong>Mode :</strong> ${paymentMethod}<br/>
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    // Envoi des emails en arrière-plan sans bloquer la réponse
-    sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}${activationHtml}`).catch((err) => {
-      console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
-    });
+    // Envoi des emails en arrière-plan sans bloquer la réponse (uniquement si pas de checkout en ligne)
+    if (!result.shouldCreateCheckout) {
+      sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+        console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+      });
+    }
 
     // Notify admins about provisional enrollments (if any were created)
     try {

@@ -24,6 +24,10 @@ module.exports = {
     apiKey: process.env.ABACUS_API_KEY,
   },
 
+  brevoEmail: {
+    apiKey: process.env.BREVO_API_KEY,
+  },
+
   smtp: {
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587', 10),

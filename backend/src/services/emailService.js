@@ -7,9 +7,29 @@ let transporter;
 let cachedLogoDataUri = null;
 let cachedPartnerLogoDataUri = null;
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalise une adresse email : trim + lowercase.
+ * Retourne null si la valeur n'est pas un email valide.
+ */
+function normalizeEmail(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const cleaned = raw.trim().toLowerCase();
+  // Regex simple mais suffisante pour valider la plupart des adresses
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(cleaned) ? cleaned : null;
+}
+
+// ---------------------------------------------------------------------------
+// Transporteurs SMTP
+// ---------------------------------------------------------------------------
+
 function getTransporter() {
   if (!transporter) {
-    transporter = nodemailer.createTransport({
+    const smtpOpts = {
       host: config.smtp.host,
       port: config.smtp.port,
       secure: config.smtp.port === 465,
@@ -17,22 +37,117 @@ function getTransporter() {
         user: config.smtp.user,
         pass: config.smtp.pass,
       },
-    });
+      // Timeouts pour eviter un blocage infini (Render / PaaS bloquent souvent les ports SMTP)
+      connectionTimeout: 10000,  // 10 s
+      greetingTimeout: 10000,    // 10 s
+      socketTimeout: 15000,      // 15 s
+    };
+
+    // Si auth vide, desactiver
+    if (!config.smtp.user || !config.smtp.pass) {
+      delete smtpOpts.auth;
+    }
+
+    transporter = nodemailer.createTransport(smtpOpts);
   }
   return transporter;
 }
 
-async function sendWithAbacus({ to, subject, html, text, attachments }) {
-  // L'API Abacus ne supporte pas les pièces jointes pour le moment
-  // Si des pièces jointes sont présentes, on lève une erreur pour forcer l'utilisation de SMTP
+// ---------------------------------------------------------------------------
+// Provider : Brevo (ex-Sendinblue) - API transactionnelle v3
+// ---------------------------------------------------------------------------
+
+async function sendWithBrevo({ to, subject, html, text, attachments }) {
+  const { apiKey } = config.brevo;
+
+  if (!apiKey) {
+    throw new Error('BREVO_API_KEY manquante pour envoi email Brevo');
+  }
+
+  // Normaliser l'email destinataire
+  const recipientEmail = normalizeEmail(to);
+  if (!recipientEmail) {
+    throw new Error(`Adresse email destinataire invalide : "${to}"`);
+  }
+
+  // Construire le body conforme a Brevo API v3
+  // Doc: https://developers.brevo.com/reference/sendtransacemail
+  const brevoBody = {
+    sender: {
+      name: config.email.fromName,
+      email: config.email.fromEmail,
+    },
+    to: [{ email: recipientEmail }],
+    subject,
+  };
+
+  if (html) {
+    brevoBody.htmlContent = html;
+  } else if (text) {
+    brevoBody.textContent = text;
+  }
+
+  // Pieces jointes (Brevo accepte base64)
   if (attachments && attachments.length > 0) {
-    throw new Error('Pièces jointes non supportées par Abacus - basculement vers SMTP requis');
+    brevoBody.attachment = attachments
+      .map((att) => {
+        if (att.content) {
+          const buf = Buffer.isBuffer(att.content)
+            ? att.content
+            : Buffer.from(att.content, att.encoding || 'utf-8');
+          return { name: att.filename || 'attachment', content: buf.toString('base64') };
+        }
+        if (att.path) {
+          const buf = fs.readFileSync(att.path);
+          return {
+            name: att.filename || path.basename(att.path),
+            content: buf.toString('base64'),
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  console.log(`[EMAIL][BREVO] Envoi a ${recipientEmail} - sujet: ${subject}`);
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': apiKey,
+    },
+    body: JSON.stringify(brevoBody),
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Brevo API error ${response.status}: ${details}`);
+  }
+
+  const result = await response.json();
+  console.log(`[EMAIL][BREVO] Envoi reussi - messageId: ${result.messageId || 'N/A'}`);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Provider : Abacus AI
+// ---------------------------------------------------------------------------
+
+async function sendWithAbacus({ to, subject, html, text, attachments }) {
+  if (attachments && attachments.length > 0) {
+    throw new Error('Pieces jointes non supportees par Abacus - basculement vers fallback requis');
   }
 
   const { apiBaseUrl, endpoint, apiKey } = config.abacusEmail;
 
   if (!apiKey) {
     throw new Error('ABACUS_API_KEY manquante pour envoi email Abacus');
+  }
+
+  const recipientEmail = normalizeEmail(to);
+  if (!recipientEmail) {
+    throw new Error(`Adresse email destinataire invalide : "${to}"`);
   }
 
   const response = await fetch(`${apiBaseUrl}${endpoint}`, {
@@ -42,7 +157,7 @@ async function sendWithAbacus({ to, subject, html, text, attachments }) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      email: to,
+      email: recipientEmail,
       subject,
       body: html || text || '',
       is_html: Boolean(html),
@@ -57,16 +172,24 @@ async function sendWithAbacus({ to, subject, html, text, attachments }) {
   return response.json();
 }
 
+// ---------------------------------------------------------------------------
+// Provider : SMTP (nodemailer)
+// ---------------------------------------------------------------------------
+
 async function sendWithSmtp({ to, subject, html, text, attachments }) {
+  const recipientEmail = normalizeEmail(to);
+  if (!recipientEmail) {
+    throw new Error(`Adresse email destinataire invalide : "${to}"`);
+  }
+
   const mailOptions = {
     from: `"${config.email.fromName}" <${config.email.fromEmail}>`,
-    to,
+    to: recipientEmail,
     subject,
     html,
     text,
   };
 
-  // Ajouter les pièces jointes si présentes
   if (attachments && attachments.length > 0) {
     mailOptions.attachments = attachments;
   }
@@ -75,53 +198,115 @@ async function sendWithSmtp({ to, subject, html, text, attachments }) {
   return info;
 }
 
+// ---------------------------------------------------------------------------
+// Detection fallback
+// ---------------------------------------------------------------------------
+
 function isSmtpConfigured() {
   return Boolean(config.smtp.host && config.smtp.port && config.smtp.user && config.smtp.pass);
 }
 
+function isBrevoConfigured() {
+  return Boolean(config.brevo && config.brevo.apiKey);
+}
+
+/**
+ * Tente d'envoyer via un fallback (Brevo API > SMTP) quand le provider
+ * principal echoue.
+ */
+async function sendWithFallback(payload, originalError) {
+  // Essayer Brevo API en fallback si configure
+  if (isBrevoConfigured()) {
+    try {
+      console.warn('[EMAIL] Tentative fallback via Brevo API...');
+      return await sendWithBrevo(payload);
+    } catch (brevoErr) {
+      console.warn('[EMAIL] Fallback Brevo echoue:', brevoErr.message);
+    }
+  }
+
+  // Essayer SMTP en fallback si configure
+  if (isSmtpConfigured()) {
+    try {
+      console.warn('[EMAIL] Tentative fallback via SMTP...');
+      return await sendWithSmtp(payload);
+    } catch (smtpErr) {
+      console.warn('[EMAIL] Fallback SMTP echoue:', smtpErr.message);
+    }
+  }
+
+  // Aucun fallback disponible
+  throw originalError;
+}
+
+// ---------------------------------------------------------------------------
+// Point d'entree principal
+// ---------------------------------------------------------------------------
+
 async function sendMail(payload) {
   try {
-    console.log(`[EMAIL] Envoi avec provider: ${config.email.provider}`);
-    console.log(`[EMAIL] Pièces jointes: ${payload.attachments ? payload.attachments.length : 0}`);
+    const provider = config.email.provider;
+    console.log(`[EMAIL] Envoi avec provider: ${provider}`);
+    console.log(`[EMAIL] Destinataire: ${payload.to}`);
+    console.log(`[EMAIL] Pieces jointes: ${payload.attachments ? payload.attachments.length : 0}`);
 
-    // Si on utilise Abacus mais qu'il y a des pièces jointes, forcer SMTP
-    if (config.email.provider === 'ABACUS' && payload.attachments && payload.attachments.length > 0) {
-      console.log('[EMAIL] Basculement vers SMTP car pièces jointes détectées avec Abacus');
-      return await sendWithSmtp(payload);
+    // ----- BREVO -----
+    if (provider === 'BREVO') {
+      if (!isBrevoConfigured()) {
+        console.warn('[EMAIL] BREVO_API_KEY manquante, tentative de fallback...');
+        return await sendWithFallback(payload, new Error('BREVO_API_KEY manquante'));
+      }
+      try {
+        return await sendWithBrevo(payload);
+      } catch (error) {
+        console.warn('[EMAIL] Brevo echoue, tentative de fallback:', error.message);
+        return await sendWithFallback(payload, error);
+      }
     }
 
-    if (config.email.provider === 'ABACUS') {
+    // ----- ABACUS -----
+    if (provider === 'ABACUS') {
+      // Abacus ne gere pas les pieces jointes -> fallback immediat
+      if (payload.attachments && payload.attachments.length > 0) {
+        console.log('[EMAIL] Pieces jointes detectees - basculement vers fallback (Abacus ne supporte pas les PJ)');
+        return await sendWithFallback(
+          payload,
+          new Error('Pieces jointes non supportees par Abacus'),
+        );
+      }
+
       if (!config.abacusEmail.apiKey) {
-        const fallbackAllowed = isSmtpConfigured();
-        if (fallbackAllowed) {
-          console.warn('[EMAIL] ABACUS_API_KEY manquante, basculement vers SMTP');
-          return await sendWithSmtp(payload);
-        }
-        throw new Error('ABACUS_API_KEY manquante et SMTP non configuré pour l’envoi d’email');
+        console.warn('[EMAIL] ABACUS_API_KEY manquante, tentative de fallback...');
+        return await sendWithFallback(payload, new Error('ABACUS_API_KEY manquante'));
       }
 
       try {
         return await sendWithAbacus(payload);
       } catch (error) {
-        const fallbackAllowed = isSmtpConfigured();
-        if (fallbackAllowed) {
-          console.warn('[EMAIL] Abacus non disponible, basculement vers SMTP:', error.message);
-          return await sendWithSmtp(payload);
-        }
-        throw error;
+        console.warn('[EMAIL] Abacus echoue, tentative de fallback:', error.message);
+        return await sendWithFallback(payload, error);
       }
     }
 
+    // ----- SMTP (defaut) -----
     if (!isSmtpConfigured()) {
-      throw new Error('SMTP non configuré pour l’envoi d’email');
+      if (isBrevoConfigured()) {
+        console.warn('[EMAIL] SMTP non configure, tentative via Brevo...');
+        return await sendWithBrevo(payload);
+      }
+      throw new Error('Aucun provider email configure (SMTP non configure, Brevo non configure)');
     }
 
     return await sendWithSmtp(payload);
   } catch (error) {
-    console.error('Erreur envoi email:', error.message);
-    throw error; // Re-throw pour que l'appelant puisse gérer l'erreur
+    console.error('[EMAIL] Erreur envoi email:', error.message);
+    throw error;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Templates HTML
+// ---------------------------------------------------------------------------
 
 function getEmbeddedLogoDataUri(fileName, fallbackColor = '#213B88', fallbackText = 'AMC') {
   const cache = fileName === 'amc_logo.png' ? cachedLogoDataUri : cachedPartnerLogoDataUri;
@@ -183,7 +368,7 @@ function renderEmailHtml({ title, subtitle, contentHtml }) {
             </tr>
             <tr>
               <td style="background:#f8fafc;padding:20px 28px;color:#475569;font-size:14px;text-align:center;">
-                Association PARTAGE • Portail AMC
+                Association PARTAGE &bull; Portail AMC
               </td>
             </tr>
           </table>
@@ -194,23 +379,27 @@ function renderEmailHtml({ title, subtitle, contentHtml }) {
 </html>`;
 }
 
+// ---------------------------------------------------------------------------
+// Fonctions d'envoi specifiques
+// ---------------------------------------------------------------------------
+
 async function sendVerificationEmail(user, token) {
   const verifyUrl = `${config.frontendUrl}/verify-email?token=${token}&redirect=/login`;
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Bienvenue sur le portail AMC. Pour finaliser la création de votre compte, veuillez vérifier votre adresse email en cliquant sur le bouton ci-dessous :</p>
+    <p>Bienvenue sur le portail AMC. Pour finaliser la creation de votre compte, veuillez verifier votre adresse email en cliquant sur le bouton ci-dessous :</p>
     <p style="text-align:center;">
-      <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;font-weight:bold;">Vérifier mon email</a>
+      <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;font-weight:bold;">Verifier mon email</a>
     </p>
     <p style="font-size:14px;color:#64748b;margin-top:24px;">Ou copiez-collez ce lien dans votre navigateur :<br/><span style="word-break:break-all;">${verifyUrl}</span></p>
   `;
 
   return sendMail({
     to: user.email,
-    subject: 'AMC — Vérification de votre adresse email',
+    subject: 'AMC — Verification de votre adresse email',
     html: renderEmailHtml({
-      title: 'Vérifiez votre adresse email',
-      subtitle: 'Créez votre compte sur le portail AMC',
+      title: 'Verifiez votre adresse email',
+      subtitle: 'Creez votre compte sur le portail AMC',
       contentHtml,
     }),
   });
@@ -220,40 +409,40 @@ async function sendResetPasswordEmail(user, token) {
   const resetUrl = `${config.frontendUrl}/reset-password?token=${token}`;
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Nous avons reçu une demande de réinitialisation de votre mot de passe.</p>
+    <p>Nous avons recu une demande de reinitialisation de votre mot de passe.</p>
     <p>Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe :</p>
     <p style="text-align:center;">
-      <a href="${resetUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;font-weight:bold;">Réinitialiser mon mot de passe</a>
+      <a href="${resetUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;font-weight:bold;">Reinitialiser mon mot de passe</a>
     </p>
-    <p style="font-size:14px;color:#64748b;margin-top:24px;">Si vous n'avez pas demandé cette réinitialisation, ignorez simplement ce message.</p>
+    <p style="font-size:14px;color:#64748b;margin-top:24px;">Si vous n'avez pas demande cette reinitialisation, ignorez simplement ce message.</p>
     <p style="font-size:14px;color:#64748b;">Ou copiez-collez ce lien dans votre navigateur :<br/><span style="word-break:break-all;">${resetUrl}</span></p>
   `;
 
   return sendMail({
     to: user.email,
-    subject: 'AMC — Réinitialisation de votre mot de passe',
+    subject: 'AMC — Reinitialisation de votre mot de passe',
     html: renderEmailHtml({
-      title: 'Réinitialisez votre mot de passe',
-      subtitle: 'Suivez le lien pour définir un nouveau mot de passe',
+      title: 'Reinitialisez votre mot de passe',
+      subtitle: 'Suivez le lien pour definir un nouveau mot de passe',
       contentHtml,
     }),
   });
 }
 
-async function sendEnrollmentConfirmationEmail(user, enrollmentSummary = '', subject = 'Inscription enregistrée') {
+async function sendEnrollmentConfirmationEmail(user, enrollmentSummary = '', subject = 'Inscription enregistree') {
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Votre inscription a bien été enregistrée.</p>
-    ${enrollmentSummary ? `<div style="margin:18px 0;padding:18px;background:#eef2ff;border-radius:12px;"><strong>Détails des inscriptions :</strong><br/>${enrollmentSummary}</div>` : ''}
-    <p>Nous vous enverrons un second email dès que le paiement sera validé et que l'inscription sera confirmée.</p>
+    <p>Votre inscription a bien ete enregistree.</p>
+    ${enrollmentSummary ? `<div style="margin:18px 0;padding:18px;background:#eef2ff;border-radius:12px;"><strong>Details des inscriptions :</strong><br/>${enrollmentSummary}</div>` : ''}
+    <p>Nous vous enverrons un second email des que le paiement sera valide et que l'inscription sera confirmee.</p>
   `;
 
   return sendMail({
     to: user.email,
     subject,
     html: renderEmailHtml({
-      title: 'Inscription enregistrée',
-      subtitle: 'Votre inscription a bien été prise en compte',
+      title: 'Inscription enregistree',
+      subtitle: 'Votre inscription a bien ete prise en compte',
       contentHtml,
     }),
   });
@@ -280,31 +469,33 @@ async function sendEnrollmentStatusEmail(user, subject, title, subtitle, summary
 async function sendEnrollmentApprovedEmail(user, enrollmentSummary = '') {
   return sendEnrollmentStatusEmail(
     user,
-    'Inscription validée',
-    'Inscription validée',
-    'Votre inscription a été validée par l’équipe administrative.',
-    `<p>Félicitations ! L’inscription suivante a été validée :</p><div style="margin:18px 0;padding:18px;background:#dcfce7;border-radius:12px;">${enrollmentSummary}</div>`,
+    'Inscription validee',
+    'Inscription validee',
+    "Votre inscription a ete validee par l'equipe administrative.",
+    `<p>Felicitations ! L'inscription suivante a ete validee :</p><div style="margin:18px 0;padding:18px;background:#dcfce7;border-radius:12px;">${enrollmentSummary}</div>`,
   );
 }
 
 async function sendEnrollmentRejectedEmail(user, enrollmentSummary = '', reason = '') {
   return sendEnrollmentStatusEmail(
     user,
-    'Inscription refusée',
-    'Inscription refusée',
-    'Votre inscription n’a pas été validée.',
-    `<p>Nous sommes désolés, l’inscription suivante a été refusée :</p><div style="margin:18px 0;padding:18px;background:#fee2e2;border-radius:12px;">${enrollmentSummary}</div>${reason ? `<p><strong>Motif :</strong> ${reason}</p>` : '<p>Pour plus d’informations, merci de contacter le secrétariat.</p>'}`,
+    'Inscription refusee',
+    'Inscription refusee',
+    "Votre inscription n'a pas ete validee.",
+    `<p>Nous sommes desoles, l'inscription suivante a ete refusee :</p><div style="margin:18px 0;padding:18px;background:#fee2e2;border-radius:12px;">${enrollmentSummary}</div>${reason ? `<p><strong>Motif :</strong> ${reason}</p>` : '<p>Pour plus d\'informations, merci de contacter le secretariat.</p>'}`,
   );
 }
 
 async function sendPaymentConfirmationEmail(user, payment) {
+  const payerName = payment?.payerName || payment?.metadata?.payerName || payment?.metadata?.payer_name || 'N/A';
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Nous confirmons la réception de votre paiement.</p>
+    <p>Nous confirmons la reception de votre paiement.</p>
     <ul>
-      <li><strong>Référence:</strong> ${payment.id}</li>
-      <li><strong>Montant:</strong> ${Number(payment.amount || payment.totalAmount || 0).toFixed(2)} €</li>
-      <li><strong>Méthode:</strong> ${payment.method || payment.paymentMethod}</li>
+      <li><strong>Reference:</strong> ${payment.id}</li>
+      <li><strong>Montant:</strong> ${Number(payment.amount || payment.totalAmount || 0).toFixed(2)} &euro;</li>
+      <li><strong>Methode:</strong> ${payment.method || payment.paymentMethod}</li>
+      <li><strong>Payeur:</strong> ${payerName}</li>
     </ul>
   `;
 
@@ -312,8 +503,8 @@ async function sendPaymentConfirmationEmail(user, payment) {
     to: user.email,
     subject: 'AMC — Confirmation de paiement',
     html: renderEmailHtml({
-      title: 'Paiement confirmé',
-      subtitle: 'Merci, votre paiement a bien été reçu',
+      title: 'Paiement confirme',
+      subtitle: 'Merci, votre paiement a bien ete recu',
       contentHtml,
     }),
   });
@@ -323,76 +514,78 @@ async function sendAccountApprovedEmail(user) {
   const loginUrl = `${config.frontendUrl}/login`;
   const contentHtml = `
     <p>Bonne nouvelle ${user.firstName},</p>
-    <p>Votre compte a été validé.</p>
+    <p>Votre compte a ete valide.</p>
     <p style="text-align:center;"><a href="${loginUrl}" style="display:inline-block;padding:10px 18px;background:#213B88;color:#fff;border-radius:6px;text-decoration:none;">Se connecter</a></p>
   `;
 
   return sendMail({
     to: user.email,
-    subject: 'AMC — Votre compte a été validé',
-    html: renderEmailHtml({ title: 'Compte validé', subtitle: '', contentHtml }),
+    subject: 'AMC — Votre compte a ete valide',
+    html: renderEmailHtml({ title: 'Compte valide', subtitle: '', contentHtml }),
   });
 }
 
 async function sendAccountRejectedEmail(user, reason) {
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Votre compte n'a pas été validé.</p>
+    <p>Votre compte n'a pas ete valide.</p>
     ${reason ? `<p><strong>Motif:</strong> ${reason}</p>` : ''}
   `;
 
   return sendMail({
     to: user.email,
     subject: 'AMC — Votre demande de compte',
-    html: renderEmailHtml({ title: 'Demande de compte', subtitle: 'Statut: refusé', contentHtml }),
+    html: renderEmailHtml({ title: 'Demande de compte', subtitle: 'Statut: refuse', contentHtml }),
   });
 }
 
 async function sendFamilyRegistrationConfirmationEmail(user, familySummary = '') {
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Votre inscription famille a bien été enregistrée. Nous avons reçu votre dossier complet.</p>
+    <p>Votre inscription famille a bien ete enregistree. Nous avons recu votre dossier complet.</p>
     ${familySummary ? `<div style="margin:12px 0;padding:12px;background:#eef2ff;border-radius:8px;">${familySummary}</div>` : ''}
-    <p>Prochaines étapes :</p>
+    <p>Prochaines etapes :</p>
     <ul>
-      <li>Vérifiez votre email pour activer votre compte</li>
-      <li>Effectuez le paiement selon l'échéancier fourni</li>
-      <li>Les inscriptions de vos enfants seront confirmées après paiement</li>
+      <li>Verifiez votre email pour activer votre compte</li>
+      <li>Effectuez le paiement selon l'echeancier fourni</li>
+      <li>Les inscriptions de vos enfants seront confirmees apres paiement</li>
     </ul>
   `;
 
   return sendMail({
     to: user.email,
-    subject: 'AMC — Inscription famille enregistrée',
-    html: renderEmailHtml({ title: 'Inscription famille enregistrée', subtitle: '', contentHtml }),
+    subject: 'AMC — Inscription famille enregistree',
+    html: renderEmailHtml({ title: 'Inscription famille enregistree', subtitle: '', contentHtml }),
   });
 }
 
 async function sendChildRegistrationConfirmationEmail(user, childName, enrollmentSummary = '') {
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>L'inscription de <strong>${childName}</strong> a bien été enregistrée.</p>
+    <p>L'inscription de <strong>${childName}</strong> a bien ete enregistree.</p>
     ${enrollmentSummary ? `<div style="margin:12px 0;padding:12px;background:#eef2ff;border-radius:8px;">${enrollmentSummary}</div>` : ''}
-    <p>Effectuez le paiement selon l'échéancier pour finaliser l'inscription.</p>
+    <p>Effectuez le paiement selon l'echeancier pour finaliser l'inscription.</p>
   `;
 
   return sendMail({
     to: user.email,
-    subject: `AMC — Inscription de ${childName} confirmée`,
-    html: renderEmailHtml({ title: 'Inscription confirmée', subtitle: '', contentHtml }),
+    subject: `AMC — Inscription de ${childName} confirmee`,
+    html: renderEmailHtml({ title: 'Inscription confirmee', subtitle: '', contentHtml }),
   });
 }
 
 async function sendOfflinePaymentConfirmationEmail(user, paymentData) {
+  const payerName = paymentData?.payerName || paymentData?.metadata?.payerName || paymentData?.metadata?.payer_name || 'N/A';
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Nous avons bien enregistré votre demande de paiement par <strong>${paymentData.method || 'chèque/espèces'}</strong>.</p>
+    <p>Nous avons bien enregistre votre demande de paiement par <strong>${paymentData.method || 'cheque/especes'}</strong>.</p>
     <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">
-      <strong>Montant total :</strong> ${Number(paymentData.totalAmount || 0).toFixed(2)} €<br/>
-      <strong>Nombre d'échéances :</strong> ${paymentData.numberOfInstallments || 1}<br/>
-      <strong>Méthode :</strong> ${paymentData.method || 'Chèque/Espèces'}
+      <strong>Montant total :</strong> ${Number(paymentData.totalAmount || 0).toFixed(2)} &euro;<br/>
+      <strong>Nombre d'echeances :</strong> ${paymentData.numberOfInstallments || 1}<br/>
+      <strong>Methode :</strong> ${paymentData.method || 'Cheque/Especes'}<br/>
+      <strong>Payeur :</strong> ${payerName}
     </div>
-    <p>${paymentData.instructions || 'Suivez les instructions communiquées pour finaliser votre paiement.'}</p>
+    <p>${paymentData.instructions || 'Suivez les instructions communiquees pour finaliser votre paiement.'}</p>
   `;
 
   return sendMail({
@@ -403,24 +596,26 @@ async function sendOfflinePaymentConfirmationEmail(user, paymentData) {
 }
 
 async function sendPaymentValidationEmail(user, paymentData) {
+  const payerName = paymentData?.payerName || paymentData?.metadata?.payerName || paymentData?.metadata?.payer_name || 'N/A';
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Nous avons confirmé votre paiement. Les inscriptions de vos enfants sont maintenant validées.</p>
+    <p>Nous avons confirme votre paiement. Les inscriptions de vos enfants sont maintenant validees.</p>
     <div style="background:#dcfce7;padding:18px;border-radius:12px;margin:18px 0;border-left:4px solid #22c55e;">
-      <strong>✓ Paiement confirmé</strong><br/>
-      Montant : ${Number(paymentData.totalAmount || paymentData.amount || 0).toFixed(2)} €<br/>
-      Méthode : ${paymentData.method || 'Carte bancaire'}<br/>
-      Référence : ${paymentData.id || 'N/A'}
+      <strong>&#10003; Paiement confirme</strong><br/>
+      Montant : ${Number(paymentData.totalAmount || paymentData.amount || 0).toFixed(2)} &euro;<br/>
+      Methode : ${paymentData.method || 'Carte bancaire'}<br/>
+      Payeur : ${payerName}<br/>
+      Reference : ${paymentData.id || 'N/A'}
     </div>
-    <p>Votre inscription est désormais confirmée. Merci de votre confiance.</p>
+    <p>Votre inscription est desormais confirmee. Merci de votre confiance.</p>
   `;
 
   return sendMail({
     to: user.email,
-    subject: 'AMC — Inscription confirmée',
+    subject: 'AMC — Inscription confirmee',
     html: renderEmailHtml({
-      title: 'Inscription confirmée',
-      subtitle: 'Le paiement est validé et l’inscription est confirmée',
+      title: 'Inscription confirmee',
+      subtitle: "Le paiement est valide et l'inscription est confirmee",
       contentHtml,
     }),
   });

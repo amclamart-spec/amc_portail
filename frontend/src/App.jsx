@@ -27,10 +27,12 @@ import AdminExports from './pages/admin/Exports';
 import AdminMailing from './pages/admin/Mailing';
 import AdminPlanning from './pages/admin/Planning';
 import AdminChat from './pages/admin/Chat';
+import AdminPayments from './pages/admin/Payments';
 import EnrollmentDashboard from './pages/EnrollmentDashboard';
 
 import TresorierDashboard from './pages/tresorier/Dashboard';
 import TresorierPayments from './pages/tresorier/Payments';
+import TresorierRefunds from './pages/tresorier/Refunds';
 
 import ProfesseurDashboard from './pages/professeur/Dashboard';
 import SuiviPedagogique from './pages/professeur/SuiviPedagogique';
@@ -62,6 +64,7 @@ function App() {
       <Route path="/admin/users" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminUsers /></Layout></PrivateRoute>} />
       <Route path="/admin/enrollments" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminEnrollments /></Layout></PrivateRoute>} />
       <Route path="/admin/settings" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminSettings /></Layout></PrivateRoute>} />
+      <Route path="/admin/payments" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminPayments /></Layout></PrivateRoute>} />
 
       <Route path="/admin/salles" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminRooms /></Layout></PrivateRoute>} />
       <Route path="/admin/creneaux" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminTimeslots /></Layout></PrivateRoute>} />
@@ -82,6 +85,7 @@ function App() {
 
       <Route path="/tresorier" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierDashboard /></Layout></PrivateRoute>} />
       <Route path="/tresorier/payments" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments /></Layout></PrivateRoute>} />
+      <Route path="/tresorier/refunds" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierRefunds /></Layout></PrivateRoute>} />
 
       <Route path="/professeur" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurDashboard /></Layout></PrivateRoute>} />
       <Route path="/suivi-pedagogique" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><SuiviPedagogique /></Layout></PrivateRoute>} />
