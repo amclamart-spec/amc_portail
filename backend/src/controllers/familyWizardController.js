@@ -216,6 +216,7 @@ async function getPricingPreview(req, res) {
 
 function mapPaymentMethod(method) {
   if (method === 'STRIPE_CARD') return { provider: 'STRIPE', paymentMethod: 'CB' };
+  if (method === 'STRIPE_SEPA') return { provider: 'STRIPE', paymentMethod: 'SEPA' };
   if (method === 'GO_CARDLESS_SEPA') return { provider: 'GOCARDLESS', paymentMethod: 'SEPA' };
   if (method === 'ESPECES') return { provider: 'OFFLINE', paymentMethod: 'ESPECES' };
   return { provider: 'OFFLINE', paymentMethod: 'CHEQUE' };
@@ -757,6 +758,7 @@ async function completeExistingFamilyRegistration(req, res) {
         const checkout = await createOnlineCheckout({
           provider,
           amount: paymentTotal,
+          paymentMethodType: paymentMethod === 'SEPA' ? 'sepa_debit' : 'card',
           paymentId: result.payment.id,
           returnUrl: urls.returnUrl,
           cancelUrl: urls.cancelUrl,
@@ -1412,6 +1414,7 @@ async function completeFamilyRegistration(req, res) {
       const checkout = await createOnlineCheckout({
         provider: result.payment.provider,
         amount: Number(result.payment.totalAmount || 0),
+        paymentMethodType: result.payment.paymentMethod === 'SEPA' ? 'sepa_debit' : 'card',
         paymentId: result.payment.id,
         returnUrl: urls.returnUrl,
         cancelUrl: urls.cancelUrl,
@@ -1458,7 +1461,7 @@ async function completeFamilyRegistration(req, res) {
           amount: toDecimal(result.payment.totalAmount),
           status: checkout.configured ? 'INITIATED' : 'FAILED',
           externalRef: checkout.externalPaymentId || null,
-          payerName: payment.payerName || `${user.firstName} ${user.lastName}`,
+          payerName: payment.payerName /*|| `${user.firstName} ${user.lastName}`*/,
           description: 'Paiement inscription initiale',
           metadata: checkout,
         },

@@ -46,6 +46,17 @@ export default function TresorierPayments() {
     }
   };
 
+  const handleTransactionAction = async (tx, action) => {
+    try {
+      await api.patch(`/payments/transactions/${tx.id}`, { status: action });
+      toast.success(action === 'validé' ? 'Paiement validé' : 'Paiement annulé');
+      await load(filters);
+    } catch (err) {
+      console.error('Erreur mise à jour transaction', err);
+      toast.error('Impossible de mettre à jour le paiement');
+    }
+  };
+
   useEffect(() => { load(); }, []);
 
   const applyFilters = () => load(filters);
@@ -237,6 +248,7 @@ export default function TresorierPayments() {
                 <th>Montant</th>
                 <th>Statut</th>
                 <th>Reçu</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -269,6 +281,14 @@ export default function TresorierPayments() {
                     >
                       <FiDownload size={16} /> Reçu
                     </button>
+                  </td>
+                  <td>
+                    {String(t.status) === 'INITIATED' && (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button className="btn btn-primary btn-sm" onClick={() => handleTransactionAction(t, 'validé')}>Valider</button>
+                        <button className="btn btn-outline btn-sm" onClick={() => handleTransactionAction(t, 'annulé')}>Annuler</button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
