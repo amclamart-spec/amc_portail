@@ -29,7 +29,7 @@ function toFormUrlEncoded(payload = {}) {
     .join('&');
 }
 
-async function createStripeCheckout({ amount, currency = 'eur', paymentId, returnUrl, cancelUrl, installments = 1, metadata = {}, customer = {} }) {
+async function createStripeCheckout({ amount, currency = 'eur', paymentId, returnUrl, cancelUrl, installments = 1, paymentMethodType = 'card', metadata = {}, customer = {} }) {
   if (!hasConfigValue(config.payments.stripeSecretKey)) {
     throw new Error('Clé Stripe non configurée : STRIPE_SECRET_KEY manquante ou invalide');
   }
@@ -43,16 +43,24 @@ async function createStripeCheckout({ amount, currency = 'eur', paymentId, retur
     mode: 'payment',
     'success_url': `${returnUrl}?payment_id=${paymentId}`,
     'cancel_url': `${cancelUrl}?payment_id=${paymentId}`,
+    'payment_method_types[0]': paymentMethodType,
     'line_items[0][price_data][currency]': currency.toLowerCase(),
     'line_items[0][price_data][product_data][name]': normalizedInstallments > 1
       ? `AMC Inscription #${paymentId} — 1/${normalizedInstallments}`
       : `AMC Inscription #${paymentId}`,
     'line_items[0][price_data][unit_amount]': Math.round(perInstallmentAmount * 100),
     'line_items[0][quantity]': 1,
-    'payment_intent_data[capture_method]': 'manual',
     'metadata[payment_id]': paymentId,
     'metadata[installments]': normalizedInstallments,
+    'metadata[checkout_amount]': String(amount),
+    'metadata[payment_method]': paymentMethodType,
   };
+
+  if (paymentMethodType === 'sepa_debit') {
+    formData['payment_intent_data[setup_future_usage]'] = 'off_session';
+  } else {
+    formData['payment_intent_data[capture_method]'] = 'manual';
+  }
 
   if (customer?.email) {
     formData['customer_email'] = customer.email;
@@ -168,6 +176,7 @@ async function createOnlineCheckout({
   amount,
   currency = 'EUR',
   paymentId,
+  paymentMethodType = 'card',
   returnUrl,
   cancelUrl,
   installments = 1,
@@ -185,7 +194,7 @@ async function createOnlineCheckout({
   }
 
   if (provider === 'STRIPE') {
-    return createStripeCheckout({ amount, currency, paymentId, returnUrl, cancelUrl, installments, metadata, customer });
+    return createStripeCheckout({ amount, currency, paymentId, paymentMethodType, returnUrl, cancelUrl, installments, metadata, customer });
   }
 
   if (provider === 'GOCARDLESS') {

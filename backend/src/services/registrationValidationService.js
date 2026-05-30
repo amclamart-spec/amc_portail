@@ -39,7 +39,7 @@ function getPaymentSettingsFromMethod(value) {
   }
 
   if (paymentMethod === 'SEPA') {
-    return { paymentMethod, provider: 'GOCARDLESS', paymentPlanType: 'GO_CARDLESS_SEPA' };
+    return { paymentMethod, provider: 'STRIPE', paymentPlanType: 'STRIPE_SEPA' };
   }
 
   if (paymentMethod === 'ESPECES') {
