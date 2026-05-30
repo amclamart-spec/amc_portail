@@ -473,7 +473,9 @@ async function getEnrollments(req, res) {
     if (enrollmentIds.length > 0) {
       const payments = await prisma.payment.findMany({
         where: {
-          metadata: { path: ['enrollmentIds'], array_contains: enrollmentIds },
+          OR: enrollmentIds.map((enrollmentId) => ({
+            metadata: { path: ['enrollmentIds'], array_contains: [enrollmentId] },
+          })),
         },
         select: { id: true, status: true, metadata: true },
       });
@@ -712,7 +714,7 @@ async function updateEnrollmentPayment(req, res) {
     }
 
     if (method !== undefined) {
-      const allowedMethods = ['CHEQUE', 'ESPECES', 'CB'];
+      const allowedMethods = ['CHEQUE', 'ESPECES', 'CB', 'STRIPE'];
       if (!allowedMethods.includes(method)) {
         return res.status(400).json({ error: 'Moyen de paiement invalide' });
       }
@@ -888,7 +890,7 @@ async function createEnrollmentPayment(req, res) {
     if (!parsedAmount || parsedAmount.lte(0)) {
       return res.status(400).json({ error: 'Montant de paiement invalide' });
     }
-    const allowedMethods = ['CHEQUE', 'ESPECES', 'CB'];
+    const allowedMethods = ['CHEQUE', 'ESPECES', 'CB', 'STRIPE'];
     if (!allowedMethods.includes(method)) {
       return res.status(400).json({ error: 'Moyen de paiement invalide' });
     }

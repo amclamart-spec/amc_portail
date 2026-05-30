@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
@@ -137,16 +137,6 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [activeHealthMember, setActiveHealthMember] = useState(0);
   const [emailError, setEmailError] = useState('');
 
-  const handleMemberPhotoChange = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setMemberForm((prev) => ({ ...prev, photoBase64: reader.result }));
-    };
-    reader.readAsDataURL(file);
-  };
-
   const [wizard, setWizard] = useState(() => {
     const saved = localStorage.getItem(storageKey);
     if (saved) {
@@ -159,6 +149,23 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     }
     return getDefaultState(prefill);
   });
+
+  const passwordRef = useRef(wizard.account.password);
+
+  const jumpToStep = async (target) => {
+    setStep(target);
+    await persistDraft(target);
+  };
+
+  const handleMemberPhotoChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setMemberForm((prev) => ({ ...prev, photoBase64: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
 
   const steps = existingFamily
     ? ['Membres famille', 'Cours & tarifs', 'Fiche sanitaire', 'Engagement', 'Paiement']
@@ -201,7 +208,14 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         phonePrimary: prev.address.phonePrimary || prefill.phone || '',
       };
 
-      if (account === prev.account && address === prev.address) {
+      const engagement = {
+        ...prev.engagement,
+        signedByFullName: prev.engagement.signedByFullName || `${prefill.firstName || ''} ${prefill.lastName || ''}`.trim(),
+        citySigned: prev.engagement.citySigned || '',
+        signedAt: prev.engagement.signedAt || new Date().toISOString().slice(0, 10),
+      };
+
+      if (account === prev.account && address === prev.address && engagement === prev.engagement) {
         return prev;
       }
 
@@ -209,9 +223,51 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         ...prev,
         account,
         address,
+        engagement,
       };
     });
   }, [prefill]);
+
+  useEffect(() => {
+    if (!wizard.members.length) return;
+
+    setWizard((prev) => {
+      const healthForms = { ...prev.healthForms };
+      let updated = false;
+      prev.members.forEach((member, idx) => {
+        if (!healthForms[idx]) {
+          healthForms[idx] = {
+            ...emptyHealthForm,
+            legalRepresentativeFullName: `${prev.account.firstName || ''} ${prev.account.lastName || ''}`.trim(),
+            citySigned: prev.address.city || '',
+            signedAt: prev.address.city ? new Date().toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+          };
+          updated = true;
+        }
+      });
+      if (!updated) return prev;
+      return { ...prev, healthForms };
+    });
+  }, [wizard.members, wizard.account.firstName, wizard.account.lastName, wizard.address.city]);
+
+  useEffect(() => {
+    if (!wizard.account.password) {
+      passwordRef.current = '';
+      return;
+    }
+
+    if (!wizard.account.confirmPassword || wizard.account.confirmPassword === passwordRef.current) {
+      setWizard((prev) => ({
+        ...prev,
+        account: {
+          ...prev.account,
+          confirmPassword: prev.account.password,
+        },
+      }));
+    }
+
+    passwordRef.current = wizard.account.password;
+  }, [wizard.account.password]);
 
   useEffect(() => {
     api.get('/enrollments/poles').then(({ data }) => setPoles(data.poles || [])).catch(() => {});
@@ -225,10 +281,16 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   useEffect(() => {
     const hasNewChild = wizard.members.some((member) => !member.isOldStudent);
     // If there is any new child, disallow online methods (Stripe / SEPA) and fallback to an offline method
-    if (hasNewChild && (wizard.payment.method === 'STRIPE_CARD' || wizard.payment.method === 'GO_CARDLESS_SEPA')) {
+    if (hasNewChild && (wizard.payment.method === 'STRIPE_CARD' || wizard.payment.method === 'STRIPE_SEPA' || wizard.payment.method === 'GO_CARDLESS_SEPA')) {
       updateWizard('payment', { method: 'ESPECES' });
     }
   }, [wizard.members]);
+
+  useEffect(() => {
+    if (wizard.payment.method === 'GO_CARDLESS_SEPA') {
+      updateWizard('payment', { method: 'STRIPE_SEPA', installmentsCount: 1 });
+    }
+  }, [wizard.payment.method]);
 
   const levelsById = useMemo(() => {
     return new Map(
@@ -432,8 +494,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
     if ((existingFamily && step === 4) || (!existingFamily && step === 5)) {
       const p = wizard.payment;
-      if (p.method === 'GO_CARDLESS_SEPA' && ![10, 20, 30].includes(Number(p.scheduleDay))) {
-        toast.error('Jour SEPA invalide (10/20/30)');
+      if ((p.method === 'STRIPE_CARD' || p.method === 'STRIPE_SEPA') && p.installmentsCount > 1 && ![10, 20, 30].includes(Number(p.scheduleDay))) {
+        toast.error('Jour de prélèvement invalide (10/20/30)');
         return false;
       }
       if (p.method === 'CHEQUE' && !p.chequeInstructionsAccepted) {
@@ -612,6 +674,10 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   return (
     <div style={{ minHeight: '100vh', background: '#F8FAFC', padding: 20 }}>
       <div className="card" style={{ maxWidth: 1100, margin: '0 auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <img src="/amc_logo.png" alt="AMC Logo" style={{ height: 50, objectFit: 'contain' }} />
+          <img src="/amc_logo_partner.png" alt="PARTAGE Logo" style={{ height: 50, objectFit: 'contain' }} />
+        </div>
         <h2 style={{ color: 'var(--amc-primary)', marginBottom: 8 }}>
           {existingFamily ? 'Ajouter un enfant et finaliser son inscription' : 'Assistant Inscription Famille'}
         </h2>
@@ -619,7 +685,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 24 }}>
           {steps.map((label, idx) => (
-            <div key={label} style={{ textAlign: 'center' }}>
+            <div key={label} style={{ textAlign: 'center', cursor: 'pointer' }} onClick={() => jumpToStep(idx)}>
               <div style={{
                 width: 30,
                 height: 30,
@@ -1185,10 +1251,10 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                   <label>Mode de paiement</label>
                   <select className="form-control" value={wizard.payment.method} onChange={(e) => {
                     const method = e.target.value;
-                    updateWizard('payment', { method, installmentsCount: method === 'STRIPE_CARD' ? 1 : wizard.payment.installmentsCount });
+                    updateWizard('payment', { method });
                   }}>
+                    <option value="STRIPE_SEPA">Prélèvement bancaire (IBAN via Stripe)</option>
                     <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
-                    <option value="GO_CARDLESS_SEPA">Prélèvement SEPA (GoCardless)</option>
                     <option value="ESPECES">Espèces</option>
                     <option value="CHEQUE">Chèque</option>
                   </select>
@@ -1204,32 +1270,30 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                   />
                 </div>
               </div>
-            {pricingPreview && wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
-              <div className="card" style={{ marginBottom: 14, background: '#FEF3C7' }}>
-                <strong>Frais de prélèvement</strong>
-                <div>Frais prélèvement SEPA: {Number(pricingPreview.fraisPrelevement).toFixed(2)} €</div>
-                <div style={{ marginTop: 8, fontWeight: 700 }}>
-                  Total SEPA: {Number(pricingPreview.total + pricingPreview.fraisPrelevement).toFixed(2)} €
-                </div>
-              </div>
-            )}
-
-            {/* Stripe payments are single payments in UI — no installments UI shown */}
-
-            {wizard.payment.method === 'GO_CARDLESS_SEPA' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <div className="form-group">
-                  <label>Mensualités (2 à 8)</label>
+            {wizard.payment.method === 'STRIPE_SEPA' && (
+              <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+                <div className="form-group" style={{ maxWidth: 320 }}>
+                  <label>Échéances</label>
                   <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
-                    {[2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n} mensualités</option>)}
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n} {n === 1 ? 'échéance' : 'échéances'}</option>)}
                   </select>
+                  <div style={{ fontSize: 13, color: '#475569', marginTop: 6 }}>
+                    Pour plus d’une échéance, votre mandat SEPA sera créé et votre IBAN enregistré pour les prélèvements automatiques.
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label>Jour de prélèvement</label>
-                  <select className="form-control" value={wizard.payment.scheduleDay} onChange={(e) => updateWizard('payment', { scheduleDay: Number(e.target.value) })}>
-                    {[10, 20, 30].map((d) => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
+                {wizard.payment.installmentsCount > 1 && (
+                  <>
+                    <div className="form-group" style={{ maxWidth: 320 }}>
+                      <label>Jour de prélèvement</label>
+                      <select className="form-control" value={wizard.payment.scheduleDay} onChange={(e) => updateWizard('payment', { scheduleDay: Number(e.target.value) })}>
+                        {[10, 20, 30].map((d) => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>
+                      Le premier prélèvement sera effectué immédiatement. Les échéances suivantes seront prélevées automatiquement le jour sélectionné chaque mois.
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -1264,6 +1328,14 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               <button className="btn btn-primary" onClick={submitFinal} disabled={submitting}>{submitting ? 'Validation...' : 'Confirmer & payer'}</button>
             )}
           </div>
+        </div>
+        <div style={{ marginTop: 24, padding: 16, border: '1px solid #E2E8F0', borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' }}>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <img src="/amc_logo.png" alt="AMC" style={{ height: 32, objectFit: 'contain' }} />
+            <img src="/amc_logo_partner.png" alt="PARTAGE" style={{ height: 32, objectFit: 'contain' }} />
+          </div>
+          <div style={{ fontWeight: 700 }}>Association AMC & PARTAGE</div>
+          <div style={{ color: '#475569', fontSize: 13 }}>Association Partage et des Musulmans de Clamart (AMC) — 92140 Clamart, France</div>
         </div>
       </div>
     </div>

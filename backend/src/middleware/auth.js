@@ -89,6 +89,11 @@ function authorizePermission(...permissions) {
 
     const missing = permissions.filter((p) => !hasPermission(req.user.role, p));
     if (missing.length > 0) {
+      console.warn(`Permission insuffisante pour rôle ${req.user.role} sur ${req.originalUrl}`, {
+        required: permissions,
+        userRole: req.user.role,
+        missing,
+      });
       return res.status(403).json({
         error: 'Permission insuffisante',
         required: permissions,

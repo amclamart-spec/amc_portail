@@ -533,6 +533,7 @@ model EnrollmentConsent {
 
 enum PaymentPlanType {
   STRIPE_CARD
+  STRIPE_SEPA
   GO_CARDLESS_SEPA
   CHEQUE
   ESPECES

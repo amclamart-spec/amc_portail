@@ -10,6 +10,8 @@ export default function AdminEnrollments() {
   const [editingEnrollment, setEditingEnrollment] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentEnrollment, setPaymentEnrollment] = useState(null);
   const [recordModalOpen, setRecordModalOpen] = useState(false);
   const [recordStudent, setRecordStudent] = useState(null);
   const [recordData, setRecordData] = useState({ absences: [], notes: [] });
@@ -202,10 +204,13 @@ export default function AdminEnrollments() {
       return acc;
     }, {});
 
-    return Object.values(groups).map((group) => ({
-      ...group,
-      enrollments: group.enrollments.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    })).sort((a, b) => b.latestCreatedAt - a.latestCreatedAt);
+    return Object.values(groups).map((group) => {
+      const sortedEnrollments = group.enrollments.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return {
+        ...group,
+        enrollments: sortedEnrollments,
+      };
+    }).sort((a, b) => b.latestCreatedAt - a.latestCreatedAt);
   }, [visibleEnrollments]);
 
   const toggleFamilyExpansion = (familyId) => {
@@ -318,16 +323,7 @@ export default function AdminEnrollments() {
           : [{ fullName: '', relationship: '', phone: '' }],
       },
     });
-    setEnrollmentPayments([]);
-    setEditingPaymentId(null);
-    setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
-    setRefundAccessCode('');
-    setRefundCodeValidated(false);
-    setRefundCodeValidating(false);
-    setRefundForm({ date: new Date().toISOString().slice(0, 10), amount: '', method: 'CHEQUE', comment: '' });
-    setRefunds([]);
     setModalOpen(true);
-    fetchEnrollmentPayments(enrollment.id);
   };
 
   const fetchEnrollmentPayments = async (enrollmentId) => {
@@ -340,9 +336,37 @@ export default function AdminEnrollments() {
     }
   };
 
+  const openPaymentModal = (enrollment) => {
+    setPaymentEnrollment(enrollment);
+    setEditingPaymentId(null);
+    setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+    setRefundAccessCode('');
+    setRefundCodeValidated(false);
+    setRefundCodeValidating(false);
+    setRefundForm({ date: new Date().toISOString().slice(0, 10), amount: '', method: 'CHEQUE', comment: '' });
+    setRefunds([]);
+    setEnrollmentPayments([]);
+    setPaymentModalOpen(true);
+    fetchEnrollmentPayments(enrollment.id);
+  };
+
+  const closePaymentModal = () => {
+    setPaymentModalOpen(false);
+    setPaymentEnrollment(null);
+    setEnrollmentPayments([]);
+    setEditingPaymentId(null);
+    setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+    setRefundAccessCode('');
+    setRefundCodeValidated(false);
+    setRefundCodeValidating(false);
+    setRefundForm({ date: new Date().toISOString().slice(0, 10), amount: '', method: 'CHEQUE', comment: '' });
+    setRefunds([]);
+  };
+
   const submitEnrollmentPayment = async (event) => {
     event.preventDefault();
-    if (!editingEnrollment) return;
+    const activeEnrollment = paymentEnrollment || editingEnrollment;
+    if (!activeEnrollment) return;
 
     setPaymentLoading(true);
     try {
@@ -355,17 +379,29 @@ export default function AdminEnrollments() {
         amount: Number(paymentForm.amount),
       };
 
+      // If editing an existing transaction, detect provider to confirm Stripe actions
       if (editingPaymentId) {
-        await api.patch(`/admin/enrollments/${editingEnrollment.id}/payments/${editingPaymentId}`, requestBody);
+        const original = enrollmentPayments.find((p) => p.id === editingPaymentId) || {};
+        const provider = String(original.provider || '').toUpperCase();
+        // When acting on a Stripe transaction, ask for confirmation before validating or cancelling
+        if (provider === 'STRIPE' && (requestBody.status === 'validé' || requestBody.status === 'annulé')) {
+          const actionLabel = requestBody.status === 'validé' ? 'valider (finaliser) le paiement dans Stripe' : 'annuler le paiement dans Stripe';
+          const confirmMsg = `Vous êtes sur le point de ${actionLabel}. Confirmer ?`;
+          if (!window.confirm(confirmMsg)) {
+            setPaymentLoading(false);
+            return;
+          }
+        }
+        await api.patch(`/admin/enrollments/${activeEnrollment.id}/payments/${editingPaymentId}`, requestBody);
         toast.success('Paiement modifié');
       } else {
-        await api.post(`/admin/enrollments/${editingEnrollment.id}/payments`, requestBody);
+        await api.post(`/admin/enrollments/${activeEnrollment.id}/payments`, requestBody);
         toast.success('Paiement enregistré');
       }
 
       setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
       setEditingPaymentId(null);
-      fetchEnrollmentPayments(editingEnrollment.id);
+      fetchEnrollmentPayments(activeEnrollment.id);
     } catch (error) {
       toast.error(error.response?.data?.error || 'Impossible d’enregistrer le paiement');
     } finally {
@@ -391,16 +427,17 @@ export default function AdminEnrollments() {
   };
 
   const deleteEnrollmentPayment = async (paymentId) => {
-    if (!editingEnrollment) return;
+    const activeEnrollment = paymentEnrollment || editingEnrollment;
+    if (!activeEnrollment) return;
     if (!window.confirm('Confirmer la suppression de ce paiement ?')) return;
 
     try {
-      await api.delete(`/admin/enrollments/${editingEnrollment.id}/payments/${paymentId}`);
+      await api.delete(`/admin/enrollments/${activeEnrollment.id}/payments/${paymentId}`);
       toast.success('Paiement supprimé');
       if (editingPaymentId === paymentId) {
         cancelEditPayment();
       }
-      fetchEnrollmentPayments(editingEnrollment.id);
+      fetchEnrollmentPayments(activeEnrollment.id);
     } catch (error) {
       toast.error(error.response?.data?.error || 'Impossible de supprimer le paiement');
     }
@@ -409,10 +446,11 @@ export default function AdminEnrollments() {
   const canEditPayment = (payment) => String(payment.status) !== 'SUCCEEDED';
 
   const downloadEnrollmentPaymentReceipt = (payment) => {
-    if (!editingEnrollment) return;
+    const activeEnrollment = paymentEnrollment || editingEnrollment;
+    if (!activeEnrollment) return;
     try {
       const link = document.createElement('a');
-      link.href = `/api/admin/enrollments/${editingEnrollment.id}/payments/${payment.id}/receipt`;
+      link.href = `/api/admin/enrollments/${activeEnrollment.id}/payments/${payment.id}/receipt`;
       link.download = `recu-${payment.id}.pdf`;
       document.body.appendChild(link);
       link.click();
@@ -423,27 +461,67 @@ export default function AdminEnrollments() {
     }
   };
 
-  const addRefundEntry = () => {
+  const addRefundEntry = async () => {
     if (!refundForm.date || !refundForm.amount || !refundForm.method) {
       toast.error('Veuillez renseigner la date, le montant et le moyen du remboursement.');
       return;
     }
+    if (!refundCodeValidated) {
+      toast.error('Veuillez valider le code d’accès avant d’ajouter un remboursement.');
+      return;
+    }
+    if (enrollmentPayments.length === 0) {
+      toast.error('Veuillez enregistrer un paiement avant de créer un remboursement.');
+      return;
+    }
 
-    setRefunds((prev) => [
-      ...prev,
-      {
-        id: `refund-${Date.now()}`,
-        date: refundForm.date,
-        amount: Number(refundForm.amount).toFixed(2),
-        method: refundForm.method,
-        comment: refundForm.comment,
-      },
-    ]);
-    setRefundForm({ date: new Date().toISOString().slice(0, 10), amount: '', method: 'CHEQUE', comment: '' });
+    const activeEnrollment = paymentEnrollment || editingEnrollment;
+    if (!activeEnrollment) return;
+    const paymentId = enrollmentPayments[0].id || enrollmentPayments[0].paymentId;
+    if (!paymentId) {
+      toast.error('Impossible de trouver le paiement associé.');
+      return;
+    }
+
+    try {
+      const { data } = await api.post('/payments/refunds', {
+        paymentId,
+        amount: Number(refundForm.amount),
+        reason: `${refundForm.method} - ${refundForm.comment || 'N/A'}`,
+      });
+      const savedRefund = data.refund || { id: `refund-${Date.now()}` };
+      setRefunds((prev) => [
+        ...prev,
+        {
+          id: savedRefund.id,
+          date: refundForm.date,
+          amount: Number(refundForm.amount).toFixed(2),
+          method: refundForm.method,
+          comment: refundForm.comment,
+        },
+      ]);
+      setRefundForm({ date: new Date().toISOString().slice(0, 10), amount: '', method: 'CHEQUE', comment: '' });
+      toast.success('Remboursement enregistré');
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Impossible d’enregistrer le remboursement');
+    }
   };
 
-  const deleteRefundEntry = (refundId) => {
-    setRefunds((prev) => prev.filter((refund) => refund.id !== refundId));
+  const deleteRefundEntry = async (refundId) => {
+    const refund = refunds.find((item) => item.id === refundId);
+    if (!refund) return;
+    if (refund.id.startsWith('refund-')) {
+      setRefunds((prev) => prev.filter((item) => item.id !== refundId));
+      return;
+    }
+
+    try {
+      await api.delete(`/payments/refunds/${refundId}`);
+      setRefunds((prev) => prev.filter((item) => item.id !== refundId));
+      toast.success('Remboursement supprimé');
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Impossible de supprimer le remboursement');
+    }
   };
 
   const validateRefundCode = async () => {
@@ -616,23 +694,6 @@ export default function AdminEnrollments() {
       setModalOpen(false);
       setEditingEnrollment(null);
       setEditForm(null);
-      
-      // Save any added refunds (separate from enrollment update)
-      if (refunds.length > 0 && enrollmentPayments.length > 0) {
-        const defaultPayment = enrollmentPayments[0];
-        for (const refund of refunds) {
-          try {
-            await api.post('/payments/refunds', {
-              paymentId: defaultPayment.paymentId,
-              amount: Number(refund.amount),
-              reason: `${refund.method} - ${refund.comment || 'N/A'}`,
-            });
-          } catch (err) {
-            console.warn(`Erreur lors de la sauvegarde du remboursement: ${err.message}`);
-            toast.error(`Impossible de créer le remboursement: ${err.response?.data?.error || err.message}`);
-          }
-        }
-      }
     } catch (error) {
       toast.error(error.response?.data?.error || 'Erreur lors de la mise à jour');
     }
@@ -906,6 +967,14 @@ export default function AdminEnrollments() {
                         <button
                           className="btn btn-outline btn-sm"
                           type="button"
+                          onClick={() => openPaymentModal(e)}
+                          style={{ minWidth: 88, marginLeft: 8 }}
+                        >
+                          Paiement
+                        </button>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          type="button"
                           onClick={() => openEditModal(e)}
                           style={{ minWidth: 88, marginLeft: 8 }}
                         >
@@ -991,304 +1060,6 @@ export default function AdminEnrollments() {
                 </div>
               </div>
             </div>
-
-            <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#FBFBFD' }}>
-              <h4>Gestion de paiements</h4>
-              <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Nom payeur</label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={paymentForm.payerName}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, payerName: event.target.value }))}
-                    />
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Date</label>
-                    <input
-                      type="date"
-                      className="form-control"
-                      value={paymentForm.date}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, date: event.target.value }))}
-                      disabled={Boolean(editingPaymentId)}
-                    />
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Moyen</label>
-                    <select
-                      className="form-control"
-                      value={paymentForm.method}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, method: event.target.value }))}
-                    >
-                      <option value="CHEQUE">Chèque</option>
-                      <option value="ESPECES">Espèces</option>
-                      <option value="CB">Carte Bancaire</option>
-                    </select>
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Statut paiement</label>
-                    <select
-                      className="form-control"
-                      value={paymentForm.status}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, status: event.target.value }))}
-                    >
-                      <option value="validé">validé</option>
-                      <option value="non validé">non validé</option>
-                      <option value="annulé">annulé</option>
-                    </select>
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Montant</label>
-                    <input
-                      type="number"
-                      className="form-control"
-                      step="0.01"
-                      value={paymentForm.amount}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label>Commentaire</label>
-                  <textarea
-                    className="form-control"
-                    rows={2}
-                    value={paymentForm.comment}
-                    onChange={(event) => setPaymentForm((prev) => ({ ...prev, comment: event.target.value }))}
-                  />
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={submitEnrollmentPayment}
-                    disabled={paymentLoading}
-                  >
-                    {paymentLoading ? 'Enregistrement...' : editingPaymentId ? 'Mettre à jour le paiement' : 'Ajouter le paiement'}
-                  </button>
-                  {editingPaymentId && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={cancelEditPayment}
-                      disabled={paymentLoading}
-                    >
-                      Annuler
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {enrollmentPayments.length > 0 ? (
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Paiements</div>
-                  <div className="table-container">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Payeur</th>
-                          <th>Moyen</th>
-                          <th>Montant</th>
-                          <th>Statut</th>
-                          <th>Description</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {enrollmentPayments.map((payment) => (
-                          <tr key={payment.id}>
-                            <td>{formatDate(payment.processedAt || payment.createdAt)}</td>
-                            <td>{payment.payerName || '—'}</td>
-                            <td>{payment.method || '—'}</td>
-                            <td>{Number(payment.amount).toFixed(2)} €</td>
-                            <td>{paymentStatusLabel(payment.status)}</td>
-                            <td>{payment.description || '—'}</td>
-                            <td>
-                              <button
-                                type="button"
-                                className="btn btn-link"
-                                onClick={() => downloadEnrollmentPaymentReceipt(payment)}
-                                title="Télécharger le reçu"
-                              >
-                                📥 Reçu
-                              </button>
-                              {canEditPayment(payment) ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    className="btn btn-link"
-                                    onClick={() => editEnrollmentPayment(payment)}
-                                    title="Modifier le paiement"
-                                  >
-                                    ✏️ Modifier
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn-link text-danger"
-                                    onClick={() => deleteEnrollmentPayment(payment.id)}
-                                    title="Supprimer le paiement"
-                                  >
-                                    🗑️ Supprimer
-                                  </button>
-                                </>
-                              ) : (
-                                <span style={{ color: '#16a34a', fontWeight: 600, marginLeft: 8 }}>
-                                  Validé
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <p>Aucun paiement enregistré pour cette inscription.</p>
-              )}
-            </div>
-
-            <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#F9FAFB', marginTop: 16 }}>
-              <h4>Accès remboursement</h4>
-              <div style={{ display: 'grid', gap: 12 }}>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label>Code d'accès</label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={refundAccessCode}
-                      onChange={(event) => {
-                        setRefundAccessCode(event.target.value);
-                        if (refundCodeValidated) {
-                          setRefundCodeValidated(false);
-                        }
-                      }}
-                      placeholder="Saisir le code d'accès généré par l'espace trésorier"
-                      disabled={refundCodeValidated}
-                      style={{ flex: 1 }}
-                    />
-                    {!refundCodeValidated && (
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={validateRefundCode}
-                        disabled={refundCodeValidating || !refundAccessCode.trim()}
-                      >
-                        {refundCodeValidating ? 'Validation...' : 'Valider'}
-                      </button>
-                    )}
-                    {refundCodeValidated && (
-                      <div style={{ display: 'flex', alignItems: 'center', color: 'var(--amc-success)', fontWeight: 'bold' }}>
-                        ✓ Validé
-                      </div>
-                    )}
-                  </div>
-                  <small style={{ color: '#6B7280', marginTop: 4, display: 'block' }}>
-                    {refundCodeValidated
-                      ? 'Code valide. Vous pouvez maintenant enregistrer des remboursements.'
-                      : 'Ce bloc sera affiché uniquement après validation du code.'}
-                  </small>
-                </div>
-              </div>
-            </div>
-
-            {refundCodeValidated && (
-              <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#FFFFFF', marginTop: 16 }}>
-                <h4>Remboursement</h4>
-                <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                    <div className="form-group" style={{ margin: 0 }}>
-                      <label>Date remboursement</label>
-                      <input
-                        type="date"
-                        className="form-control"
-                        value={refundForm.date}
-                        onChange={(event) => setRefundForm((prev) => ({ ...prev, date: event.target.value }))}
-                      />
-                    </div>
-                    <div className="form-group" style={{ margin: 0 }}>
-                      <label>Montant</label>
-                      <input
-                        type="number"
-                        className="form-control"
-                        step="0.01"
-                        value={refundForm.amount}
-                        onChange={(event) => setRefundForm((prev) => ({ ...prev, amount: event.target.value }))}
-                      />
-                    </div>
-                    <div className="form-group" style={{ margin: 0 }}>
-                      <label>Moyen</label>
-                      <select
-                        className="form-control"
-                        value={refundForm.method}
-                        onChange={(event) => setRefundForm((prev) => ({ ...prev, method: event.target.value }))}
-                      >
-                        <option value="CHEQUE">Chèque</option>
-                        <option value="ESPECES">Espèces</option>
-                        <option value="CB">Carte Bancaire</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Commentaire</label>
-                    <textarea
-                      className="form-control"
-                      rows={2}
-                      value={refundForm.comment}
-                      onChange={(event) => setRefundForm((prev) => ({ ...prev, comment: event.target.value }))}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                    <button type="button" className="btn btn-primary" onClick={addRefundEntry}>
-                      Ajouter un remboursement
-                    </button>
-                  </div>
-                </div>
-
-                {refunds.length > 0 ? (
-                  <div className="table-container">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Date remboursement</th>
-                          <th>Montant</th>
-                          <th>Moyen</th>
-                          <th>Commentaire</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {refunds.map((refund) => (
-                          <tr key={refund.id}>
-                            <td>{refund.date}</td>
-                            <td>{refund.amount} €</td>
-                            <td>{refund.method}</td>
-                            <td>{refund.comment || '—'}</td>
-                            <td>
-                              <button
-                                type="button"
-                                className="btn btn-link text-danger"
-                                onClick={() => deleteRefundEntry(refund.id)}
-                              >
-                                Supprimer
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p>Aucun remboursement enregistré pour le moment.</p>
-                )}
-              </div>
-            )}
 
             <div className="form-section">
               <h4>Informations famille</h4>
@@ -1675,6 +1446,322 @@ export default function AdminEnrollments() {
               <button type="button" className="btn btn-outline" onClick={closeModal}>Annuler</button>
               <button type="button" className="btn btn-primary" onClick={saveEnrollment}>Enregistrer</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {paymentModalOpen && paymentEnrollment && (
+        <div className="modal-overlay">
+          <div className="card modal-card">
+            <div className="card-header" style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 16 }}>
+              <div style={{ minWidth: 0 }}>
+                <h3>Paiements & remboursements</h3>
+                <p style={{ margin: '6px 0 0', color: '#6B7280' }}>
+                  Gérer les paiements et remboursements pour l’inscription de {paymentEnrollment.student?.firstName} {paymentEnrollment.student?.lastName}.
+                </p>
+              </div>
+              <div>
+                <button type="button" className="btn btn-outline btn-sm" onClick={closePaymentModal}>Fermer</button>
+              </div>
+            </div>
+
+            <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#FBFBFD', marginTop: 16 }}>
+              <h4>Paiement</h4>
+              <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Nom payeur</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={paymentForm.payerName}
+                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, payerName: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Date</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={paymentForm.date}
+                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, date: event.target.value }))}
+                      disabled={Boolean(editingPaymentId)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Moyen</label>
+                    <select
+                      className="form-control"
+                      value={paymentForm.method}
+                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, method: event.target.value }))}
+                    >
+                      <option value="CHEQUE">Chèque</option>
+                      <option value="ESPECES">Espèces</option>
+                      <option value="CB">Carte Bancaire</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Statut paiement</label>
+                    <select
+                      className="form-control"
+                      value={paymentForm.status}
+                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, status: event.target.value }))}
+                    >
+                      <option value="validé">validé</option>
+                      <option value="non validé">non validé</option>
+                      <option value="annulé">annulé</option>
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Montant</label>
+                    <input
+                      type="number"
+                      className="form-control"
+                      step="0.01"
+                      value={paymentForm.amount}
+                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Commentaire</label>
+                  <textarea
+                    className="form-control"
+                    rows={2}
+                    value={paymentForm.comment}
+                    onChange={(event) => setPaymentForm((prev) => ({ ...prev, comment: event.target.value }))}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={submitEnrollmentPayment}
+                    disabled={paymentLoading}
+                  >
+                    {paymentLoading ? 'Enregistrement...' : editingPaymentId ? 'Mettre à jour le paiement' : 'Ajouter le paiement'}
+                  </button>
+                  {editingPaymentId && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={cancelEditPayment}
+                      disabled={paymentLoading}
+                    >
+                      Annuler
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {enrollmentPayments.length > 0 ? (
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Paiements</div>
+                  <div className="table-container">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Payeur</th>
+                          <th>Moyen</th>
+                          <th>Montant</th>
+                          <th>Statut</th>
+                          <th>Description</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {enrollmentPayments.map((payment) => (
+                          <tr key={payment.id}>
+                            <td>{formatDate(payment.processedAt || payment.createdAt)}</td>
+                            <td>{payment.payerName || '—'}</td>
+                            <td>{payment.method || '—'}</td>
+                            <td>{Number(payment.amount).toFixed(2)} €</td>
+                            <td>{paymentStatusLabel(payment.status)}</td>
+                            <td>{payment.description || '—'}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn btn-link"
+                                onClick={() => downloadEnrollmentPaymentReceipt(payment)}
+                                title="Télécharger le reçu"
+                              >
+                                📥 Reçu
+                              </button>
+                              {canEditPayment(payment) ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn-link"
+                                    onClick={() => editEnrollmentPayment(payment)}
+                                    title="Modifier le paiement"
+                                  >
+                                    ✏️ Modifier
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-link text-danger"
+                                    onClick={() => deleteEnrollmentPayment(payment.id)}
+                                    title="Supprimer le paiement"
+                                  >
+                                    🗑️ Supprimer
+                                  </button>
+                                </>
+                              ) : (
+                                <span style={{ color: '#16a34a', fontWeight: 600, marginLeft: 8 }}>
+                                  Validé
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <p>Aucun paiement enregistré pour cette inscription.</p>
+              )}
+            </div>
+
+            <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#F9FAFB', marginTop: 16 }}>
+              <h4>Accès remboursement</h4>
+              <div style={{ display: 'grid', gap: 12 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Code d'accès</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={refundAccessCode}
+                      onChange={(event) => {
+                        setRefundAccessCode(event.target.value);
+                        if (refundCodeValidated) {
+                          setRefundCodeValidated(false);
+                        }
+                      }}
+                      placeholder="Saisir le code d'accès généré par l'espace trésorier"
+                      disabled={refundCodeValidated}
+                      style={{ flex: 1 }}
+                    />
+                    {!refundCodeValidated && (
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={validateRefundCode}
+                        disabled={refundCodeValidating || !refundAccessCode.trim()}
+                      >
+                        {refundCodeValidating ? 'Validation...' : 'Valider'}
+                      </button>
+                    )}
+                    {refundCodeValidated && (
+                      <div style={{ display: 'flex', alignItems: 'center', color: 'var(--amc-success)', fontWeight: 'bold' }}>
+                        ✓ Validé
+                      </div>
+                    )}
+                  </div>
+                  <small style={{ color: '#6B7280', marginTop: 4, display: 'block' }}>
+                    {refundCodeValidated
+                      ? 'Code valide. Vous pouvez maintenant enregistrer des remboursements.'
+                      : 'Ce bloc sera affiché uniquement après validation du code.'}
+                  </small>
+                </div>
+              </div>
+            </div>
+
+            {refundCodeValidated && (
+              <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#FFFFFF', marginTop: 16 }}>
+                <h4>Remboursement</h4>
+                <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Date remboursement</label>
+                      <input
+                        type="date"
+                        className="form-control"
+                        value={refundForm.date}
+                        onChange={(event) => setRefundForm((prev) => ({ ...prev, date: event.target.value }))}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Montant</label>
+                      <input
+                        type="number"
+                        className="form-control"
+                        step="0.01"
+                        value={refundForm.amount}
+                        onChange={(event) => setRefundForm((prev) => ({ ...prev, amount: event.target.value }))}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Moyen</label>
+                      <select
+                        className="form-control"
+                        value={refundForm.method}
+                        onChange={(event) => setRefundForm((prev) => ({ ...prev, method: event.target.value }))}
+                      >
+                        <option value="CHEQUE">Chèque</option>
+                        <option value="ESPECES">Espèces</option>
+                        <option value="CB">Carte Bancaire</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Commentaire</label>
+                    <textarea
+                      className="form-control"
+                      rows={2}
+                      value={refundForm.comment}
+                      onChange={(event) => setRefundForm((prev) => ({ ...prev, comment: event.target.value }))}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                    <button type="button" className="btn btn-primary" onClick={addRefundEntry}>
+                      Ajouter un remboursement
+                    </button>
+                  </div>
+                </div>
+
+                {refunds.length > 0 ? (
+                  <div className="table-container">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date remboursement</th>
+                          <th>Montant</th>
+                          <th>Moyen</th>
+                          <th>Commentaire</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {refunds.map((refund) => (
+                          <tr key={refund.id}>
+                            <td>{refund.date}</td>
+                            <td>{refund.amount} €</td>
+                            <td>{refund.method}</td>
+                            <td>{refund.comment || '—'}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn btn-link text-danger"
+                                onClick={() => deleteRefundEntry(refund.id)}
+                              >
+                                Supprimer
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p>Aucun remboursement enregistré pour le moment.</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -58,7 +58,7 @@ function getTransporter() {
 // ---------------------------------------------------------------------------
 
 async function sendWithBrevo({ to, subject, html, text, attachments }) {
-  const { apiKey } = config.brevo;
+  const { apiKey } = config.brevoEmail;
 
   if (!apiKey) {
     throw new Error('BREVO_API_KEY manquante pour envoi email Brevo');
@@ -207,7 +207,7 @@ function isSmtpConfigured() {
 }
 
 function isBrevoConfigured() {
-  return Boolean(config.brevo && config.brevo.apiKey);
+  return Boolean(/*config.brevoEmail &&*/ config.brevoEmail.apiKey);
 }
 
 /**
