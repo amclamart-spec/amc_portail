@@ -1,6 +1,7 @@
 const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
+const { BrevoClient } = require('@getbrevo/brevo');
 const config = require('../config');
 
 let transporter;
@@ -111,22 +112,10 @@ async function sendWithBrevo({ to, subject, html, text, attachments }) {
 
   console.log(`[EMAIL][BREVO] Envoi a ${recipientEmail} - sujet: ${subject}`);
 
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': apiKey,
-    },
-    body: JSON.stringify(brevoBody),
-  });
+  const client = new BrevoClient({ apiKey });
+  const result = await client.transactionalEmails.sendTransacEmail(brevoBody);
 
-  if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Brevo API error ${response.status}: ${details}`);
-  }
-
-  const result = await response.json();
-  console.log(`[EMAIL][BREVO] Envoi reussi - messageId: ${result.messageId || 'N/A'}`);
+  console.log(`[EMAIL][BREVO] Envoi reussi - messageId: ${result?.messageId || 'N/A'}`);
   return result;
 }
 
