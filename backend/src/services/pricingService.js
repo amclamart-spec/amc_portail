@@ -315,10 +315,16 @@ function buildInstallmentSchedule(totalAmount, numberOfInstallments, options = {
   const { dayOfMonth = 10, startDate = new Date() } = options;
   const parts = calculateInstallments(totalAmount, numberOfInstallments);
 
+  const firstDueDate = new Date(startDate);
+  firstDueDate.setDate(1);
+  firstDueDate.setDate(Math.min(dayOfMonth, 28));
+  if (firstDueDate < startDate) {
+    firstDueDate.setMonth(firstDueDate.getMonth() + 1);
+  }
+
   return parts.map((p, index) => {
-    const dueDate = new Date(startDate);
+    const dueDate = new Date(firstDueDate);
     dueDate.setMonth(dueDate.getMonth() + index);
-    dueDate.setDate(Math.min(dayOfMonth, 28));
 
     return {
       installmentNumber: p.number,

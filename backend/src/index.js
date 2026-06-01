@@ -10,6 +10,7 @@ const config = require('./config');
 const routes = require('./routes');
 const authRoutes = require('./routes/auth');
 const configurePassport = require('./config/passport');
+// SEPA scheduler disabled: mandate-first should not rely on backend polling for pending payments
 
 const app = express();
 const passport = configurePassport();
@@ -33,8 +34,12 @@ app.use(cookieParser());
 app.use(passport.initialize());
 
 // Webhooks paiement: body brut nécessaire pour vérifier les signatures
+const webhookRoutes = require('./routes/webhookRoutes');
+
+app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 app.use('/api/payments/webhooks/stripe', express.raw({ type: 'application/json' }));
 app.use('/api/payments/webhooks/gocardless', express.raw({ type: 'application/json' }));
+app.use('/api/webhooks', webhookRoutes);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -72,6 +77,8 @@ const server = app.listen(PORT, () => {
   📀 Environnement: ${config.nodeEnv}
   🔗 Frontend: ${config.frontendUrl}
   `);
+
+  // SEPA scheduler disabled by default for mandate-first flow
 });
 
 server.on('error', (error) => {

@@ -9,8 +9,8 @@ const {
   sendMail,
 } = require('../services/emailService');
 const { resolvePricingConfig, calculateFamilyTotal, buildInstallmentSchedule } = require('../services/pricingService');
-const { createOnlineCheckout } = require('../services/paymentProviders');
-const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
+const { createOnlineCheckout, createStripeCustomer, createStripeSepaSetupIntent } = require('../services/paymentProviders');
+const { getNextEnrollmentRegistrationCode, extractSchoolYearCode } = require('../utils/enrollmentUtils');
 const { getProvisionalClassFilter, PROVISIONAL_CLASS_NAME } = require('../utils/provisionalClassUtils');
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { isRegistrationBlocked } = require('../services/systemService');
@@ -225,6 +225,7 @@ function mapPaymentMethod(method) {
   if (method === 'STRIPE_SEPA') return { provider: 'STRIPE', paymentMethod: 'SEPA' };
   if (method === 'GO_CARDLESS_SEPA') return { provider: 'GOCARDLESS', paymentMethod: 'SEPA' };
   if (method === 'ESPECES') return { provider: 'OFFLINE', paymentMethod: 'ESPECES' };
+  if (method === 'CHEQUE') return { provider: 'OFFLINE', paymentMethod: 'CHEQUE' };
   return { provider: 'OFFLINE', paymentMethod: 'CHEQUE' };
 }
 
@@ -472,7 +473,7 @@ async function completeExistingFamilyRegistration(req, res) {
           if (!cls) continue;
 
           const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
-          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const registrationCode = getNextRegistrationCode();
           const enrollmentData = {
             registrationCode,
             studentId: student.id,
@@ -508,7 +509,7 @@ async function completeExistingFamilyRegistration(req, res) {
           const pole = poleById.get(selection.poleId) || level.pole;
           if (!pole) continue;
 
-          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const registrationCode = getNextRegistrationCode();
           const enrollmentData = {
             registrationCode,
             studentId: student.id,
@@ -526,7 +527,7 @@ async function completeExistingFamilyRegistration(req, res) {
           const pole = poleById.get(selection.poleId);
           if (!pole) continue;
 
-          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const registrationCode = getNextRegistrationCode();
           const enrollmentData = {
             registrationCode,
             studentId: student.id,
@@ -623,7 +624,7 @@ async function completeExistingFamilyRegistration(req, res) {
         const student = students[i];
         const already = createdEnrollments.find((e) => e.studentId === student.id);
         if (!already) {
-          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+const registrationCode = getNextRegistrationCode();
           const enrollment = await tx.enrollment.create({
             data: {
               registrationCode,
@@ -798,66 +799,142 @@ async function completeExistingFamilyRegistration(req, res) {
       };
     });
 
-    if (result.shouldCreateCheckout) {
+    if (result.payment.provider !== 'OFFLINE' && result.shouldCreateCheckout) {
       try {
-        const urls = getPaymentReturnUrls(req, provider);
-        const checkout = await createOnlineCheckout({
-          provider,
-          amount: paymentTotal,
-          paymentMethodType: paymentMethod === 'SEPA' ? 'sepa_debit' : 'card',
-          paymentId: result.payment.id,
-          returnUrl: urls.returnUrl,
-          cancelUrl: urls.cancelUrl,
-          installments: installmentsCount,
-          customer: {
+        if (result.payment.provider === 'STRIPE' && result.payment.paymentMethod === 'SEPA') {
+          const stripeCustomer = await createStripeCustomer({
+            email: req.user.email,
             firstName: req.user.firstName,
             lastName: req.user.lastName,
-            email: req.user.email,
-          },
-          metadata: {
-            source: 'family_wizard_existing',
-            plan_id: result.paymentPlan.id,
-          },
-        });
+            metadata: {
+              source: 'family_wizard_existing',
+              paymentId: result.payment.id,
+              planId: result.paymentPlan.id,
+            },
+          });
 
-        await prisma.$transaction([
-          prisma.payment.update({
+          const setupIntent = await createStripeSepaSetupIntent({
+            customerId: stripeCustomer.id,
+            metadata: {
+              source: 'family_wizard_existing',
+              paymentId: result.payment.id,
+              planId: result.paymentPlan.id,
+            },
+            ipAddress: getClientIp(req),
+            userAgent: req.headers['user-agent'] || null,
+          });
+
+          const mandateToken = uuidv4();
+          const payerName = result.payment.metadata?.payerName || `${req.user.firstName} ${req.user.lastName}`;
+          const dueDateFirstPayment = result.installments[0]?.dueDate instanceof Date
+            ? result.installments[0].dueDate.toISOString()
+            : new Date(result.installments[0]?.dueDate).toISOString();
+
+          const checkout = {
+            type: 'SEPA_SETUP',
+            provider: 'STRIPE',
+            configured: true,
+            clientSecret: setupIntent.client_secret,
+            setupIntentId: setupIntent.id,
+            customerId: stripeCustomer.id,
+            mandateToken,
+            montantTotal: Number(result.payment.totalAmount || 0).toFixed(2),
+            nombreEcheances: result.installments.length,
+            payerName,
+            email: req.user.email,
+            paymentId: result.payment.id,
+            inscriptionId: result.enrollments[0]?.id || null,
+            dueDateFirstPayment,
+          };
+
+          await prisma.payment.update({
             where: { id: result.payment.id },
             data: {
-              externalPaymentId: checkout.externalPaymentId || null,
+              externalPaymentId: null,
               metadata: {
                 ...(result.payment.metadata || {}),
-                checkout,
+                sepaMandateToken: mandateToken,
+                stripeCustomerId: stripeCustomer.id,
+                stripeSetupIntentId: setupIntent.id,
+                sepaCheckout: checkout,
               },
             },
-          }),
-          prisma.paymentPlan.update({
+          });
+
+          await prisma.paymentPlan.update({
             where: { id: result.paymentPlan.id },
             data: {
-              status: checkout.configured ? 'PENDING' : 'FAILED',
-              providerRef: checkout.externalPaymentId || null,
+              status: 'PENDING',
+              providerRef: null,
               metadata: {
                 ...(result.paymentPlan.metadata || {}),
-                checkout,
+                sepaMandateToken: mandateToken,
+                sepaCheckout: checkout,
               },
             },
-          }),
-          prisma.paymentTransaction.create({
-            data: {
-              paymentId: result.payment.id,
-              provider,
-              method: paymentMethod,
-              amount: toDecimal(paymentTotal),
-              status: checkout.configured ? 'INITIATED' : 'FAILED',
-              externalRef: checkout.externalPaymentId || null,
-              payerName: payment.payerName || `${req.user.firstName} ${req.user.lastName}`,
-              description: 'Paiement inscription membre existant',
-              metadata: checkout,
-            },
-          }),
-        ]);
+          });
 
-        result.checkout = checkout;
+          result.checkout = checkout;
+        } else {
+          const urls = getPaymentReturnUrls(req, provider);
+          const checkout = await createOnlineCheckout({
+            provider,
+            amount: paymentTotal,
+            paymentMethodType: paymentMethod === 'SEPA' ? 'sepa_debit' : 'card',
+            paymentId: result.payment.id,
+            returnUrl: urls.returnUrl,
+            cancelUrl: urls.cancelUrl,
+            installments: installmentsCount,
+            customer: {
+              firstName: req.user.firstName,
+              lastName: req.user.lastName,
+              email: req.user.email,
+            },
+            metadata: {
+              source: 'family_wizard_existing',
+              plan_id: result.paymentPlan.id,
+            },
+          });
+
+          await prisma.$transaction([
+            prisma.payment.update({
+              where: { id: result.payment.id },
+              data: {
+                externalPaymentId: checkout.externalPaymentId || null,
+                metadata: {
+                  ...(result.payment.metadata || {}),
+                  checkout,
+                },
+              },
+            }),
+            prisma.paymentPlan.update({
+              where: { id: result.paymentPlan.id },
+              data: {
+                status: checkout.configured ? 'PENDING' : 'FAILED',
+                providerRef: checkout.externalPaymentId || null,
+                metadata: {
+                  ...(result.paymentPlan.metadata || {}),
+                  checkout,
+                },
+              },
+            }),
+            prisma.paymentTransaction.create({
+              data: {
+                paymentId: result.payment.id,
+                provider,
+                method: paymentMethod,
+                amount: toDecimal(paymentTotal),
+                status: checkout.configured ? 'INITIATED' : 'FAILED',
+                externalRef: checkout.externalPaymentId || null,
+                payerName: payment.payerName || `${req.user.firstName} ${req.user.lastName}`,
+                description: 'Paiement inscription membre existant',
+                metadata: checkout,
+              },
+            }),
+          ]);
+
+          result.checkout = checkout;
+        }
       } catch (checkoutError) {
         console.error('Erreur création Stripe Checkout hors transaction:', checkoutError);
         await prisma.paymentPlan.update({
@@ -877,7 +954,12 @@ async function completeExistingFamilyRegistration(req, res) {
             },
           },
         });
+        throw new Error(`Erreur lors de l'initialisation du paiement Stripe : ${checkoutError?.message || 'unknown'}`);
       }
+    }
+
+    if (result.payment.provider !== 'OFFLINE' && result.shouldCreateCheckout && !result.checkout) {
+      throw new Error('Le paiement Stripe n’a pas pu être initialisé. Veuillez réessayer plus tard.');
     }
 
     // Envoi du mail de demande d'inscription enregistrée après validation de la dernière étape
@@ -1037,6 +1119,120 @@ async function createFamilyPortalAccount(req, res) {
   }
 }
 
+async function saveFamilyWizardSepaMandate(req, res) {
+  try {
+    const {
+      paymentId,
+      mandateToken,
+      paymentMethodId,
+      setupIntentId,
+      mandateId,
+      customerId,
+      montant,
+      inscriptionId,
+      dueDateFirstPayment,
+    } = req.body || {};
+
+    if (!paymentId || !mandateToken || !paymentMethodId || !setupIntentId || !customerId || montant === undefined || montant === null || !inscriptionId || !dueDateFirstPayment) {
+      return res.status(400).json({
+        error: 'paymentId, mandateToken, paymentMethodId, setupIntentId, customerId, montant, inscriptionId et dueDateFirstPayment sont requis',
+      });
+    }
+
+    const payment = await prisma.payment.findUnique({ where: { id: String(paymentId) } });
+    if (!payment) {
+      return res.status(404).json({ error: 'Paiement introuvable pour ce mandat SEPA' });
+    }
+
+    if (payment.provider !== 'STRIPE' || payment.paymentMethod !== 'SEPA') {
+      return res.status(400).json({ error: 'Le paiement doit être un SEPA Stripe valide' });
+    }
+
+    const metadataEnrollmentIds = Array.isArray(payment.metadata?.enrollmentIds) ? payment.metadata.enrollmentIds.map((id) => Number(id)) : [];
+    if (metadataEnrollmentIds.length > 0 && !metadataEnrollmentIds.includes(Number(inscriptionId))) {
+      return res.status(400).json({ error: 'L’inscription fournie ne correspond pas au paiement SEPA' });
+    }
+
+    if (!payment.metadata?.sepaMandateToken || payment.metadata.sepaMandateToken !== mandateToken) {
+      return res.status(403).json({ error: 'Jeton de mandat SEPA invalide' });
+    }
+
+    const dueDate = new Date(dueDateFirstPayment);
+    if (Number.isNaN(dueDate.getTime())) {
+      return res.status(400).json({ error: 'dueDateFirstPayment invalide (format ISO attendu)' });
+    }
+
+    const updatedPaymentMetadata = {
+      ...(payment.metadata || {}),
+      stripePaymentMethodId: paymentMethodId,
+      stripeCustomerId: customerId,
+      stripeSetupIntentId: setupIntentId,
+      stripeMandateId: mandateId || payment.metadata?.stripeMandateId || null,
+      sepaMandateSavedAt: new Date().toISOString(),
+      sepaMandateSaved: true,
+      sepaMandateFirstPaymentDate: dueDate.toISOString(),
+    };
+
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        metadata: updatedPaymentMetadata,
+      },
+    });
+
+    await prisma.installment.updateMany({
+      where: { paymentId: payment.id, installmentNumber: 1 },
+      data: { dueDate },
+    });
+
+    const paymentPlan = await prisma.paymentPlan.findFirst({ where: { paymentId: payment.id } });
+    if (paymentPlan) {
+      await prisma.paymentPlan.update({
+        where: { id: paymentPlan.id },
+        data: {
+          metadata: {
+            ...(paymentPlan.metadata || {}),
+            stripePaymentMethodId: paymentMethodId,
+            stripeCustomerId: customerId,
+            stripeSetupIntentId: setupIntentId,
+            stripeMandateId: mandateId || paymentPlan.metadata?.stripeMandateId || null,
+            sepaMandateSavedAt: new Date().toISOString(),
+          },
+        },
+      });
+    }
+
+    const payerName = payment.metadata?.payerName || 'Titulaire du compte SEPA';
+    await prisma.paymentTransaction.create({
+      data: {
+        paymentId: payment.id,
+        provider: 'STRIPE',
+        method: payment.paymentMethod || 'SEPA',
+        amount: toDecimal(Number(montant).toFixed(2)),
+        status: 'INITIATED',
+        externalRef: setupIntentId,
+        payerName,
+        description: 'Mandat SEPA signé et premier prélèvement planifié.',
+        metadata: {
+          paymentMethodId,
+          customerId,
+          setupIntentId,
+          mandateId,
+          dueDateFirstPayment: dueDate.toISOString(),
+        },
+      },
+    });
+
+    return res.json({
+      success: true,
+      message: `Mandat SEPA signé et sauvegardé. Le premier prélèvement sera effectué le ${dueDate.toLocaleDateString('fr-FR')}.`,
+    });
+  } catch (error) {
+    console.error('Erreur saveFamilyWizardSepaMandate:', error);
+    return res.status(500).json({ error: error.message || 'Erreur serveur lors de la sauvegarde du mandat SEPA' });
+  }
+}
+
 async function completeFamilyRegistration(req, res) {
   try {
     const blocked = await isRegistrationBlocked();
@@ -1078,6 +1274,9 @@ async function completeFamilyRegistration(req, res) {
     if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
 
     const currentYear = await ensureCurrentSchoolYear();
+    const registrationYearCode = extractSchoolYearCode(currentYear.label, currentYear.startDate);
+    let nextRegistrationSequence = (await prisma.enrollment.count({ where: { schoolYearId: currentYear.id } })) + 1;
+    const getNextRegistrationCode = () => `FAM-${registrationYearCode}-${String(nextRegistrationSequence++).padStart(3, '0')}`;
 
     const selectedClassIds = [...new Set(courseSelections.map((c) => c.classId).filter(Boolean))];
     const selectedPoleIds = [...new Set(courseSelections.map((c) => c.poleId).filter(Boolean))];
@@ -1216,7 +1415,7 @@ async function completeFamilyRegistration(req, res) {
         if (!student) continue;
 
         const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
-        const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+        const registrationCode = getNextRegistrationCode();
         const enrollmentData = {
           registrationCode,
           studentId: student.id,
@@ -1249,7 +1448,7 @@ async function completeFamilyRegistration(req, res) {
         const student = students[i];
         const already = createdEnrollments.find((e) => e.studentId === student.id);
         if (!already) {
-          const registrationCode = await getNextEnrollmentRegistrationCode(tx, currentYear.id);
+          const registrationCode = getNextRegistrationCode();
           const enrollment = await tx.enrollment.create({
             data: {
               registrationCode,
@@ -1503,65 +1702,167 @@ async function completeFamilyRegistration(req, res) {
       };
     });
 
-    if (result.shouldCreateCheckout) {
-      const urls = getPaymentReturnUrls(req, result.payment.provider);
-      const checkout = await createOnlineCheckout({
-        provider: result.payment.provider,
-        amount: Number(result.payment.totalAmount || 0),
-        paymentMethodType: result.payment.paymentMethod === 'SEPA' ? 'sepa_debit' : 'card',
-        paymentId: result.payment.id,
-        returnUrl: urls.returnUrl,
-        cancelUrl: urls.cancelUrl,
-        installments: result.installments.length,
-        customer: {
-          firstName: result.user.firstName,
-          lastName: result.user.lastName,
-          email: result.user.email,
-        },
-        metadata: {
-          source: 'family_wizard',
-          plan_id: result.paymentPlan.id,
-        },
-      });
+    if (result.payment.provider !== 'OFFLINE' && result.shouldCreateCheckout) {
+      try {
+        if (result.payment.provider === 'STRIPE' && result.payment.paymentMethod === 'SEPA') {
+          const stripeCustomer = await createStripeCustomer({
+            email: result.user.email,
+            firstName: result.user.firstName,
+            lastName: result.user.lastName,
+            metadata: {
+              source: 'family_wizard',
+              paymentId: result.payment.id,
+              planId: result.paymentPlan.id,
+            },
+          });
 
-      await prisma.payment.update({
-        where: { id: result.payment.id },
-        data: {
-          externalPaymentId: checkout.externalPaymentId || null,
-          metadata: {
-            ...(result.payment.metadata || {}),
-            checkout,
+          const setupIntent = await createStripeSepaSetupIntent({
+            customerId: stripeCustomer.id,
+            metadata: {
+              source: 'family_wizard',
+              paymentId: result.payment.id,
+              planId: result.paymentPlan.id,
+            },
+            ipAddress: getClientIp(req),
+            userAgent: req.headers['user-agent'] || null,
+          });
+
+          const mandateToken = uuidv4();
+          const payerName = result.payment.metadata?.payerName || `${result.user.firstName} ${result.user.lastName}`;
+          const dueDateFirstPayment = result.installments[0]?.dueDate instanceof Date
+            ? result.installments[0].dueDate.toISOString()
+            : new Date(result.installments[0]?.dueDate).toISOString();
+
+          const checkout = {
+            type: 'SEPA_SETUP',
+            provider: 'STRIPE',
+            configured: true,
+            clientSecret: setupIntent.client_secret,
+            setupIntentId: setupIntent.id,
+            customerId: stripeCustomer.id,
+            mandateToken,
+            montantTotal: Number(result.payment.totalAmount || 0).toFixed(2),
+            nombreEcheances: result.installments.length,
+            payerName,
+            email: result.user.email,
+            paymentId: result.payment.id,
+            inscriptionId: result.enrollments[0]?.id || null,
+            dueDateFirstPayment,
+          };
+
+          await prisma.payment.update({
+            where: { id: result.payment.id },
+            data: {
+              externalPaymentId: null,
+              metadata: {
+                ...(result.payment.metadata || {}),
+                sepaMandateToken: mandateToken,
+                stripeCustomerId: stripeCustomer.id,
+                stripeSetupIntentId: setupIntent.id,
+                sepaCheckout: checkout,
+              },
+            },
+          });
+
+          await prisma.paymentPlan.update({
+            where: { id: result.paymentPlan.id },
+            data: {
+              status: 'PENDING',
+              providerRef: null,
+              metadata: {
+                ...(result.paymentPlan.metadata || {}),
+                sepaMandateToken: mandateToken,
+                sepaCheckout: checkout,
+              },
+            },
+          });
+
+          result.checkout = checkout;
+        } else {
+          const urls = getPaymentReturnUrls(req, result.payment.provider);
+          const checkout = await createOnlineCheckout({
+            provider: result.payment.provider,
+            amount: Number(result.payment.totalAmount || 0),
+            paymentMethodType: result.payment.paymentMethod === 'SEPA' ? 'sepa_debit' : 'card',
+            paymentId: result.payment.id,
+            returnUrl: urls.returnUrl,
+            cancelUrl: urls.cancelUrl,
+            installments: result.installments.length,
+            customer: {
+              firstName: result.user.firstName,
+              lastName: result.user.lastName,
+              email: result.user.email,
+            },
+            metadata: {
+              source: 'family_wizard',
+              plan_id: result.paymentPlan.id,
+            },
+          });
+
+          await prisma.payment.update({
+            where: { id: result.payment.id },
+            data: {
+              externalPaymentId: checkout.externalPaymentId || null,
+              metadata: {
+                ...(result.payment.metadata || {}),
+                checkout,
+              },
+            },
+          });
+
+          await prisma.paymentPlan.update({
+            where: { id: result.paymentPlan.id },
+            data: {
+              status: checkout.configured ? 'PENDING' : 'FAILED',
+              providerRef: checkout.externalPaymentId || null,
+              metadata: {
+                ...(result.paymentPlan.metadata || {}),
+                checkout,
+              },
+            },
+          });
+
+          await prisma.paymentTransaction.create({
+            data: {
+              paymentId: result.payment.id,
+              provider: result.payment.provider,
+              method: result.payment.paymentMethod,
+              amount: toDecimal(result.payment.totalAmount),
+              status: checkout.configured ? 'INITIATED' : 'FAILED',
+              externalRef: checkout.externalPaymentId || null,
+              payerName: payment.payerName /*|| `${user.firstName} ${user.lastName}`*/,
+              description: 'Paiement inscription initiale',
+              metadata: checkout,
+            },
+          });
+
+          result.checkout = checkout;
+        }
+      } catch (checkoutError) {
+        console.error('Erreur création Stripe Checkout hors transaction:', checkoutError);
+        await prisma.paymentPlan.update({
+          where: { id: result.paymentPlan.id },
+          data: { status: 'FAILED' },
+        });
+        await prisma.paymentTransaction.create({
+          data: {
+            paymentId: result.payment.id,
+            provider: result.payment.provider,
+            method: result.payment.paymentMethod,
+            amount: toDecimal(result.payment.totalAmount),
+            status: 'FAILED',
+            description: 'Échec création Stripe Checkout',
+            metadata: {
+              error: checkoutError?.message || 'Stripe checkout error',
+            },
           },
-        },
-      });
+        });
+        throw new Error(`Erreur lors de l'initialisation du paiement Stripe : ${checkoutError?.message || 'unknown'}`);
+      }
+    }
 
-      await prisma.paymentPlan.update({
-        where: { id: result.paymentPlan.id },
-        data: {
-          status: checkout.configured ? 'PENDING' : 'FAILED',
-          providerRef: checkout.externalPaymentId || null,
-          metadata: {
-            ...(result.paymentPlan.metadata || {}),
-            checkout,
-          },
-        },
-      });
-
-      await prisma.paymentTransaction.create({
-        data: {
-          paymentId: result.payment.id,
-          provider: result.payment.provider,
-          method: result.payment.paymentMethod,
-          amount: toDecimal(result.payment.totalAmount),
-          status: checkout.configured ? 'INITIATED' : 'FAILED',
-          externalRef: checkout.externalPaymentId || null,
-          payerName: payment.payerName /*|| `${user.firstName} ${user.lastName}`*/,
-          description: 'Paiement inscription initiale',
-          metadata: checkout,
-        },
-      });
-
-      result.checkout = checkout;
+    if (result.payment.provider !== 'OFFLINE' && result.shouldCreateCheckout && !result.checkout) {
+      throw new Error('Le paiement Stripe n’a pas pu être initialisé. Veuillez réessayer plus tard.');
     }
 
     // Envoi du mail de confirmation d'inscription
@@ -1647,6 +1948,7 @@ module.exports = {
   getPricingPreview,
   createFamilyPortalAccount,
   checkEmailAvailability,
+  saveFamilyWizardSepaMandate,
   completeFamilyRegistration,
   completeExistingFamilyRegistration,
 };
