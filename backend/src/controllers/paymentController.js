@@ -2069,7 +2069,31 @@ async function generatePaymentReceiptPDF(req, res) {
       orderBy: { createdAt: 'desc' },
     });
 
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, [], familyPayments);
+    let enrollmentIds = Array.isArray(payment.metadata?.enrollmentIds) ? payment.metadata.enrollmentIds : [];
+    if (!enrollmentIds || enrollmentIds.length === 0) {
+      const fallbackEnrollments = await prisma.enrollment.findMany({
+        where: {
+          familyId: payment.familyId,
+          schoolYearId: payment.schoolYearId,
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+      });
+      enrollmentIds = fallbackEnrollments.map((e) => e.id);
+    }
+
+    const enrolledCourses = await prisma.enrollment.findMany({
+      where: { id: { in: enrollmentIds } },
+      include: {
+        class: {
+          include: {
+            level: { include: { pole: true } },
+            schoolYear: true,
+          },
+        },
+      },
+    });
+
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrolledCourses, familyPayments);
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
