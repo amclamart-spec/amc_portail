@@ -19,6 +19,7 @@ import {
 } from 'react-icons/fi';
 import { useState } from 'react';
 import { ROLE_LABEL } from '../utils/roles';
+import { version as appVersion } from '../../package.json';
 
 const navSectionsByRole = {
   SUPER_ADMIN: [
@@ -296,6 +297,9 @@ export default function Layout({ children }) {
           <button onClick={logout} className="btn" style={{ width: '100%' }}>
             <FiLogOut size={16} /> Déconnexion
           </button>
+          <div style={{ marginTop: 12, fontSize: 11, opacity: 0.65, textAlign: 'center' }}>
+            Version {appVersion}
+          </div>
         </div>
       </aside>
 
@@ -321,7 +325,7 @@ export default function Layout({ children }) {
             {sidebarOpen ? <FiX /> : <FiMenu />}
           </button>
           <strong style={{ color: 'var(--amc-primary)' }}>{ROLE_LABEL[user?.role] || 'Espace utilisateur'}</strong>
-          <span />
+          <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.55)' }}>Version {appVersion}</div>
         </header>
 
         <main style={{ padding: '24px' }}>{children}</main>

@@ -73,6 +73,30 @@ export default function FamilyPayments() {
     }
   };
 
+  const handleDownloadSepaMandate = async (paymentId) => {
+    try {
+      setDownloading(paymentId);
+      const response = await api.get(`/payments/${paymentId}/sepa-mandate/download`, {
+        responseType: "blob",
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `mandat-sepa-${paymentId.substring(0, 8)}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Erreur téléchargement mandat SEPA:", error);
+      const errorMessage = error.response?.data?.error || "Erreur lors du téléchargement du mandat SEPA";
+      alert(errorMessage);
+    } finally {
+      setDownloading(null);
+    }
+  };
+
   return (
     <div>
       <h2 style={{ color: "var(--amc-primary)" }}>Mes paiements</h2>
@@ -114,9 +138,20 @@ export default function FamilyPayments() {
                       onClick={() => handleDownloadInvoice(p.id)}
                       disabled={downloading === p.id}
                       title="Télécharger le reçu de paiement"
+                      style={{ marginRight: 8 }}
                     >
                       <FiDownload size={16} /> {downloading === p.id ? "Téléchargement..." : "Reçu"}
                     </button>
+                    {p.paymentMethod === "SEPA" && p.provider === "STRIPE" && (
+                      <button
+                        className="btn btn-outline btn-sm"
+                        onClick={() => handleDownloadSepaMandate(p.id)}
+                        disabled={downloading === p.id}
+                        title="Télécharger le mandat SEPA"
+                      >
+                        <FiDownload size={16} /> Mandat
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
