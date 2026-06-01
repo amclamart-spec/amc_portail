@@ -33,7 +33,8 @@ export default function FamilyPayments() {
   useEffect(() => {
     api.get("/payments/history/family")
       .then(({ data }) => {
-        setPayments(data.payments || []);
+        const uniquePayments = [...new Map((data.payments || []).map((payment) => [payment.id, payment])).values()];
+        setPayments(uniquePayments);
         setLoading(false);
       })
       .catch((err) => {

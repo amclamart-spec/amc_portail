@@ -173,7 +173,6 @@ const navSectionsByRole = {
       items: [
         { path: '/tresorier', icon: FiBarChart2, label: 'KPI financiers' },
         { path: '/tresorier/payments', icon: FiCreditCard, label: 'Paiements' },
-        { path: '/tresorier/refunds', icon: FiCreditCard, label: 'Remboursements' },
       ],
     },
   ],

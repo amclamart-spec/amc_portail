@@ -46,6 +46,14 @@ const emptyHealthForm = {
   noMedicationPolicyAccepted: true,
 };
 
+const getDefaultHealthForm = (wizardState) => ({
+  ...emptyHealthForm,
+  legalRepresentativeFullName: `${wizardState.account.firstName || ''} ${wizardState.account.lastName || ''}`.trim(),
+  legalRepresentativeSignature: `${wizardState.account.firstName || ''} ${wizardState.account.lastName || ''}`.trim(),
+  citySigned: wizardState.address.city || '',
+  signedAt: new Date().toISOString().slice(0, 10),
+});
+
 function getDefaultState(prefill = {}) {
   return {
     draftId: null,
@@ -235,12 +243,16 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       const healthForms = { ...prev.healthForms };
       let updated = false;
       prev.members.forEach((member, idx) => {
-        if (!healthForms[idx]) {
+        const existing = healthForms[idx];
+        if (!existing || !existing.legalRepresentativeFullName || !existing.signedAt || !existing.legalRepresentativeSignature || !existing.citySigned) {
+          const defaults = getDefaultHealthForm(prev);
           healthForms[idx] = {
             ...emptyHealthForm,
-            legalRepresentativeFullName: `${prev.account.firstName || ''} ${prev.account.lastName || ''}`.trim(),
-            citySigned: prev.address.city || '',
-            signedAt: prev.address.city ? new Date().toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+            ...existing,
+            legalRepresentativeFullName: existing?.legalRepresentativeFullName || defaults.legalRepresentativeFullName,
+            legalRepresentativeSignature: existing?.legalRepresentativeSignature || defaults.legalRepresentativeSignature,
+            citySigned: existing?.citySigned || defaults.citySigned,
+            signedAt: existing?.signedAt || defaults.signedAt,
           };
           updated = true;
         }
@@ -584,7 +596,9 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
       const healthForms = { ...prev.healthForms };
       members.forEach((_, idx) => {
-        if (!healthForms[idx]) healthForms[idx] = { ...emptyHealthForm };
+        if (!healthForms[idx]) {
+          healthForms[idx] = getDefaultHealthForm(prev);
+        }
       });
 
       return {
@@ -1210,6 +1224,15 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                 {engagementBulletPoints.map((item) => <li key={item}>{item}</li>)}
               </ul>
               <p style={{ fontSize: 13, color: '#7C2D12' }}>La signature engage les représentants légaux à respecter les règles de sécurité et de suivi pédagogique PARTAGE.</p>
+            </div>
+
+            <div style={{ marginBottom: 18, padding: 16, border: '2px solid #DC2626', borderRadius: 10, background: '#FEE2E2' }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, color: '#991B1B' }}>⚠️ Veuillez lire le règlement intérieur avant de valider vos inscriptions</div>
+              <div style={{ fontSize: 14 }}>
+                <a href="/reglement-interieur" target="_blank" rel="noopener noreferrer" style={{ color: '#DC2626', textDecoration: 'underline', fontWeight: 600 }}>
+                  Ouvrir le règlement intérieur
+                </a>
+              </div>
             </div>
 
             <div className="form-group">

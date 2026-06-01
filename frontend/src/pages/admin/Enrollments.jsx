@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
+import { FiDownload, FiEdit2, FiTrash2, FiFileText, FiCreditCard, FiCheckCircle, FiXCircle } from 'react-icons/fi';
 
 export default function AdminEnrollments() {
   const [enrollments, setEnrollments] = useState([]);
@@ -20,6 +21,7 @@ export default function AdminEnrollments() {
   const [loading, setLoading] = useState(true);
   const [enrollmentPayments, setEnrollmentPayments] = useState([]);
   const [editingPaymentId, setEditingPaymentId] = useState(null);
+  const [showPaymentDetail, setShowPaymentDetail] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [refundAccessCode, setRefundAccessCode] = useState('');
@@ -223,8 +225,9 @@ export default function AdminEnrollments() {
     setStatusUpdates((prev) => ({ ...prev, [enrollmentId]: value }));
   };
 
-  const saveStatus = async (enrollment) => {
-    const newStatus = statusUpdates[enrollment.id] || enrollment.status;
+  // Save status immediately. If `forcedStatus` is provided, use it directly.
+  const saveStatus = async (enrollment, forcedStatus) => {
+    const newStatus = forcedStatus || statusUpdates[enrollment.id] || enrollment.status;
     if (newStatus === enrollment.status) return;
 
     if (newStatus === 'CANCELLED' && enrollment.status !== 'CANCELLED') {
@@ -272,6 +275,7 @@ export default function AdminEnrollments() {
     setEditingEnrollment(enrollment);
     setEditForm({
       status: enrollment.status,
+        waitlistOrder: enrollment.waitlistOrder || '',
       classId: enrollment.classId,
       schoolYearId: enrollment.schoolYearId,
       comment: enrollment.comment || '',
@@ -329,7 +333,8 @@ export default function AdminEnrollments() {
   const fetchEnrollmentPayments = async (enrollmentId) => {
     try {
       const { data } = await api.get(`/admin/enrollments/${enrollmentId}/payments`);
-      setEnrollmentPayments(data.payments || []);
+      const uniquePayments = [...new Map((data.payments || []).map((payment) => [payment.id, payment])).values()];
+      setEnrollmentPayments(uniquePayments);
       setEditingPaymentId(null);
     } catch (error) {
       console.error('Impossible de charger les paiements', error);
@@ -339,6 +344,7 @@ export default function AdminEnrollments() {
   const openPaymentModal = (enrollment) => {
     setPaymentEnrollment(enrollment);
     setEditingPaymentId(null);
+    setShowPaymentDetail(false);
     setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
     setRefundAccessCode('');
     setRefundCodeValidated(false);
@@ -355,6 +361,7 @@ export default function AdminEnrollments() {
     setPaymentEnrollment(null);
     setEnrollmentPayments([]);
     setEditingPaymentId(null);
+    setShowPaymentDetail(false);
     setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
     setRefundAccessCode('');
     setRefundCodeValidated(false);
@@ -411,6 +418,7 @@ export default function AdminEnrollments() {
 
   const editEnrollmentPayment = (payment) => {
     setEditingPaymentId(payment.id);
+    setShowPaymentDetail(true);
     setPaymentForm({
       payerName: payment.payerName || '',
       date: payment.processedAt ? new Date(payment.processedAt).toISOString().slice(0, 10) : (payment.createdAt ? new Date(payment.createdAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)),
@@ -423,6 +431,7 @@ export default function AdminEnrollments() {
 
   const cancelEditPayment = () => {
     setEditingPaymentId(null);
+    setShowPaymentDetail(false);
     setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
   };
 
@@ -443,21 +452,61 @@ export default function AdminEnrollments() {
     }
   };
 
-  const canEditPayment = (payment) => String(payment.status) !== 'SUCCEEDED';
-
-  const downloadEnrollmentPaymentReceipt = (payment) => {
+  const changeEnrollmentPaymentStatus = async (payment, status) => {
     const activeEnrollment = paymentEnrollment || editingEnrollment;
     if (!activeEnrollment) return;
+    const label = status === 'validé' ? 'valider' : 'annuler';
+    if (!window.confirm(`Confirmer la mise à jour du paiement en ${label} ?`)) return;
+
+    setPaymentLoading(true);
     try {
+      await api.patch(`/admin/enrollments/${activeEnrollment.id}/payments/${payment.id}`, { status });
+      toast.success(`Paiement ${status === 'validé' ? 'validé' : 'annulé'}`);
+      if (editingPaymentId === payment.id) {
+        cancelEditPayment();
+      }
+      fetchEnrollmentPayments(activeEnrollment.id);
+    } catch (error) {
+      toast.error(error.response?.data?.error || `Impossible de ${label} le paiement`);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  const canEditPayment = (payment) => String(payment.status) !== 'SUCCEEDED';
+  const canActionPayment = (payment) => {
+    // Show action buttons when payment is not validated (SUCCEEDED) and not cancelled
+    const s = String(payment.status || '').toUpperCase();
+    return s !== 'SUCCEEDED' && s !== 'CANCELLED';
+  };
+
+  const downloadEnrollmentPaymentReceipt = async (payment) => {
+    const activeEnrollment = paymentEnrollment || editingEnrollment;
+    if (!activeEnrollment) return;
+
+    try {
+      const response = await api.get(
+        `/admin/enrollments/${activeEnrollment.id}/payments/${payment.id}/receipt`,
+        { responseType: 'blob' }
+      );
+
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const contentDisposition = response.headers['content-disposition'] || '';
+      const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+      const filename = filenameMatch ? filenameMatch[1] : `recu-${payment.id}.pdf`;
+
       const link = document.createElement('a');
-      link.href = `/api/admin/enrollments/${activeEnrollment.id}/payments/${payment.id}/receipt`;
-      link.download = `recu-${payment.id}.pdf`;
+      link.href = url;
+      link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
       toast.success('Reçu téléchargé');
     } catch (error) {
-      toast.error('Impossible de télécharger le reçu');
+      toast.error(error.response?.data?.error || 'Impossible de télécharger le reçu');
     }
   };
 
@@ -678,6 +727,8 @@ export default function AdminEnrollments() {
         schoolYearId: editForm.schoolYearId,
         comment: editForm.comment,
         levelValidated: editForm.levelValidated,
+        // include waitlist order when provided
+        ...(editForm.waitlistOrder !== undefined && editForm.waitlistOrder !== '' ? { waitlistOrder: Number(editForm.waitlistOrder) } : {}),
         student: studentPayload,
         family: editForm.family,
       };
@@ -877,33 +928,31 @@ export default function AdminEnrollments() {
                   <th>Pôle</th>
                   <th>Niveau</th>
                   <th>Niveau validé</th>
-                  <th>Créneau</th>
                   <th>Liste d'attente</th>
-                  <th>Ordre liste d'attente</th>
                   <th>Statut</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {enrollments.length === 0 ? (
-                  <tr><td colSpan="11" style={{ textAlign: 'center', color: '#6B7280', padding: '24px 0' }}>Aucune inscription</td></tr>
-                ) : groupedEnrollments.map((group) => {
-                  const expanded = isFamilyExpanded(group.familyId);
-                  return (
+                  <tr><td colSpan="9" style={{ textAlign: 'center', color: '#6B7280', padding: '24px 0' }}>Aucune inscription</td></tr>
+                ) : (
+                  groupedEnrollments.map((group) => (
                     <Fragment key={group.familyId}>
-                      <tr key={`family-${group.familyId}`} style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                        <td colSpan="11" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
+                      <tr style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
+                        <td colSpan="9" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <span style={{ fontSize: 14, color: '#1D4ED8' }}>{expanded ? '▾' : '▸'}</span>
+                              <span style={{ fontSize: 14, color: '#1D4ED8' }}>{isFamilyExpanded(group.familyId) ? '▾' : '▸'}</span>
                               <span>{group.familyName}</span>
                               <span style={{ fontSize: 13, color: '#475569' }}>({group.enrollments.length} inscription{group.enrollments.length > 1 ? 's' : ''})</span>
                             </div>
-                            <span style={{ fontSize: 13, color: '#6B7280' }}>Cliquer pour {expanded ? 'replier' : 'déplier'}</span>
+                            <span style={{ fontSize: 13, color: '#6B7280' }}>Cliquer pour {isFamilyExpanded(group.familyId) ? 'replier' : 'déplier'}</span>
                           </div>
                         </td>
                       </tr>
-                      {expanded && group.enrollments.map((e) => {
+
+                      {isFamilyExpanded(group.familyId) && group.enrollments.map((e) => {
                         const selectedStatus = statusUpdates[e.id] || e.status;
                         const waitlist = isEnrollmentWaitlist(e);
                         return (
@@ -927,66 +976,78 @@ export default function AdminEnrollments() {
                                 onChange={(event) => handleLevelValidatedChange(e.id, event.target.checked)}
                               />
                             </td>
-                            <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'À affecter' : (e.class ? `${e.class.dayOfWeek} ${e.class.startTime}-${e.class.endTime}` : '—')}</td>
                             <td style={{ padding: '16px 12px' }}>
                               <span className={`badge ${waitlist ? 'badge-danger' : 'badge-success'}`}>
                                 {waitlist ? 'Oui' : 'Non'}
                               </span>
                             </td>
-                            <td style={{ padding: '16px 12px' }}>{waitlist ? e.waitlistOrder || '—' : '—'}</td>
                             <td style={{ padding: '16px 12px' }}>{statusBadge(selectedStatus, waitlist)}</td>
                             <td className="table-actions" style={{ justifyContent: 'flex-end', padding: '16px 12px' }}>
-                              <select
-                                className="form-control"
-                                value={selectedStatus}
-                                onChange={(event) => handleStatusChange(e.id, event.target.value)}
-                                style={{ minWidth: 140, maxWidth: 160 }}
-                              >
-                                <option value="PENDING">En attente</option>
-                                <option value="CONFIRMED">Confirmée</option>
-                                <option value="CANCELLED">Annulée</option>
-                                <option value="ARCHIVED">Archivée</option>
-                              </select>
-                              <button
-                                className="btn btn-sm btn-primary"
-                                type="button"
-                                disabled={selectedStatus === e.status}
-                                onClick={() => saveStatus(e)}
-                                style={{ minWidth: 90, marginLeft: 8 }}
-                              >
-                                Enregistrer
-                              </button>
-                              <button
-                                className="btn btn-outline btn-sm"
-                                type="button"
-                                onClick={() => openRecordModal(e.student)}
-                                style={{ minWidth: 72, marginLeft: 8 }}
-                        >
-                          Fiche pédagogique
-                        </button>
-                        <button
-                          className="btn btn-outline btn-sm"
-                          type="button"
-                          onClick={() => openPaymentModal(e)}
-                          style={{ minWidth: 88, marginLeft: 8 }}
-                        >
-                          Paiement
-                        </button>
-                        <button
-                          className="btn btn-outline btn-sm"
-                          type="button"
-                          onClick={() => openEditModal(e)}
-                          style={{ minWidth: 88, marginLeft: 8 }}
-                        >
-                          Modifier
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </Fragment>
-            );
-          })}
+                              {(() => {
+                                const currentStatus = statusUpdates[e.id] || e.status;
+                                if (currentStatus === 'CONFIRMED' || currentStatus === 'CANCELLED') return null;
+                                return (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <button
+                                      type="button"
+                                      className="btn btn-success btn-sm"
+                                      title="Valider l'inscription"
+                                      onClick={() => saveStatus(e, 'CONFIRMED')}
+                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', width: 36, height: 36 }}
+                                    >
+                                      <FiCheckCircle size={16} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-danger btn-sm"
+                                      title="Annuler l'inscription"
+                                      onClick={() => saveStatus(e, 'CANCELLED')}
+                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', width: 36, height: 36 }}
+                                    >
+                                      <FiXCircle size={16} />
+                                    </button>
+                                  </div>
+                                );
+                              })()}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <button
+                                  className="btn btn-outline btn-sm"
+                                  type="button"
+                                  onClick={() => openRecordModal(e.student)}
+                                  title="Fiche pédagogique"
+                                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
+                                >
+                                  <FiFileText size={14} />
+                                  <span style={{ fontSize: 13 }}>Fiche</span>
+                                </button>
+                                <button
+                                  className="btn btn-outline btn-sm"
+                                  type="button"
+                                  onClick={() => openPaymentModal(e)}
+                                  title="Paiement"
+                                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
+                                >
+                                  <FiCreditCard size={14} />
+                                  <span style={{ fontSize: 13 }}>Paiement</span>
+                                </button>
+                                <button
+                                  className="btn btn-outline btn-sm"
+                                  type="button"
+                                  onClick={() => openEditModal(e)}
+                                  title="Modifier l'inscription"
+                                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
+                                >
+                                  <FiEdit2 size={14} />
+                                  <span style={{ fontSize: 13 }}>Modifier</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1038,6 +1099,28 @@ export default function AdminEnrollments() {
                   <select className="form-control" value={editForm.schoolYearId} onChange={(event) => updateEditForm(null, 'schoolYearId', event.target.value)}>
                     {schoolYears.map((year) => <option key={year.id} value={year.id}>{year.label}</option>)}
                   </select>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Créneau</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={(() => {
+                      const cls = classes.find((c) => c.id === editForm.classId);
+                      if (!cls) return '—';
+                      return cls.isProvisional ? 'À affecter' : `${cls.dayOfWeek || ''} ${cls.startTime || ''}-${cls.endTime || ''}`.trim();
+                    })()}
+                    disabled
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Ordre liste d'attente</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={editForm.waitlistOrder || ''}
+                    onChange={(event) => updateEditForm(null, 'waitlistOrder', event.target.value)}
+                  />
                 </div>
                 <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}>
                   <label>Commentaire interne</label>
@@ -1451,162 +1534,191 @@ export default function AdminEnrollments() {
       )}
 
       {paymentModalOpen && paymentEnrollment && (
-        <div className="modal-overlay">
-          <div className="card modal-card">
-            <div className="card-header" style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 16 }}>
+        <div style={overlayStyle}>
+          <div className="card" style={modalStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
-                <h3>Paiements & remboursements</h3>
-                <p style={{ margin: '6px 0 0', color: '#6B7280' }}>
+                <h2 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#1d4ed8' }}>Détail des paiements</h2>
+                <div style={{ color: '#64748b', marginTop: 4 }}>
                   Gérer les paiements et remboursements pour l’inscription de {paymentEnrollment.student?.firstName} {paymentEnrollment.student?.lastName}.
-                </p>
+                </div>
               </div>
               <div>
-                <button type="button" className="btn btn-outline btn-sm" onClick={closePaymentModal}>Fermer</button>
+                <button type="button" className="btn btn-outline" onClick={closePaymentModal}>Fermer</button>
               </div>
             </div>
 
-            <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#FBFBFD', marginTop: 16 }}>
-              <h4>Paiement</h4>
-              <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Nom payeur</label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={paymentForm.payerName}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, payerName: event.target.value }))}
-                    />
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Date</label>
-                    <input
-                      type="date"
-                      className="form-control"
-                      value={paymentForm.date}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, date: event.target.value }))}
-                      disabled={Boolean(editingPaymentId)}
-                    />
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Moyen</label>
-                    <select
-                      className="form-control"
-                      value={paymentForm.method}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, method: event.target.value }))}
-                    >
-                      <option value="CHEQUE">Chèque</option>
-                      <option value="ESPECES">Espèces</option>
-                      <option value="CB">Carte Bancaire</option>
-                    </select>
-                  </div>
+            <div className="form-section" style={{ padding: 20, background: '#F8FAFC', border: '1px solid #E5E7EB', borderRadius: 14, marginTop: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                <div>
+                  <h4 style={{ margin: 0 }}>Paiements</h4>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Statut paiement</label>
-                    <select
-                      className="form-control"
-                      value={paymentForm.status}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, status: event.target.value }))}
-                    >
-                      <option value="validé">validé</option>
-                      <option value="non validé">non validé</option>
-                      <option value="annulé">annulé</option>
-                    </select>
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Montant</label>
-                    <input
-                      type="number"
-                      className="form-control"
-                      step="0.01"
-                      value={paymentForm.amount}
-                      onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label>Commentaire</label>
-                  <textarea
-                    className="form-control"
-                    rows={2}
-                    value={paymentForm.comment}
-                    onChange={(event) => setPaymentForm((prev) => ({ ...prev, comment: event.target.value }))}
-                  />
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={submitEnrollmentPayment}
-                    disabled={paymentLoading}
-                  >
-                    {paymentLoading ? 'Enregistrement...' : editingPaymentId ? 'Mettre à jour le paiement' : 'Ajouter le paiement'}
-                  </button>
-                  {editingPaymentId && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={cancelEditPayment}
-                      disabled={paymentLoading}
-                    >
-                      Annuler
-                    </button>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => {
+                    setShowPaymentDetail(true);
+                    setEditingPaymentId(null);
+                    setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+                  }}
+                >
+                  Ajouter un paiement
+                </button>
               </div>
 
-              {enrollmentPayments.length > 0 ? (
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Paiements</div>
-                  <div className="table-container">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Payeur</th>
-                          <th>Moyen</th>
-                          <th>Montant</th>
-                          <th>Statut</th>
-                          <th>Description</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {enrollmentPayments.map((payment) => (
-                          <tr key={payment.id}>
-                            <td>{formatDate(payment.processedAt || payment.createdAt)}</td>
-                            <td>{payment.payerName || '—'}</td>
-                            <td>{payment.method || '—'}</td>
-                            <td>{Number(payment.amount).toFixed(2)} €</td>
-                            <td>{paymentStatusLabel(payment.status)}</td>
-                            <td>{payment.description || '—'}</td>
-                            <td>
-                              <button
-                                type="button"
-                                className="btn btn-link"
-                                onClick={() => downloadEnrollmentPaymentReceipt(payment)}
-                                title="Télécharger le reçu"
-                              >
-                                📥 Reçu
-                              </button>
-                              {canEditPayment(payment) ? (
+              {(showPaymentDetail || editingPaymentId) && (
+                <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#FFFFFF', marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12 }}>
+                    <h5 style={{ margin: 0 }}>{editingPaymentId ? 'Modifier le paiement' : 'Ajouter un paiement'}</h5>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => {
+                        setShowPaymentDetail(false);
+                        setEditingPaymentId(null);
+                        setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+                      }}
+                    >
+                      Fermer
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Nom payeur</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={paymentForm.payerName}
+                          onChange={(event) => setPaymentForm((prev) => ({ ...prev, payerName: event.target.value }))}
+                        />
+                      </div>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Date</label>
+                        <input
+                          type="date"
+                          className="form-control"
+                          value={paymentForm.date}
+                          onChange={(event) => setPaymentForm((prev) => ({ ...prev, date: event.target.value }))}
+                          disabled={Boolean(editingPaymentId)}
+                        />
+                      </div>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Moyen</label>
+                        <select
+                          className="form-control"
+                          value={paymentForm.method}
+                          onChange={(event) => setPaymentForm((prev) => ({ ...prev, method: event.target.value }))}
+                        >
+                          <option value="CHEQUE">Chèque</option>
+                          <option value="ESPECES">Espèces</option>
+                          <option value="CB">Carte Bancaire</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Statut paiement</label>
+                        <select
+                          className="form-control"
+                          value={paymentForm.status}
+                          onChange={(event) => setPaymentForm((prev) => ({ ...prev, status: event.target.value }))}
+                        >
+                          <option value="validé">validé</option>
+                          <option value="non validé">non validé</option>
+                          <option value="annulé">annulé</option>
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Montant</label>
+                        <input
+                          type="number"
+                          className="form-control"
+                          step="0.01"
+                          value={paymentForm.amount}
+                          onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))}
+                        />
+                      </div>
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Commentaire</label>
+                      <textarea
+                        className="form-control"
+                        rows={2}
+                        value={paymentForm.comment}
+                        onChange={(event) => setPaymentForm((prev) => ({ ...prev, comment: event.target.value }))}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={submitEnrollmentPayment}
+                        disabled={paymentLoading}
+                      >
+                        {paymentLoading ? 'Enregistrement...' : editingPaymentId ? 'Mettre à jour le paiement' : 'Ajouter le paiement'}
+                      </button>
+                      {editingPaymentId && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={cancelEditPayment}
+                          disabled={paymentLoading}
+                        >
+                          Annuler
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Payeur</th>
+                      <th>Moyen</th>
+                      <th>Montant</th>
+                      <th>Statut</th>
+                      <th>Description</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {enrollmentPayments.length > 0 ? (
+                      enrollmentPayments.map((payment) => (
+                        <tr key={payment.id}>
+                          <td>{formatDate(payment.processedAt || payment.createdAt)}</td>
+                          <td>{payment.payerName || '—'}</td>
+                          <td>{payment.method || '—'}</td>
+                          <td>{Number(payment.amount).toFixed(2)} €</td>
+                          <td>{paymentStatusLabel(payment.status)}</td>
+                          <td>{payment.description || '—'}</td>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              {canActionPayment(payment) ? (
                                 <>
                                   <button
                                     type="button"
-                                    className="btn btn-link"
-                                    onClick={() => editEnrollmentPayment(payment)}
-                                    title="Modifier le paiement"
+                                    className="btn btn-success btn-sm"
+                                    onClick={() => changeEnrollmentPaymentStatus(payment, 'validé')}
+                                    disabled={paymentLoading}
+                                    title="Valider le paiement"
+                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', width: 36, height: 36 }}
                                   >
-                                    ✏️ Modifier
+                                    <FiCheckCircle size={16} />
                                   </button>
                                   <button
                                     type="button"
-                                    className="btn btn-link text-danger"
-                                    onClick={() => deleteEnrollmentPayment(payment.id)}
-                                    title="Supprimer le paiement"
+                                    className="btn btn-danger btn-sm"
+                                    onClick={() => changeEnrollmentPaymentStatus(payment, 'annulé')}
+                                    disabled={paymentLoading}
+                                    title="Annuler le paiement"
+                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', width: 36, height: 36 }}
                                   >
-                                    🗑️ Supprimer
+                                    <FiXCircle size={16} />
                                   </button>
                                 </>
                               ) : (
@@ -1614,16 +1726,30 @@ export default function AdminEnrollments() {
                                   Validé
                                 </span>
                               )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <p>Aucun paiement enregistré pour cette inscription.</p>
-              )}
+                              <button
+                                type="button"
+                                className="btn btn-link"
+                                onClick={() => downloadEnrollmentPaymentReceipt(payment)}
+                                title="Télécharger le reçu"
+                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
+                              >
+                                <FiDownload size={14} />
+                                <span style={{ fontSize: 13 }}>Reçu</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan="7" style={{ textAlign: 'center', color: '#6B7280', padding: '18px 0' }}>
+                          Aucun paiement enregistré pour cette inscription.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <div className="form-section" style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, background: '#F9FAFB', marginTop: 16 }}>
