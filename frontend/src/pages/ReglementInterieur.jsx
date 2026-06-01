@@ -1,3 +1,8 @@
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import toast from 'react-hot-toast';
+import api from '../api/axios';
+
 export default function ReglementInterieur() {
   const handleClose = () => {
     window.close();

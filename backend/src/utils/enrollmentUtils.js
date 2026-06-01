@@ -18,8 +18,18 @@ async function getNextEnrollmentRegistrationCode(tx, schoolYearId, offset = 0) {
   }
 
   const yearCode = extractSchoolYearCode(schoolYear.label, schoolYear.startDate);
-  const count = await tx.enrollment.count({ where: { schoolYearId } });
-  const sequence = String(count + 1 + offset).padStart(3, '0');
+  const prefix = `FAM-${yearCode}-`;
+  const [latestEnrollment] = await tx.enrollment.findMany({
+    where: { schoolYearId, registrationCode: { startsWith: prefix } },
+    orderBy: { registrationCode: 'desc' },
+    take: 1,
+    select: { registrationCode: true },
+  });
+
+  const lastSequence = latestEnrollment
+    ? Number(latestEnrollment.registrationCode.slice(prefix.length))
+    : 0;
+  const sequence = String(lastSequence + 1 + offset).padStart(3, '0');
 
   return `FAM-${yearCode}-${sequence}`;
 }
