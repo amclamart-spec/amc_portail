@@ -11,7 +11,7 @@ import ResetPassword from './pages/auth/ResetPassword';
 import VerifyEmail from './pages/auth/VerifyEmail';
 import GoogleCallback from './pages/auth/GoogleCallback';
 import FamilyRegistrationWizard from './pages/auth/FamilyRegistrationWizard';
-import ReglementInterieur from './pages/ReglementInterieur';
+import ReglementInterieur from './pages/reglement/ReglementInterieur';
 import SuperAdminDashboard from './pages/superAdmin/Dashboard';
 
 import AdminDashboard from './pages/admin/Dashboard';
