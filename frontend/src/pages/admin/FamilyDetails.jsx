@@ -5,6 +5,17 @@ import { FiDownload } from 'react-icons/fi';
 import api from '../../api/axios';
 
 const EMPTY_PARENT = { civility: 'M', firstName: '', lastName: '', email: '', phone: '', link: 'PERE', isLegalGuardian: false };
+
+const paymentStatusLabels = {
+  COMPLETED: 'Payé',
+  SUCCEEDED: 'validé',
+  CANCELLED: 'annulé',
+  PENDING: 'en attente',
+  FAILED: 'échoué',
+  PROCESSING: 'en traitement',
+};
+
+const formatPaymentStatus = (status) => paymentStatusLabels[status] || status || '—';
 const EMPTY_STUDENT = { firstName: '', lastName: '', dateOfBirth: '', gender: 'GARCON', allergies: '', currentTreatments: '', emergencyContactName: '', emergencyContactPhone: '', photoUrl: '' };
 
 export default function AdminFamilyDetails() {
@@ -272,7 +283,7 @@ export default function AdminFamilyDetails() {
                     <td>{payment.id.slice(0, 8).toUpperCase()}</td>
                     <td>{Number(payment.totalAmount || 0).toFixed(2)}€</td>
                     <td>{Number(payment.paidAmount || 0).toFixed(2)}€</td>
-                    <td><span className={`badge badge-${payment.status === 'COMPLETED' ? 'success' : 'info'}`}>{payment.status === 'COMPLETED' ? 'Payé' : payment.status}</span></td>
+                    <td><span className={`badge badge-${payment.status === 'COMPLETED' ? 'success' : 'info'}`}>{formatPaymentStatus(payment.status)}</span></td>
                     <td>
                       <button
                         className="btn btn-outline btn-sm"

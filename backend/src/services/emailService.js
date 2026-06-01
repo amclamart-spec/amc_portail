@@ -177,6 +177,10 @@ async function sendWithSmtp({ to, subject, html, text, attachments }) {
     subject,
     html,
     text,
+    encoding: 'utf-8',
+    headers: {
+      'Content-Type': 'text/html; charset=UTF-8',
+    },
   };
 
   if (attachments && attachments.length > 0) {
@@ -325,9 +329,15 @@ function getEmbeddedLogoDataUri(fileName, fallbackColor = '#213B88', fallbackTex
   return dataUri;
 }
 
+function getEmailLogoUrls() {
+  const baseFrontendUrl = config.frontendUrl ? config.frontendUrl.replace(/\/$/, '') : null;
+  const logoUrl = baseFrontendUrl ? `${baseFrontendUrl}/amc_logo.png` : getEmbeddedLogoDataUri('amc_logo.png');
+  const partnerLogoUrl = baseFrontendUrl ? `${baseFrontendUrl}/amc_logo_partner.png` : getEmbeddedLogoDataUri('amc_logo_partner.png', '#64748b', 'PARTAGE');
+  return { logoUrl, partnerLogoUrl };
+}
+
 function renderEmailHtml({ title, subtitle, contentHtml }) {
-  const logoUrl = getEmbeddedLogoDataUri('amc_logo.png');
-  const partnerLogoUrl = getEmbeddedLogoDataUri('amc_logo_partner.png', '#64748b', 'PARTAGE');
+  const { logoUrl, partnerLogoUrl } = getEmailLogoUrls();
   return `<!DOCTYPE html>
 <html lang="fr">
   <head>
@@ -437,6 +447,71 @@ async function sendEnrollmentConfirmationEmail(user, enrollmentSummary = '', sub
   });
 }
 
+async function sendEnrollmentConfirmedEmail(user, enrollmentSummary = '', attachments = []) {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Votre inscription a bien été confirmée.</p>
+    ${enrollmentSummary ? `<div style="margin:18px 0;padding:18px;background:#eef2ff;border-radius:12px;"><strong>Détails des inscriptions :</strong><br/>${enrollmentSummary}</div>` : ''}
+    <p>Veuillez trouver en pièce jointe le reçu de paiement.</p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: 'Inscription confirmée',
+    html: renderEmailHtml({
+      title: 'Inscription confirmée',
+      subtitle: 'Votre inscription est maintenant confirmée',
+      contentHtml,
+    }),
+    attachments,
+  });
+}
+
+async function sendEnrollmentRequestRegisteredEmail(user, enrollmentSummary = '') {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Votre inscription a bien été enregistrée. Elle sera étudiée par l'administration avant validation de paiement. Vous serez informé(e) par email de l'état de votre inscription.</p>
+    ${enrollmentSummary ? `<div style="margin:18px 0;padding:18px;background:#eef2ff;border-radius:12px;"><strong>Détails des inscriptions :</strong><br/>${enrollmentSummary}</div>` : ''}
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: "Demande d'inscription enregistrée",
+    html: renderEmailHtml({
+      title: "Demande d'inscription enregistrée",
+      subtitle: 'Votre demande est en cours de traitement',
+      contentHtml,
+    }),
+  });
+}
+
+async function sendStripePaymentPendingEmail(user, paymentData = {}) {
+  const payerName = paymentData?.payerName || paymentData?.metadata?.payerName || paymentData?.metadata?.payer_name || 'N/A';
+  const methodLabel = paymentData?.method === 'SEPA' ? 'SEPA Stripe' : paymentData?.method === 'CB' ? 'Carte bancaire Stripe' : paymentData?.method || 'Stripe';
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Nous confirmons que votre paiement Stripe a bien été enregistré. Il reste en attente tant que votre inscription n'est pas validée.</p>
+    <div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
+      <strong>Référence de paiement :</strong> ${paymentData.id || 'N/A'}<br/>
+      <strong>Montant :</strong> ${Number(paymentData.totalAmount || paymentData.amount || 0).toFixed(2)} €<br/>
+      <strong>Méthode :</strong> ${methodLabel}<br/>
+      <strong>Payeur :</strong> ${payerName}
+    </div>
+    ${paymentData.enrollmentSummary ? `<div style="margin-top:12px;">${paymentData.enrollmentSummary}</div>` : ''}
+    <p>Vous serez informé(e) par email de l'état de votre inscription.</p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: 'AMC — Paiement Stripe enregistré',
+    html: renderEmailHtml({
+      title: 'Paiement Stripe enregistré',
+      subtitle: "Le paiement est bien enregistré, l'inscription reste en attente",
+      contentHtml,
+    }),
+  });
+}
+
 async function sendEnrollmentStatusEmail(user, subject, title, subtitle, summaryHtml) {
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
@@ -479,12 +554,12 @@ async function sendPaymentConfirmationEmail(user, payment) {
   const payerName = payment?.payerName || payment?.metadata?.payerName || payment?.metadata?.payer_name || 'N/A';
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Nous confirmons la reception de votre paiement.</p>
+    <p>Nous confirmons la réception de votre paiement.</p>
     <ul>
-      <li><strong>Reference:</strong> ${payment.id}</li>
-      <li><strong>Montant:</strong> ${Number(payment.amount || payment.totalAmount || 0).toFixed(2)} &euro;</li>
-      <li><strong>Methode:</strong> ${payment.method || payment.paymentMethod}</li>
-      <li><strong>Payeur:</strong> ${payerName}</li>
+      <li><strong>Référence :</strong> ${payment.id}</li>
+      <li><strong>Montant :</strong> ${Number(payment.amount || payment.totalAmount || 0).toFixed(2)} &euro;</li>
+      <li><strong>Méthode :</strong> ${payment.method || payment.paymentMethod}</li>
+      <li><strong>Payeur :</strong> ${payerName}</li>
     </ul>
   `;
 
@@ -588,15 +663,15 @@ async function sendPaymentValidationEmail(user, paymentData) {
   const payerName = paymentData?.payerName || paymentData?.metadata?.payerName || paymentData?.metadata?.payer_name || 'N/A';
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Nous avons confirme votre paiement. Les inscriptions de vos enfants sont maintenant validees.</p>
+    <p>Nous avons confirmé votre paiement. Les inscriptions de vos enfants sont maintenant validées.</p>
     <div style="background:#dcfce7;padding:18px;border-radius:12px;margin:18px 0;border-left:4px solid #22c55e;">
-      <strong>&#10003; Paiement confirme</strong><br/>
+      <strong>&#10003; Paiement confirmé</strong><br/>
       Montant : ${Number(paymentData.totalAmount || paymentData.amount || 0).toFixed(2)} &euro;<br/>
-      Methode : ${paymentData.method || 'Carte bancaire'}<br/>
+      Méthode : ${paymentData.method || 'Carte bancaire'}<br/>
       Payeur : ${payerName}<br/>
-      Reference : ${paymentData.id || 'N/A'}
+      Référence : ${paymentData.id || 'N/A'}
     </div>
-    <p>Votre inscription est desormais confirmee. Merci de votre confiance.</p>
+    <p>Votre inscription est désormais confirmée. Merci de votre confiance.</p>
   `;
 
   return sendMail({
@@ -615,9 +690,12 @@ module.exports = {
   sendVerificationEmail,
   sendResetPasswordEmail,
   sendEnrollmentConfirmationEmail,
+  sendEnrollmentRequestRegisteredEmail,
+  sendStripePaymentPendingEmail,
   sendEnrollmentApprovedEmail,
   sendEnrollmentRejectedEmail,
   sendPaymentConfirmationEmail,
+  sendEnrollmentConfirmedEmail,
   sendAccountApprovedEmail,
   sendAccountRejectedEmail,
   sendFamilyRegistrationConfirmationEmail,

@@ -14,9 +14,10 @@ if (!fs.existsSync(uploadsDir)) {
  * @param {Object} paymentData - Payment record with family, enrollments, etc.
  * @param {Object} familyData - Family record with user info
  * @param {Array} enrollmentData - Enrollment records with course details
+ * @param {Array} familyPayments - Optional family payments to include in the receipt
  * @returns {Promise<{filePath: string, filename: string}>}
  */
-async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
+async function generateInvoicePDF(paymentData, familyData, enrollmentData, familyPayments = []) {
   return new Promise((resolve, reject) => {
     try {
       const filename = `recu-${paymentData.id}.pdf`;
@@ -195,8 +196,14 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
         });
       }
 
-        // Transactions linked to this payment (détails des paiements)
-        if (paymentData.transactions && paymentData.transactions.length > 0) {
+        // Transactions linked to this payment or all validated family payments
+        const transactionSource = Array.isArray(familyPayments) && familyPayments.length > 0
+          ? familyPayments.flatMap((p) => Array.isArray(p.transactions) ? p.transactions : [])
+          : (paymentData.transactions || []);
+        const validatedTransactions = transactionSource.filter((tx) => String(tx.status) === 'SUCCEEDED' || String(tx.status) === 'COMPLETED');
+        const paymentTransactions = validatedTransactions.length > 0 ? validatedTransactions : transactionSource;
+
+        if (paymentTransactions.length > 0) {
           if (currentY > doc.page.height - 180) {
             doc.addPage();
             currentY = 40;
@@ -224,7 +231,7 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
           currentY += txCellH;
 
           doc.fontSize(9).font('Helvetica');
-          paymentData.transactions.forEach((tx) => {
+          paymentTransactions.forEach((tx) => {
             if (currentY > doc.page.height - 120) {
               doc.addPage();
               currentY = 40;

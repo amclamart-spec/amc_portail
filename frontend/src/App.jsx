@@ -11,6 +11,7 @@ import ResetPassword from './pages/auth/ResetPassword';
 import VerifyEmail from './pages/auth/VerifyEmail';
 import GoogleCallback from './pages/auth/GoogleCallback';
 import FamilyRegistrationWizard from './pages/auth/FamilyRegistrationWizard';
+import ReglementInterieur from './pages/ReglementInterieur';
 import SuperAdminDashboard from './pages/superAdmin/Dashboard';
 
 import AdminDashboard from './pages/admin/Dashboard';
@@ -32,7 +33,6 @@ import EnrollmentDashboard from './pages/EnrollmentDashboard';
 
 import TresorierDashboard from './pages/tresorier/Dashboard';
 import TresorierPayments from './pages/tresorier/Payments';
-import TresorierRefunds from './pages/tresorier/Refunds';
 
 import ProfesseurDashboard from './pages/professeur/Dashboard';
 import SuiviPedagogique from './pages/professeur/SuiviPedagogique';
@@ -57,6 +57,7 @@ function App() {
       <Route path="/verify-email" element={<VerifyEmail />} />
 
       <Route path="/register/famille-wizard" element={<FamilyRegistrationWizard />} />
+      <Route path="/reglement-interieur" element={<ReglementInterieur />} />
       <Route path="/auth/google/callback" element={<GoogleCallback />} />
       <Route path="/super-admin" element={<PrivateRoute roles={['SUPER_ADMIN']}><Layout><SuperAdminDashboard /></Layout></PrivateRoute>} />
 
@@ -85,7 +86,6 @@ function App() {
 
       <Route path="/tresorier" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierDashboard /></Layout></PrivateRoute>} />
       <Route path="/tresorier/payments" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments /></Layout></PrivateRoute>} />
-      <Route path="/tresorier/refunds" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierRefunds /></Layout></PrivateRoute>} />
 
       <Route path="/professeur" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurDashboard /></Layout></PrivateRoute>} />
       <Route path="/suivi-pedagogique" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><SuiviPedagogique /></Layout></PrivateRoute>} />
