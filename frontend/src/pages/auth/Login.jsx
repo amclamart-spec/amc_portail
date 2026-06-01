@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { FiMail, FiLock, FiEye, FiEyeOff } from 'react-icons/fi';
 import { FcGoogle } from 'react-icons/fc';
+import { version as appVersion } from '../../../package.json';
 
 export default function Login() {
   const { login, loading } = useAuth();
@@ -211,6 +212,7 @@ export default function Login() {
 
       <div style={{ textAlign: 'center', padding: 16, color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>
         © {new Date().getFullYear()} Association Partage et des Musulmans de Clamart
+        <div style={{ marginTop: 4 }}>Version {appVersion}</div>
       </div>
     </div>
   );
