@@ -1212,6 +1212,15 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               <p style={{ fontSize: 13, color: '#7C2D12' }}>La signature engage les représentants légaux à respecter les règles de sécurité et de suivi pédagogique PARTAGE.</p>
             </div>
 
+            <div style={{ marginBottom: 18, padding: 16, border: '2px solid #DC2626', borderRadius: 10, background: '#FEE2E2' }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, color: '#991B1B' }}>⚠️ Veuillez lire le règlement intérieur avant de valider vos inscriptions</div>
+              <div style={{ fontSize: 14 }}>
+                <a href="/reglement-interieur" target="_blank" rel="noopener noreferrer" style={{ color: '#DC2626', textDecoration: 'underline', fontWeight: 600 }}>
+                  Ouvrir le règlement intérieur
+                </a>
+              </div>
+            </div>
+
             <div className="form-group">
               <label><input type="checkbox" checked={wizard.engagement.readAndApproved} onChange={(e) => updateWizard('engagement', { readAndApproved: e.target.checked })} /> J'ai lu l'engagement complet</label>
             </div>

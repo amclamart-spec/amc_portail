@@ -727,6 +727,14 @@ async function updateEnrollmentPayment(req, res) {
         return res.status(400).json({ error: 'Statut de paiement invalide' });
       }
       updateData.status = status === 'validé' ? 'SUCCEEDED' : status === 'annulé' ? 'CANCELLED' : 'INITIATED';
+
+      // Block validation if the enrollment level hasn't been validated
+      if (updateData.status === 'SUCCEEDED') {
+        // enrollment is retrieved earlier via findEnrollmentTransaction
+        if (enrollment && enrollment.levelValidated !== true) {
+          return res.status(400).json({ error: "Le niveau de l'inscription n'est pas validé — impossible de valider le paiement." });
+        }
+      }
     }
 
     if (amount !== undefined) {
@@ -867,8 +875,24 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
       console.warn('Impossible de récupérer les enfants pour le reçu (adminController):', err?.message || err);
     }
 
+    const familyPayments = await prisma.payment.findMany({
+      where: {
+        familyId: payment.familyId,
+        schoolYearId: payment.schoolYearId,
+      },
+      include: {
+        transactions: { orderBy: { createdAt: 'desc' } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
     // Generate invoice-like PDF file using shared utility
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollmentFull ? [enrollmentFull] : []);
+    const invoiceResult = await generateInvoicePDF(
+      payment,
+      familyWithChildren,
+      enrollmentFull ? [enrollmentFull] : [],
+      familyPayments,
+    );
     if (!invoiceResult) {
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
     }

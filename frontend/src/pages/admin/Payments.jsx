@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
-import { FiDownload } from 'react-icons/fi';
+import { FiCheckCircle, FiDownload, FiEye, FiXCircle } from 'react-icons/fi';
+import PaymentDetailModal from '../../components/PaymentDetailModal';
 
 const transactionStatusOptions = [
   { value: '', label: 'Tous' },
@@ -14,6 +15,7 @@ const transactionStatusOptions = [
 export default function AdminPayments() {
   const [transactions, setTransactions] = useState([]);
   const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
 
   const buildQueryParams = (values) => {
     return Object.entries(values).reduce((params, [key, value]) => {
@@ -37,12 +39,21 @@ export default function AdminPayments() {
   const handleTransactionAction = async (tx, action) => {
     try {
       await api.patch(`/payments/transactions/${tx.id}`, { status: action });
-      toast.success(action === 'validé' ? 'Paiement validé' : 'Paiement annulé');
+      toast.success(action === 'SUCCEEDED' ? 'Paiement validé' : 'Paiement annulé');
       await load(filters);
     } catch (err) {
       console.error('Erreur mise à jour transaction', err);
-      toast.error('Impossible de mettre à jour le paiement');
+      const serverMsg = err?.response?.data?.error;
+      toast.error(serverMsg || 'Impossible de mettre à jour le paiement');
     }
+  };
+
+  const openDetailModal = (tx) => {
+    setSelectedTransaction(tx);
+  };
+
+  const closeDetailModal = () => {
+    setSelectedTransaction(null);
   };
 
   useEffect(() => { load(); }, []);
@@ -172,12 +183,36 @@ export default function AdminPayments() {
                     </button>
                   </td>
                   <td>
-                    {String(t.status) === 'INITIATED' && (
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button className="btn btn-primary btn-sm" onClick={() => handleTransactionAction(t, 'validé')}>Valider</button>
-                        <button className="btn btn-outline btn-sm" onClick={() => handleTransactionAction(t, 'annulé')}>Annuler</button>
-                      </div>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
+                      {String(t.status) === 'INITIATED' && (
+                        <>
+                          <button
+                            className="btn btn-success btn-sm"
+                            title="Valider"
+                            onClick={() => handleTransactionAction(t, 'SUCCEEDED')}
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                          >
+                            <FiCheckCircle size={14} />
+                          </button>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            title="Annuler"
+                            onClick={() => handleTransactionAction(t, 'CANCELLED')}
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                          >
+                            <FiXCircle size={14} />
+                          </button>
+                        </>
+                      )}
+                      <button
+                        className="btn btn-outline btn-sm"
+                        title="Détail"
+                        onClick={() => openDetailModal(t)}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                      >
+                        <FiEye size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -185,6 +220,12 @@ export default function AdminPayments() {
           </table>
         </div>
       </div>
+      <PaymentDetailModal
+        transaction={selectedTransaction}
+        isOpen={Boolean(selectedTransaction)}
+        onClose={closeDetailModal}
+        onRefundCreated={() => load(filters)}
+      />
     </div>
   );
 }

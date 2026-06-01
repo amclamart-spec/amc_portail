@@ -123,8 +123,19 @@ async function generateInvoiceForPayment(paymentId) {
 
     const familyWithChildren = { ...payment.family, children };
 
+    const familyPayments = await prisma.payment.findMany({
+      where: {
+        familyId: payment.familyId,
+        schoolYearId: payment.schoolYearId,
+      },
+      include: {
+        transactions: { orderBy: { createdAt: 'desc' } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
     // Generate PDF invoice
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, familyPayments);
     console.log(`✅ Facture générée: ${invoiceResult.filename}`);
 
     return invoiceResult;
@@ -906,6 +917,40 @@ async function updateTransactionStatus(req, res) {
       return res.status(403).json({ error: 'Seuls les paiements au statut Initié peuvent être modifiés' });
     }
 
+    // New rule: cannot validate a payment if any related enrollment has levelValidated === false
+    if (newStatus === 'SUCCEEDED') {
+      // Determine enrollment IDs from payment metadata or fallback like invoice generation
+      const paymentFull = await prisma.payment.findUnique({ where: { id: transaction.paymentId } });
+      let enrollmentIds = paymentFull?.metadata?.enrollmentIds || [];
+      if (!Array.isArray(enrollmentIds) || enrollmentIds.length === 0) {
+        const fallbackEnrollments = await prisma.enrollment.findMany({
+          where: {
+            familyId: paymentFull?.familyId,
+            schoolYearId: paymentFull?.schoolYearId,
+            status: { in: ['PENDING', 'CONFIRMED'] },
+          },
+          select: { id: true },
+        });
+        enrollmentIds = fallbackEnrollments.map(e => e.id);
+      }
+
+      if (Array.isArray(enrollmentIds) && enrollmentIds.length > 0) {
+        const unvalidatedCount = await prisma.enrollment.count({
+          where: {
+            id: { in: enrollmentIds },
+            OR: [
+              { levelValidated: false },
+              { levelValidated: null },
+            ],
+          },
+        });
+
+        if (unvalidatedCount > 0) {
+          return res.status(400).json({ error: 'Niveau scolaire non validé, donc validation de paiement impossible' });
+        }
+      }
+    }
+
     const updatedTransaction = await prisma.paymentTransaction.update({
       where: { id: transaction.id },
       data: {
@@ -933,7 +978,12 @@ async function updateTransactionStatus(req, res) {
       return res.status(500).json({ error: `Impossible de mettre à jour le paiement Stripe : ${providerError.message}` });
     }
 
-    await recalculatePaymentAggregate(updatedTransaction.paymentId);
+    try {
+      await recalculatePaymentAggregate(updatedTransaction.paymentId);
+    } catch (recalcErr) {
+      console.error('Erreur recalcul agrégat paiement après mise à jour transaction:', recalcErr);
+      return res.status(500).json({ error: `Erreur recalcul agrégat paiement: ${recalcErr.message}` });
+    }
 
     return res.json({
       transaction: {
@@ -951,7 +1001,7 @@ async function updateTransactionStatus(req, res) {
     });
   } catch (error) {
     console.error('Erreur updateTransactionStatus:', error);
-    return res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: error.message || 'Erreur serveur' });
   }
 }
 
@@ -1974,7 +2024,18 @@ async function generatePaymentReceiptPDF(req, res) {
       console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
     }
 
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, []);
+    const familyPayments = await prisma.payment.findMany({
+      where: {
+        familyId: payment.familyId,
+        schoolYearId: payment.schoolYearId,
+      },
+      include: {
+        transactions: { orderBy: { createdAt: 'desc' } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, [], familyPayments);
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
