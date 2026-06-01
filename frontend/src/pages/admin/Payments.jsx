@@ -29,7 +29,8 @@ export default function AdminPayments() {
   const load = async (queryFilters = {}) => {
     try {
       const txRes = await api.get('/payments/transactions', { params: buildQueryParams(queryFilters) });
-      setTransactions(txRes.data.transactions || []);
+      const uniqueTransactions = [...new Map((txRes.data.transactions || []).map((tx) => [tx.id, tx])).values()];
+      setTransactions(uniqueTransactions);
     } catch (e) {
       console.error('Impossible de charger les transactions', e);
       toast.error('Impossible de charger les transactions');
@@ -37,6 +38,10 @@ export default function AdminPayments() {
   };
 
   const handleTransactionAction = async (tx, action) => {
+    const actionLabel = action === 'SUCCEEDED' ? 'valider' : 'annuler';
+    const confirmed = window.confirm(`Confirmer la décision de ${actionLabel} ce paiement ?`);
+    if (!confirmed) return;
+
     try {
       await api.patch(`/payments/transactions/${tx.id}`, { status: action });
       toast.success(action === 'SUCCEEDED' ? 'Paiement validé' : 'Paiement annulé');

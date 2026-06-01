@@ -333,7 +333,8 @@ export default function AdminEnrollments() {
   const fetchEnrollmentPayments = async (enrollmentId) => {
     try {
       const { data } = await api.get(`/admin/enrollments/${enrollmentId}/payments`);
-      setEnrollmentPayments(data.payments || []);
+      const uniquePayments = [...new Map((data.payments || []).map((payment) => [payment.id, payment])).values()];
+      setEnrollmentPayments(uniquePayments);
       setEditingPaymentId(null);
     } catch (error) {
       console.error('Impossible de charger les paiements', error);
@@ -474,9 +475,9 @@ export default function AdminEnrollments() {
 
   const canEditPayment = (payment) => String(payment.status) !== 'SUCCEEDED';
   const canActionPayment = (payment) => {
-    const activeEnrollment = paymentEnrollment || editingEnrollment;
-    if (!activeEnrollment) return false;
-    return String(payment.status) === 'INITIATED' && Boolean(activeEnrollment.levelValidated);
+    // Show action buttons when payment is not validated (SUCCEEDED) and not cancelled
+    const s = String(payment.status || '').toUpperCase();
+    return s !== 'SUCCEEDED' && s !== 'CANCELLED';
   };
 
   const downloadEnrollmentPaymentReceipt = async (payment) => {
@@ -935,23 +936,23 @@ export default function AdminEnrollments() {
               <tbody>
                 {enrollments.length === 0 ? (
                   <tr><td colSpan="9" style={{ textAlign: 'center', color: '#6B7280', padding: '24px 0' }}>Aucune inscription</td></tr>
-                ) : groupedEnrollments.map((group) => {
-                  const expanded = isFamilyExpanded(group.familyId);
-                  return (
+                ) : (
+                  groupedEnrollments.map((group) => (
                     <Fragment key={group.familyId}>
-                      <tr key={`family-${group.familyId}`} style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
+                      <tr style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
                         <td colSpan="9" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <span style={{ fontSize: 14, color: '#1D4ED8' }}>{expanded ? '▾' : '▸'}</span>
+                              <span style={{ fontSize: 14, color: '#1D4ED8' }}>{isFamilyExpanded(group.familyId) ? '▾' : '▸'}</span>
                               <span>{group.familyName}</span>
                               <span style={{ fontSize: 13, color: '#475569' }}>({group.enrollments.length} inscription{group.enrollments.length > 1 ? 's' : ''})</span>
                             </div>
-                            <span style={{ fontSize: 13, color: '#6B7280' }}>Cliquer pour {expanded ? 'replier' : 'déplier'}</span>
+                            <span style={{ fontSize: 13, color: '#6B7280' }}>Cliquer pour {isFamilyExpanded(group.familyId) ? 'replier' : 'déplier'}</span>
                           </div>
                         </td>
                       </tr>
-                      {expanded && group.enrollments.map((e) => {
+
+                      {isFamilyExpanded(group.familyId) && group.enrollments.map((e) => {
                         const selectedStatus = statusUpdates[e.id] || e.status;
                         const waitlist = isEnrollmentWaitlist(e);
                         return (
@@ -975,13 +976,11 @@ export default function AdminEnrollments() {
                                 onChange={(event) => handleLevelValidatedChange(e.id, event.target.checked)}
                               />
                             </td>
-                            
                             <td style={{ padding: '16px 12px' }}>
                               <span className={`badge ${waitlist ? 'badge-danger' : 'badge-success'}`}>
                                 {waitlist ? 'Oui' : 'Non'}
                               </span>
                             </td>
-                            
                             <td style={{ padding: '16px 12px' }}>{statusBadge(selectedStatus, waitlist)}</td>
                             <td className="table-actions" style={{ justifyContent: 'flex-end', padding: '16px 12px' }}>
                               {(() => {
@@ -1042,13 +1041,13 @@ export default function AdminEnrollments() {
                                   <span style={{ fontSize: 13 }}>Modifier</span>
                                 </button>
                               </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </Fragment>
-            );
-          })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

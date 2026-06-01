@@ -52,6 +52,10 @@ export default function TresorierPayments() {
   };
 
   const handleTransactionAction = async (tx, action) => {
+    const actionLabel = action === 'SUCCEEDED' ? 'valider' : 'annuler';
+    const confirmed = window.confirm(`Confirmer la décision de ${actionLabel} ce paiement ?`);
+    if (!confirmed) return;
+
     try {
       await api.patch(`/payments/transactions/${tx.id}`, { status: action });
       toast.success(action === 'SUCCEEDED' ? 'Paiement validé' : 'Paiement annulé');

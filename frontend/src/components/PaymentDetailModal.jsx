@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/axios';
 import toast from 'react-hot-toast';
+import { FiCheckCircle, FiXCircle } from 'react-icons/fi';
 
 const paymentStatusLabels = {
   SUCCEEDED: 'Payé',
@@ -205,7 +206,56 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
             <h2 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#1d4ed8' }}>Détail du paiement</h2>
             <div style={{ color: '#64748b', marginTop: 4 }}>Paiement #{paymentId}</div>
           </div>
-          <button type="button" className="btn btn-outline" onClick={onClose}>Fermer</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {(() => {
+              const txStatus = String(transaction?.status || payment.status);
+              return txStatus !== 'SUCCEEDED' && txStatus !== 'CANCELLED';
+            })() && (
+              <>
+                <button
+                  type="button"
+                  title="Valider le paiement"
+                  className="btn btn-ghost"
+                  onClick={async () => {
+                    if (!window.confirm('Confirmer la validation de ce paiement ?')) return;
+                    try {
+                      await api.patch(`/payments/transactions/${transaction.id}`, { status: 'SUCCEEDED' });
+                      toast.success('Paiement validé');
+                      if (typeof onRefundCreated === 'function') onRefundCreated();
+                      onClose();
+                    } catch (err) {
+                      console.error('Erreur validation paiement', err);
+                      toast.error(err?.response?.data?.error || 'Impossible de valider le paiement');
+                    }
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8, width: 40, height: 40 }}
+                >
+                  <FiCheckCircle size={18} color="#16a34a" />
+                </button>
+                <button
+                  type="button"
+                  title="Annuler le paiement"
+                  className="btn btn-ghost"
+                  onClick={async () => {
+                    if (!window.confirm('Confirmer l\'annulation de ce paiement ?')) return;
+                    try {
+                      await api.patch(`/payments/transactions/${transaction.id}`, { status: 'CANCELLED' });
+                      toast.success('Paiement annulé');
+                      if (typeof onRefundCreated === 'function') onRefundCreated();
+                      onClose();
+                    } catch (err) {
+                      console.error('Erreur annulation paiement', err);
+                      toast.error(err?.response?.data?.error || 'Impossible d\'annuler le paiement');
+                    }
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8, width: 40, height: 40 }}
+                >
+                  <FiXCircle size={18} color="#dc2626" />
+                </button>
+              </>
+            )}
+            <button type="button" className="btn btn-outline" onClick={onClose}>Fermer</button>
+          </div>
         </div>
 
         <div style={{ ...sectionStyle, padding: 20, borderRadius: 14, backgroundColor: '#f8fafc' }}>
