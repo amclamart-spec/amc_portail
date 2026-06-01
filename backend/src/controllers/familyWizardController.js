@@ -1,7 +1,13 @@
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { PrismaClient, Prisma } = require('@prisma/client');
-const { sendVerificationEmail, sendEnrollmentConfirmationEmail, sendMail } = require('../services/emailService');
+const {
+  sendVerificationEmail,
+  sendEnrollmentConfirmationEmail,
+  sendEnrollmentRequestRegisteredEmail,
+  sendStripePaymentPendingEmail,
+  sendMail,
+} = require('../services/emailService');
 const { resolvePricingConfig, calculateFamilyTotal, buildInstallmentSchedule } = require('../services/pricingService');
 const { createOnlineCheckout } = require('../services/paymentProviders');
 const { getNextEnrollmentRegistrationCode } = require('../utils/enrollmentUtils');
@@ -664,60 +670,100 @@ async function completeExistingFamilyRegistration(req, res) {
         },
       });
 
-      const paymentRecord = await tx.payment.create({
-        data: {
+      // Idempotence: if a payment already exists for these enrollments, reuse it
+      const enrollmentIds = createdEnrollments.map((e) => e.id).sort();
+      let paymentRecord = null;
+      const candidatePayments = await tx.payment.findMany({
+        where: {
           familyId: family.id,
           schoolYearId: currentYear.id,
-          totalAmount: toDecimal(paymentTotal),
-          registrationFee: toDecimal(pricing.registrationFee),
-          arabicFee: toDecimal(pricing.arabicFee),
-          coranScienceFee: toDecimal(pricing.coranScienceFee),
-          paymentMethod,
-          provider,
-          numberOfInstallments: installmentsCount,
-          status: 'PENDING',
-          metadata: {
-            enrollmentIds: createdEnrollments.map((e) => e.id),
-            checkoutMethod: selectedPaymentMethod,
-            sepaFee: pricing.fraisPrelevement,
-            ipAddress,
-            draftId: payload.draftId || null,
-            payerName: payment.payerName || null,
-          },
+          status: { not: 'CANCELLED' },
         },
       });
 
-      const installments = buildInstallmentSchedule(paymentTotal, installmentsCount, {
-        dayOfMonth: scheduleDay,
-        startDate: new Date(),
-      });
+      for (const p of candidatePayments) {
+        const pIds = Array.isArray(p.metadata?.enrollmentIds) ? p.metadata.enrollmentIds.slice().sort() : [];
+        if (pIds.length === enrollmentIds.length && pIds.join(',') === enrollmentIds.join(',')) {
+          paymentRecord = p;
+          break;
+        }
+      }
 
-      await tx.installment.createMany({
-        data: installments.map((inst) => ({
-          paymentId: paymentRecord.id,
-          installmentNumber: inst.installmentNumber,
-          amount: toDecimal(inst.amount),
-          dueDate: inst.dueDate,
-          status: 'UPCOMING',
-        })),
-      });
-
-      const paymentPlan = await tx.paymentPlan.create({
-        data: {
-          familyId: family.id,
-          schoolYearId: currentYear.id,
-          paymentId: paymentRecord.id,
-          type: selectedPaymentMethod,
-          status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
-          installmentsCount,
-          scheduleDay,
-          totalAmount: toDecimal(paymentTotal),
-          metadata: {
-            createdFrom: 'existing_family_wizard',
-            sepaFee: pricing.fraisPrelevement,
+      if (!paymentRecord) {
+        paymentRecord = await tx.payment.create({
+          data: {
+            familyId: family.id,
+            schoolYearId: currentYear.id,
+            totalAmount: toDecimal(paymentTotal),
+            registrationFee: toDecimal(pricing.registrationFee),
+            arabicFee: toDecimal(pricing.arabicFee),
+            coranScienceFee: toDecimal(pricing.coranScienceFee),
+            paymentMethod,
+            provider,
+            numberOfInstallments: installmentsCount,
+            status: 'PENDING',
+            metadata: {
+              enrollmentIds,
+              checkoutMethod: selectedPaymentMethod,
+              sepaFee: pricing.fraisPrelevement,
+              ipAddress,
+              draftId: payload.draftId || null,
+              payerName: payment.payerName || null,
+            },
           },
-        },
-      });
+        });
+
+        const installments = buildInstallmentSchedule(paymentTotal, installmentsCount, {
+          dayOfMonth: scheduleDay,
+          startDate: new Date(),
+        });
+
+        await tx.installment.createMany({
+          data: installments.map((inst) => ({
+            paymentId: paymentRecord.id,
+            installmentNumber: inst.installmentNumber,
+            amount: toDecimal(inst.amount),
+            dueDate: inst.dueDate,
+            status: 'UPCOMING',
+          })),
+        });
+
+        await tx.paymentPlan.create({
+          data: {
+            familyId: family.id,
+            schoolYearId: currentYear.id,
+            paymentId: paymentRecord.id,
+            type: selectedPaymentMethod,
+            status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
+            installmentsCount,
+            scheduleDay,
+            totalAmount: toDecimal(paymentTotal),
+            metadata: {
+              createdFrom: 'existing_family_wizard',
+              sepaFee: pricing.fraisPrelevement,
+            },
+          },
+        });
+      } else {
+        // Ensure metadata includes expected fields
+        await tx.payment.update({
+          where: { id: paymentRecord.id },
+          data: {
+            metadata: {
+              ...(paymentRecord.metadata || {}),
+              enrollmentIds,
+              checkoutMethod: selectedPaymentMethod,
+              sepaFee: pricing.fraisPrelevement,
+              ipAddress,
+              draftId: payload.draftId || null,
+              payerName: payment.payerName || null,
+            },
+          },
+        });
+      }
+
+      const installments = await tx.installment.findMany({ where: { paymentId: paymentRecord.id } });
+      const paymentPlan = await tx.paymentPlan.findUnique({ where: { paymentId: paymentRecord.id } });
 
       if (provider === 'OFFLINE') {
         const isCheque = paymentMethod === 'CHEQUE';
@@ -834,24 +880,33 @@ async function completeExistingFamilyRegistration(req, res) {
       }
     }
 
-    // Envoi du mail d'inscription enregistrée uniquement si pas de checkout en ligne (ex: paiement offline)
-    if (!result.shouldCreateCheckout) {
-      const studentById = new Map(result.students.map((s) => [s.id, s]));
-      const enrollmentDetailsHtml = result.enrollments.map((en) => {
-        const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
-        const cls = classById.get(en.classId);
-        const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
-        return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
-      }).join('<br/>');
-      const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
-        <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
-        <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
-        <strong>Échéances :</strong> ${result.installments.length}
-      </div>`;
+    // Envoi du mail de demande d'inscription enregistrée après validation de la dernière étape
+    const studentById = new Map(result.students.map((s) => [s.id, s]));
+    const enrollmentDetailsHtml = result.enrollments.map((en) => {
+      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+      const cls = classById.get(en.classId);
+      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+    }).join('<br/>');
+    const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
+      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
+      <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
+      <strong>Échéances :</strong> ${result.installments.length}
+    </div>`;
 
-      // Envoi des emails en arrière-plan sans bloquer la réponse
-      sendEnrollmentConfirmationEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
-        console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+    sendEnrollmentRequestRegisteredEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+      console.error('[EMAIL] Erreur envoi email demande inscription:', err?.message || err);
+    });
+
+    if (result.payment.provider === 'STRIPE') {
+      sendStripePaymentPendingEmail(req.user, {
+        id: result.payment.id,
+        totalAmount: Number(result.payment.totalAmount || 0),
+        method: result.payment.paymentMethod || 'Stripe',
+        payerName: result.payment.metadata?.payerName || `${req.user.firstName} ${req.user.lastName}`,
+        enrollmentSummary: `${enrollmentDetailsHtml}${paymentDetailsHtml}`,
+      }).catch((err) => {
+        console.error('[EMAIL] Erreur envoi email paiement Stripe en attente:', err?.message || err);
       });
     }
 
@@ -1318,60 +1373,99 @@ async function completeFamilyRegistration(req, res) {
         },
       });
 
-      const paymentRecord = await tx.payment.create({
-        data: {
+      // Idempotence: reuse an existing payment if it matches these enrollments
+      const enrollmentIds = createdEnrollments.map((e) => e.id).sort();
+      let paymentRecord = null;
+      const candidatePayments = await tx.payment.findMany({
+        where: {
           familyId: family.id,
           schoolYearId: currentYear.id,
-          totalAmount: toDecimal(paymentTotal),
-          registrationFee: toDecimal(pricing.registrationFee),
-          arabicFee: toDecimal(pricing.arabicFee),
-          coranScienceFee: toDecimal(pricing.coranScienceFee),
-          paymentMethod,
-          provider,
-          numberOfInstallments: installmentsCount,
-          status: 'PENDING',
-          metadata: {
-            enrollmentIds: createdEnrollments.map((e) => e.id),
-            checkoutMethod: selectedPaymentMethod,
-            sepaFee: pricing.fraisPrelevement,
-            ipAddress,
-            draftId: payload.draftId || null,
-            payerName: payment.payerName || null,
-          },
+          status: { not: 'CANCELLED' },
         },
       });
 
-      const installments = buildInstallmentSchedule(paymentTotal, installmentsCount, {
-        dayOfMonth: scheduleDay,
-        startDate: new Date(),
-      });
+      for (const p of candidatePayments) {
+        const pIds = Array.isArray(p.metadata?.enrollmentIds) ? p.metadata.enrollmentIds.slice().sort() : [];
+        if (pIds.length === enrollmentIds.length && pIds.join(',') === enrollmentIds.join(',')) {
+          paymentRecord = p;
+          break;
+        }
+      }
 
-      await tx.installment.createMany({
-        data: installments.map((inst) => ({
-          paymentId: paymentRecord.id,
-          installmentNumber: inst.installmentNumber,
-          amount: toDecimal(inst.amount),
-          dueDate: inst.dueDate,
-          status: 'UPCOMING',
-        })),
-      });
-
-      const paymentPlan = await tx.paymentPlan.create({
-        data: {
-          familyId: family.id,
-          schoolYearId: currentYear.id,
-          paymentId: paymentRecord.id,
-          type: selectedPaymentMethod,
-          status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
-          installmentsCount,
-          scheduleDay,
-          totalAmount: toDecimal(paymentTotal),
-          metadata: {
-            createdFrom: 'public_family_wizard',
-            sepaFee: pricing.fraisPrelevement,
+      if (!paymentRecord) {
+        paymentRecord = await tx.payment.create({
+          data: {
+            familyId: family.id,
+            schoolYearId: currentYear.id,
+            totalAmount: toDecimal(paymentTotal),
+            registrationFee: toDecimal(pricing.registrationFee),
+            arabicFee: toDecimal(pricing.arabicFee),
+            coranScienceFee: toDecimal(pricing.coranScienceFee),
+            paymentMethod,
+            provider,
+            numberOfInstallments: installmentsCount,
+            status: 'PENDING',
+            metadata: {
+              enrollmentIds,
+              checkoutMethod: selectedPaymentMethod,
+              sepaFee: pricing.fraisPrelevement,
+              ipAddress,
+              draftId: payload.draftId || null,
+              payerName: payment.payerName || null,
+            },
           },
-        },
-      });
+        });
+
+        const installments = buildInstallmentSchedule(paymentTotal, installmentsCount, {
+          dayOfMonth: scheduleDay,
+          startDate: new Date(),
+        });
+
+        await tx.installment.createMany({
+          data: installments.map((inst) => ({
+            paymentId: paymentRecord.id,
+            installmentNumber: inst.installmentNumber,
+            amount: toDecimal(inst.amount),
+            dueDate: inst.dueDate,
+            status: 'UPCOMING',
+          })),
+        });
+
+        await tx.paymentPlan.create({
+          data: {
+            familyId: family.id,
+            schoolYearId: currentYear.id,
+            paymentId: paymentRecord.id,
+            type: selectedPaymentMethod,
+            status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
+            installmentsCount,
+            scheduleDay,
+            totalAmount: toDecimal(paymentTotal),
+            metadata: {
+              createdFrom: 'public_family_wizard',
+              sepaFee: pricing.fraisPrelevement,
+            },
+          },
+        });
+      } else {
+        await tx.payment.update({
+          where: { id: paymentRecord.id },
+          data: {
+            metadata: {
+              ...(paymentRecord.metadata || {}),
+              enrollmentIds,
+              checkoutMethod: selectedPaymentMethod,
+              sepaFee: pricing.fraisPrelevement,
+              ipAddress,
+              draftId: payload.draftId || null,
+              payerName: payment.payerName || null,
+            },
+          },
+        });
+      }
+
+      const installments = await tx.installment.findMany({ where: { paymentId: paymentRecord.id } });
+      const paymentPlan = await tx.paymentPlan.findUnique({ where: { paymentId: paymentRecord.id } });
 
       if (provider === 'OFFLINE') {
         const isCheque = paymentMethod === 'CHEQUE';
@@ -1484,10 +1578,20 @@ async function completeFamilyRegistration(req, res) {
       <strong>Échéances :</strong> ${result.installments.length}
     </div>`;
 
-    // Envoi des emails en arrière-plan sans bloquer la réponse (uniquement si pas de checkout en ligne)
-    if (!result.shouldCreateCheckout) {
-      sendEnrollmentConfirmationEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
-        console.error('[EMAIL] Erreur envoi email confirmation inscription:', err?.message || err);
+    // Envoi du mail de demande d'inscription enregistrée après validation de la dernière étape
+    sendEnrollmentRequestRegisteredEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+      console.error('[EMAIL] Erreur envoi email demande inscription:', err?.message || err);
+    });
+
+    if (result.payment.provider === 'STRIPE') {
+      sendStripePaymentPendingEmail(result.user, {
+        id: result.payment.id,
+        totalAmount: Number(result.payment.totalAmount || 0),
+        method: result.payment.paymentMethod || 'Stripe',
+        payerName: result.payment.metadata?.payerName || result.user.firstName && `${result.user.firstName} ${result.user.lastName}`,
+        enrollmentSummary: `${enrollmentDetailsHtml}${paymentDetailsHtml}`,
+      }).catch((err) => {
+        console.error('[EMAIL] Erreur envoi email paiement Stripe en attente:', err?.message || err);
       });
     }
 

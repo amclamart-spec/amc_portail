@@ -4,7 +4,7 @@ const PDFDocument = require('pdfkit');
 const { PrismaClient, Prisma } = require('@prisma/client');
 const { v4: uuidv4 } = require('uuid');
 const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail } = require('../services/emailService');
-const { finalizeStripePayment } = require('./paymentController');
+const { finalizeStripePayment, cancelStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { isProvisionalClass, getProvisionalClassFilter } = require('../utils/provisionalClassUtils');
 const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
@@ -702,7 +702,7 @@ async function getEnrollmentPayments(req, res) {
 async function updateEnrollmentPayment(req, res) {
   try {
     const { payerName, date, method, status, comment, amount } = req.body;
-    const { transaction } = await findEnrollmentTransaction(req.params.id, req.params.paymentId);
+    const { enrollment, transaction } = await findEnrollmentTransaction(req.params.id, req.params.paymentId);
 
     if (String(transaction.status) === 'SUCCEEDED') {
       return res.status(403).json({ error: 'Impossible de modifier un paiement validé.' });
@@ -728,11 +728,23 @@ async function updateEnrollmentPayment(req, res) {
       }
       updateData.status = status === 'validé' ? 'SUCCEEDED' : status === 'annulé' ? 'CANCELLED' : 'INITIATED';
 
-      // Block validation if the enrollment level hasn't been validated
+      // Block validation if any linked enrollment level hasn't been validated
       if (updateData.status === 'SUCCEEDED') {
-        // enrollment is retrieved earlier via findEnrollmentTransaction
-        if (enrollment && enrollment.levelValidated !== true) {
-          return res.status(400).json({ error: "Le niveau de l'inscription n'est pas validé — impossible de valider le paiement." });
+        // gather enrollment IDs from the payment metadata if available
+        const paymentFull = await prisma.payment.findUnique({ where: { id: transaction.paymentId } });
+        let enrollmentIds = Array.isArray(paymentFull?.metadata?.enrollmentIds) ? paymentFull.metadata.enrollmentIds : [];
+        if (enrollmentIds.length === 0) {
+          // fallback to the current enrollment (the one we fetched via findEnrollmentTransaction)
+          if (enrollment && enrollment.id) enrollmentIds = [enrollment.id];
+        }
+
+        if (enrollmentIds.length > 0) {
+          const unvalidatedCount = await prisma.enrollment.count({
+            where: { id: { in: enrollmentIds }, levelValidated: false },
+          });
+          if (unvalidatedCount > 0) {
+            return res.status(400).json({ error: "Au moins une inscription liée n'a pas le niveau validé — impossible de valider le paiement." });
+          }
         }
       }
     }
@@ -775,7 +787,7 @@ async function updateEnrollmentPayment(req, res) {
       if (String(updatedTransaction.status) === 'SUCCEEDED') {
         console.log(`[ADMIN STRIPE] Tentative de finalisation pour paiement ${updatedTransaction.paymentId}`);
         try {
-          await finalizeStripePayment(updatedTransaction.paymentId);
+          await finalizeStripePayment(updatedTransaction.paymentId, { force: true });
           console.log(`[ADMIN STRIPE] ✅ Finalisation réussie pour paiement ${updatedTransaction.paymentId}`);
         } catch (captureErr) {
           console.error(`[ADMIN STRIPE] Erreur lors de la finalisation Stripe pour le paiement ${updatedTransaction.paymentId}:`, captureErr);
@@ -967,6 +979,20 @@ async function createEnrollmentPayment(req, res) {
         metadata: { ...targetPayment.metadata, enrollmentIds },
       };
       if (transactionStatus === 'SUCCEEDED') {
+        // Ensure all enrollments linked to the target payment have their level validated
+        const enrollmentIds = Array.isArray(targetPayment.metadata?.enrollmentIds) ? targetPayment.metadata.enrollmentIds : [];
+        if (enrollmentIds.length > 0) {
+          const unvalidatedCount = await prisma.enrollment.count({ where: { id: { in: enrollmentIds }, levelValidated: false } });
+          if (unvalidatedCount > 0) {
+            return res.status(400).json({ error: "Au moins une inscription liée n'a pas le niveau validé — impossible de marquer ce paiement comme validé." });
+          }
+        } else {
+          // fallback: check current enrollment
+          if (enrollment && enrollment.levelValidated !== true) {
+            return res.status(400).json({ error: "Le niveau de l'inscription n'est pas validé — impossible de valider le paiement." });
+          }
+        }
+
         const newPaidAmount = new Prisma.Decimal(targetPayment.paidAmount).plus(parsedAmount);
         updateData.paidAmount = newPaidAmount;
         updateData.status = newPaidAmount.greaterThanOrEqualTo(targetPayment.totalAmount) ? 'COMPLETED' : 'PARTIAL';
