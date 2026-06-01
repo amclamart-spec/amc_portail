@@ -1,7 +1,10 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Elements } from '@stripe/react-stripe-js';
+import { loadStripe } from '@stripe/stripe-js';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
+import SepaSetupForm from '../../components/SepaSetupForm';
 import { useAuth } from '../../context/AuthContext';
 
 const STORAGE_KEY_BASE = 'amc_family_wizard_draft_v1';
@@ -144,6 +147,11 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [editingMemberIndex, setEditingMemberIndex] = useState(null);
   const [activeHealthMember, setActiveHealthMember] = useState(0);
   const [emailError, setEmailError] = useState('');
+  const [sepaCheckout, setSepaCheckout] = useState(null);
+  const stripePromise = useMemo(() => {
+    const key = import.meta.env.VITE_STRIPE_PUBLIC_KEY || '';
+    return key ? loadStripe(key) : null;
+  }, []);
 
   const [wizard, setWizard] = useState(() => {
     const saved = localStorage.getItem(storageKey);
@@ -548,6 +556,11 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     }
   };
 
+  const handleSepaMandateSuccess = () => {
+    localStorage.removeItem(storageKey);
+    navigate(`/login?registration_message=${encodeURIComponent(REGISTRATION_PENDING_VALIDATION_MESSAGE)}`);
+  };
+
   const submitFinal = async () => {
     if (!validateStep()) return;
     setSubmitting(true);
@@ -564,14 +577,21 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
       const endpoint = existingFamily ? '/family-wizard/complete-existing' : '/family-wizard/complete';
       const { data } = await api.post(endpoint, payload);
-      localStorage.removeItem(storageKey);
+
+      if (data?.payment?.checkout?.clientSecret) {
+        setSepaCheckout(data.payment.checkout);
+        toast.success('Veuillez signer le mandat SEPA pour finaliser votre inscription.');
+        return;
+      }
 
       if (data?.payment?.checkout?.checkoutUrl) {
+        localStorage.removeItem(storageKey);
         toast.success('Redirection vers le paiement...');
         window.location.href = data.payment.checkout.checkoutUrl;
         return;
       }
 
+      localStorage.removeItem(storageKey);
       navigate(`/login?registration_message=${encodeURIComponent(REGISTRATION_PENDING_VALIDATION_MESSAGE)}`);
     } catch (error) {
       toast.error(error.response?.data?.error || 'Erreur de finalisation');
@@ -684,6 +704,48 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       [field]: (activeHealthForm[field] || []).filter((_, i) => i !== index),
     });
   };
+
+  if (sepaCheckout) {
+    const paymentStep = existingFamily ? 4 : 5;
+    return (
+      <div style={{ minHeight: '100vh', background: '#F8FAFC', padding: 20 }}>
+        <div className="card" style={{ maxWidth: 700, margin: '0 auto', padding: 24 }}>
+          <h2 style={{ color: 'var(--amc-primary)', marginBottom: 16 }}>Signature du mandat SEPA</h2>
+          <p style={{ color: '#475569', marginBottom: 18 }}>
+            Votre inscription est enregistrée. Veuillez signer le mandat SEPA pour autoriser le premier prélèvement.
+          </p>
+          <p style={{ marginBottom: 18 }}>
+            <button
+              type="button"
+              className="btn btn-link"
+              onClick={() => {
+                setSepaCheckout(null);
+                jumpToStep(paymentStep);
+              }}
+              style={{ padding: 0, color: '#1D4ED8' }}
+            >
+              ← Retourner à l’étape Paiement
+            </button>
+          </p>
+          <Elements stripe={stripePromise}>
+            <SepaSetupForm
+              clientSecret={sepaCheckout.clientSecret}
+              montantTotal={sepaCheckout.montantTotal}
+              nombreEcheances={sepaCheckout.nombreEcheances}
+              customerId={sepaCheckout.customerId}
+              nomTitulaire={sepaCheckout.payerName}
+              emailTitulaire={sepaCheckout.email}
+              paymentId={sepaCheckout.paymentId}
+              mandateToken={sepaCheckout.mandateToken}
+              inscriptionId={sepaCheckout.inscriptionId}
+              dueDateFirstPayment={sepaCheckout.dueDateFirstPayment}
+              onSuccess={handleSepaMandateSuccess}
+            />
+          </Elements>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8FAFC', padding: 20 }}>
@@ -1301,7 +1363,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                     {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n} {n === 1 ? 'échéance' : 'échéances'}</option>)}
                   </select>
                   <div style={{ fontSize: 13, color: '#475569', marginTop: 6 }}>
-                    Pour plus d’une échéance, votre mandat SEPA sera créé et votre IBAN enregistré pour les prélèvements automatiques.
+                    Votre mandat SEPA sera créé et votre IBAN enregistré pour le prélèvement du montant prévu.
                   </div>
                 </div>
                 {wizard.payment.installmentsCount > 1 && (
@@ -1313,7 +1375,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                       </select>
                     </div>
                     <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>
-                      Le premier prélèvement sera effectué immédiatement. Les échéances suivantes seront prélevées automatiquement le jour sélectionné chaque mois.
+                      Le premier prélèvement sera déclenché à la date choisie, puis les échéances suivantes seront prélevées automatiquement le même jour chaque mois.
                     </div>
                   </>
                 )}

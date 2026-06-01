@@ -32,6 +32,7 @@ const {
   getPaymentReceipt,
   downloadPaymentReceipt,
   generatePaymentReceiptPDF,
+  downloadSepaMandatePdf,
 } = require('../controllers/paymentController');
 
 const receiptsUploadDir = path.join(__dirname, '../../uploads/receipts');
@@ -77,6 +78,9 @@ router.get('/:paymentId/invoice/download', authorizeAnyPermission(PERMISSIONS.FA
 router.post('/:paymentId/receipt', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), upload.single('receipt'), uploadPaymentReceipt);
 router.get('/:paymentId/receipt', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), getPaymentReceipt);
 router.get('/:paymentId/receipt/download', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), downloadPaymentReceipt);
+
+// SEPA mandate download
+router.get('/:paymentId/sepa-mandate/download', authorizeAnyPermission(PERMISSIONS.FAMILY_SELF_PAYMENTS, PERMISSIONS.PAYMENTS_MANAGE), downloadSepaMandatePdf);
 
 router.post('/online-intent', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), createPaymentIntent);
 router.post('/offline', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), recordOfflinePayment);

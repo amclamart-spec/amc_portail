@@ -8,6 +8,7 @@ const {
   cancelStripePaymentIntent,
   getStripeCheckoutSession,
   getStripePaymentIntent,
+  getStripeSepaMandateDetailsByChargeId,
   verifyStripeWebhookSignature,
   verifyGoCardlessWebhookSignature,
 } = require('../services/paymentProviders');
@@ -2156,6 +2157,100 @@ async function validateRefundSecurityCode(req, res) {
   }
 }
 
+async function downloadSepaMandatePdf(req, res) {
+  try {
+    const { paymentId } = req.params;
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { family: { include: { user: true } }, transactions: { orderBy: { createdAt: 'desc' } } },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Paiement introuvable' });
+    }
+
+    const isOwnPayment = payment.family?.userId === req.user.id;
+    const userRole = req.user?.role;
+    const isAdminOrTresorier = hasPermission(userRole, PERMISSIONS.PAYMENTS_MANAGE) || hasPermission(userRole, PERMISSIONS.FINANCE_VIEW);
+
+    if (!isOwnPayment && !isAdminOrTresorier) {
+      return res.status(403).json({ error: 'Accès non autorisé' });
+    }
+
+    if (payment.paymentMethod !== 'SEPA') {
+      return res.status(400).json({ error: 'Ce paiement n\'est pas un paiement SEPA' });
+    }
+
+    const paymentIntentId = await getStripePaymentIntentId(payment);
+    if (!paymentIntentId) {
+      return res.status(400).json({ error: 'Aucun PaymentIntent Stripe trouvé pour ce paiement' });
+    }
+
+    const paymentIntent = await getStripePaymentIntent(paymentIntentId);
+    const chargeId = paymentIntent.charges?.data?.[0]?.id;
+    if (!chargeId) {
+      return res.status(400).json({ error: 'Aucune charge Stripe trouvée pour ce paiement SEPA' });
+    }
+
+    const mandateInfo = await getStripeSepaMandateDetailsByChargeId(chargeId);
+    const mandate = mandateInfo.mandate;
+    const sepaDetails = mandateInfo.charge.payment_method_details?.sepa_debit || {};
+
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="mandat-sepa-${paymentId.substring(0, 8)}.pdf"`);
+    doc.pipe(res);
+
+    doc.fontSize(18).text('Mandat SEPA', { align: 'center' });
+    doc.moveDown();
+
+    doc.fontSize(12).text(`Référence paiement : ${paymentId}`);
+    doc.text(`ID du mandat Stripe : ${mandate.id}`);
+    doc.text(`Statut : ${mandate.status || '-'} `);
+    doc.text(`Créé le : ${mandate.created ? new Date(mandate.created * 1000).toLocaleString('fr-FR') : '-'}`);
+    doc.moveDown();
+
+    doc.fontSize(14).text('Informations client', { underline: true });
+    doc.fontSize(12);
+    doc.text(`Nom de la famille : ${payment.family?.lastName || '-'} ${payment.family?.firstName || ''}`);
+    doc.text(`Email : ${payment.family?.user?.email || payment.family?.email || '-'}`);
+    doc.moveDown();
+
+    doc.fontSize(14).text('Informations SEPA', { underline: true });
+    doc.fontSize(12);
+    doc.text(`Titulaire du compte : ${sepaDetails.name || '-'}`);
+    doc.text(`IBAN masqué : ${sepaDetails.last4 ? `***${sepaDetails.last4}` : '-'}`);
+    doc.text(`Banque : ${sepaDetails.bank_name || '-'}`);
+    doc.text(`Référence du mandat SEPA : ${sepaDetails.mandate || mandate.id}`);
+    doc.text(`Type de mandat : ${mandate.type || '-'}`);
+    doc.moveDown();
+
+    if (mandate.customer_acceptance) {
+      doc.fontSize(14).text('Acceptation du mandat', { underline: true });
+      doc.fontSize(12);
+      doc.text(`Type : ${mandate.customer_acceptance.type || '-'}`);
+      if (mandate.customer_acceptance.online) {
+        doc.text(`Accepté le : ${mandate.customer_acceptance.online?.accepted_at ? new Date(mandate.customer_acceptance.online.accepted_at * 1000).toLocaleString('fr-FR') : '-'}`);
+        doc.text(`Adresse IP : ${mandate.customer_acceptance.online?.ip_address || '-'}`);
+        doc.text(`User Agent : ${mandate.customer_acceptance.online?.user_agent || '-'}`);
+      }
+      doc.moveDown();
+    }
+
+    doc.text('Ce document fournit les informations du mandat SEPA associé à ce paiement.', {
+      align: 'left',
+    });
+
+    doc.end();
+  } catch (error) {
+    console.error('Erreur downloadSepaMandatePdf:', error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error.message || 'Erreur serveur lors du téléchargement du mandat SEPA' });
+    }
+  }
+}
+
 module.exports = {
   createFamilyEnrollmentPayment,
   createPaymentIntent,
@@ -2186,4 +2281,5 @@ module.exports = {
   generatePaymentReceiptPDF,
   finalizeStripePayment,
   cancelStripePayment,
+  downloadSepaMandatePdf,
 };
