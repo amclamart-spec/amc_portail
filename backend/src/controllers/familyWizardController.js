@@ -958,7 +958,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
     const { provider, paymentMethod } = mapPaymentMethod(selectedPaymentMethod);
 
-    const paymentTotal = pricing.total + (selectedPaymentMethod === 'GO_CARDLESS_SEPA' ? pricing.fraisPrelevement : 0);
+    const paymentTotal = pricing.total + ((selectedPaymentMethod === 'GO_CARDLESS_SEPA' || selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE') ? pricing.fraisPrelevement : 0);
 
 
 
@@ -2790,7 +2790,7 @@ async function completeFamilyRegistration(req, res) {
 
     const { provider, paymentMethod } = mapPaymentMethod(selectedPaymentMethod);
 
-    const paymentTotal = pricing.total + (selectedPaymentMethod === 'GO_CARDLESS_SEPA' ? pricing.fraisPrelevement : 0);
+    const paymentTotal = pricing.total + ((selectedPaymentMethod === 'GO_CARDLESS_SEPA' || selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE') ? pricing.fraisPrelevement : 0);
 
 
 
