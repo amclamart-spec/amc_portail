@@ -357,12 +357,6 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   }, [wizard.members]);
 
   useEffect(() => {
-    if (['STRIPE_CARD', 'STRIPE_SEPA', 'GO_CARDLESS_SEPA'].includes(wizard.payment.method)) {
-      updateWizard('payment', { method: 'ESPECES' });
-    }
-  }, [wizard.payment.method]);
-
-  useEffect(() => {
     if (wizard.payment.method === 'GO_CARDLESS_SEPA') {
       updateWizard('payment', { method: 'STRIPE_SEPA', installmentsCount: 1 });
     }
@@ -1332,11 +1326,11 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                     <div>Arabe ({pricingPreview.arabicCount} élève(s)): {Number(pricingPreview.arabicFee).toFixed(2)} €</div>
                     <div>Coran: {Number(pricingPreview.coranFee ?? pricingPreview.coranScienceFee).toFixed(2)} €</div>
                     <div>Sciences islamiques: {Number(pricingPreview.sciencesFee || 0).toFixed(2)} €</div>
-                    {wizard.payment.method === 'GO_CARDLESS_SEPA' && pricingPreview.fraisPrelevement > 0 && (
-                      <div>Frais prélèvement SEPA: {Number(pricingPreview.fraisPrelevement).toFixed(2)} €</div>
+                    {(wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') && pricingPreview.fraisPrelevement > 0 && (
+                      <div>Frais prélèvement: {Number(pricingPreview.fraisPrelevement).toFixed(2)} €</div>
                     )}
                     <div style={{ marginTop: 8, fontWeight: 700 }}>
-                      TOTAL: {Number(pricingPreview.total + (wizard.payment.method === 'GO_CARDLESS_SEPA' ? pricingPreview.fraisPrelevement : 0)).toFixed(2)} €
+                      TOTAL: {Number(pricingPreview.total + ((wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') ? pricingPreview.fraisPrelevement : 0)).toFixed(2)} €
                     </div>
                   </div>
                 )}
@@ -1472,10 +1466,17 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               </ul>
               {pricingPreview && (
                 <div style={{ marginTop: 8, fontWeight: 700 }}>
-                  Total estimé: {Number(pricingPreview.total).toFixed(2)} €
-                  <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
-                    Montant total incluant les frais d’inscription facturés une seule fois par famille.
-                  </div>
+                  Total estimé: {Number(pricingPreview.total + ((wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') ? pricingPreview.fraisPrelevement : 0)).toFixed(2)} €
+                  {(wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') && pricingPreview.fraisPrelevement > 0 && (
+                    <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
+                      Montant total incluant les frais de prélèvement et les frais d’inscription facturés une seule fois par famille.
+                    </div>
+                  )}
+                  {!(wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') && (
+                    <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
+                      Montant total incluant les frais d’inscription facturés une seule fois par famille.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1488,6 +1489,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                     updateWizard('payment', { method });
                   }}>
                     <option value="CARTE_BANCAIRE">Carte bancaire (au secrétariat)</option>
+                    <option value="STRIPE_CARD">Carte bancaire (en ligne)</option>
                     <option value="PRELEVEMENT_BANCAIRE">Prélèvement bancaire</option>
                     <option value="ESPECES">Espèces</option>
                     <option value="CHEQUE">Chèque</option>
