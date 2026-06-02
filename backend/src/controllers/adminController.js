@@ -676,6 +676,15 @@ async function getEnrollmentPayments(req, res) {
     const transactions = paymentIds.length > 0 ? await prisma.paymentTransaction.findMany({
       where: { paymentId: { in: paymentIds } },
       orderBy: { createdAt: 'desc' },
+      include: {
+        payment: {
+          select: {
+            metadata: true,
+            paymentMethod: true,
+            provider: true,
+          },
+        },
+      },
     }) : [];
 
     return res.json({
@@ -684,6 +693,8 @@ async function getEnrollmentPayments(req, res) {
         paymentId: tx.paymentId,
         payerName: tx.payerName,
         method: tx.method,
+        paymentMethod: tx.payment?.paymentMethod,
+        paymentMetadata: tx.payment?.metadata || {},
         description: tx.description,
         amount: String(tx.amount),
         status: tx.status,

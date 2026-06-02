@@ -1,4 +1,4 @@
-const bcrypt = require('bcryptjs');
+﻿const bcrypt = require('bcryptjs');
 
 const { v4: uuidv4 } = require('uuid');
 
@@ -27,6 +27,7 @@ const { getNextEnrollmentRegistrationCode, extractSchoolYearCode } = require('..
 const { getProvisionalClassFilter, PROVISIONAL_CLASS_NAME } = require('../utils/provisionalClassUtils');
 
 const { savePhotoBase64 } = require('../utils/photoUtils');
+const { saveBase64File } = require('../utils/fileUtils');
 
 const { isRegistrationBlocked } = require('../services/systemService');
 
@@ -42,7 +43,7 @@ const ENGAGEMENT_TEXT_VERSION = 'engagement-v1-2026';
 
 const SANITARY_TEXT_VERSION = 'fiche-sanitaire-v1-2026';
 
-const REGISTRATION_PENDING_VALIDATION_MESSAGE = 'Votre inscription a bien été prise en compte, une validation par le service secrétériat interviendra sous peu.';
+const REGISTRATION_PENDING_VALIDATION_MESSAGE = 'Votre inscription a bien Ã©tÃ© prise en compte, une validation par le service secrÃ©tÃ©riat interviendra sous peu.';
 
 
 
@@ -92,7 +93,7 @@ function getPaymentReturnUrls(req, provider) {
 
 function ensureStrongPassword(password) {
 
-  if (!password || password.length < 8) return 'Le mot de passe doit contenir au moins 8 caractères';
+  if (!password || password.length < 8) return 'Le mot de passe doit contenir au moins 8 caractÃ¨res';
 
   if (!/[A-Z]/.test(password)) return 'Le mot de passe doit contenir une majuscule';
 
@@ -108,7 +109,7 @@ async function ensureCurrentSchoolYear() {
 
   const year = await prisma.schoolYear.findFirst({ where: { isCurrent: true } });
 
-  if (!year) throw new Error('Aucune année scolaire courante');
+  if (!year) throw new Error('Aucune annÃ©e scolaire courante');
 
   return year;
 
@@ -450,6 +451,8 @@ function mapPaymentMethod(method) {
 
   if (method === 'GO_CARDLESS_SEPA') return { provider: 'GOCARDLESS', paymentMethod: 'SEPA' };
 
+  if (method === 'PRELEVEMENT_BANCAIRE') return { provider: 'OFFLINE', paymentMethod: 'VIREMENT' };
+
   if (method === 'ESPECES') return { provider: 'OFFLINE', paymentMethod: 'ESPECES' };
 
   if (method === 'CHEQUE') return { provider: 'OFFLINE', paymentMethod: 'CHEQUE' };
@@ -459,6 +462,33 @@ function mapPaymentMethod(method) {
 }
 
 
+
+function buildBankDebitMetadata(payment) {
+  if (payment.method !== 'PRELEVEMENT_BANCAIRE') return {};
+
+  const metadata = {};
+  if (payment.bankDebitIban) metadata.bankDebitIban = String(payment.bankDebitIban).trim();
+  if (payment.bankDebitSwift) metadata.bankDebitSwift = String(payment.bankDebitSwift).trim();
+
+  if (payment.scheduleDay !== undefined && payment.scheduleDay !== null) {
+    metadata.bankDebitDay = Number(payment.scheduleDay);
+  } else if (payment.bankDebitDay !== undefined && payment.bankDebitDay !== null) {
+    metadata.bankDebitDay = Number(payment.bankDebitDay);
+  }
+
+  if (payment.installmentsCount !== undefined && payment.installmentsCount !== null) {
+    metadata.bankDebitInstallmentsCount = Number(payment.installmentsCount);
+  } else if (payment.numberOfInstallments !== undefined && payment.numberOfInstallments !== null) {
+    metadata.bankDebitInstallmentsCount = Number(payment.numberOfInstallments);
+  }
+
+  if (payment.ribDocument?.base64) {
+    metadata.bankDebitRibUrl = saveBase64File(payment.ribDocument.base64, 'ribs', payment.ribDocument.name || 'rib.pdf');
+    metadata.bankDebitRibFilename = String(payment.ribDocument.name || 'RIB');
+  }
+
+  return metadata;
+}
 
 async function createEnrollmentWithUniqueRegistrationCode(tx, enrollmentData, schoolYearId, registrationYearCode, usedRegistrationCodes) {
 
@@ -548,13 +578,13 @@ function validateHealthForm(healthForm = {}) {
 
   const conditionalFields = [
 
-    ['hasChronicDisease', 'chronicDiseaseDetails', 'Veuillez détailler les maladies chroniques'],
+    ['hasChronicDisease', 'chronicDiseaseDetails', 'Veuillez dÃ©tailler les maladies chroniques'],
 
-    ['hasMedicalTreatment', 'medicalTreatmentDetails', 'Veuillez détailler le traitement médical'],
+    ['hasMedicalTreatment', 'medicalTreatmentDetails', 'Veuillez dÃ©tailler le traitement mÃ©dical'],
 
-    ['hasAllergy', 'allergyDetails', 'Veuillez détailler les allergies'],
+    ['hasAllergy', 'allergyDetails', 'Veuillez dÃ©tailler les allergies'],
 
-    ['hasDisability', 'disabilityDetails', 'Veuillez détailler le handicap'],
+    ['hasDisability', 'disabilityDetails', 'Veuillez dÃ©tailler le handicap'],
 
   ];
 
@@ -574,7 +604,7 @@ function validateHealthForm(healthForm = {}) {
 
   if (healthForm.canLeaveAloneAfterClass === undefined || healthForm.canLeaveAloneAfterClass === null) {
 
-    return 'La décision de sortie (seul ou accompagné) est obligatoire';
+    return 'La dÃ©cision de sortie (seul ou accompagnÃ©) est obligatoire';
 
   }
 
@@ -582,7 +612,7 @@ function validateHealthForm(healthForm = {}) {
 
   if (healthForm.canLeaveAloneAfterClass === false && (!healthForm.pickupAuthorizedPersons || healthForm.pickupAuthorizedPersons.length === 0)) {
 
-    return 'Au moins une personne autorisée à récupérer l’enfant est requise';
+    return 'Au moins une personne autorisÃ©e Ã  rÃ©cupÃ©rer lâ€™enfant est requise';
 
   }
 
@@ -590,7 +620,7 @@ function validateHealthForm(healthForm = {}) {
 
   if (!healthForm.emergencyAuthorizationAccepted) {
 
-    return 'L’autorisation d’intervention d’urgence est obligatoire';
+    return 'Lâ€™autorisation dâ€™intervention dâ€™urgence est obligatoire';
 
   }
 
@@ -610,7 +640,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
     if (blocked) {
 
-      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquées par le secrétariat' });
+      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquÃ©es par le secrÃ©tariat' });
 
     }
 
@@ -636,7 +666,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
     if (!family) {
 
-      return res.status(400).json({ error: 'Complétez d’abord votre profil famille avant d’ajouter un membre' });
+      return res.status(400).json({ error: 'ComplÃ©tez dâ€™abord votre profil famille avant dâ€™ajouter un membre' });
 
     }
 
@@ -672,7 +702,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
     if (!effectiveAddress.addressLine1 || !effectiveAddress.postalCode || !effectiveAddress.city || !effectiveAddress.country || !effectiveAddress.phonePrimary) {
 
-      return res.status(400).json({ error: 'Adresse et téléphone principal sont obligatoires' });
+      return res.status(400).json({ error: 'Adresse et tÃ©lÃ©phone principal sont obligatoires' });
 
     }
 
@@ -758,7 +788,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
       const anyLevel = await prisma.level.findFirst();
 
-      if (!anyLevel) throw new Error('Niveau introuvable pour créer la classe provisoire');
+      if (!anyLevel) throw new Error('Niveau introuvable pour crÃ©er la classe provisoire');
 
       fictiveClass = await prisma.class.create({
 
@@ -935,6 +965,7 @@ async function completeExistingFamilyRegistration(req, res) {
     const ipAddress = getClientIp(req);
 
     const userAgent = req.headers['user-agent'] || null;
+    const bankDebitMetadata = buildBankDebitMetadata(payment);
 
 
 
@@ -1102,7 +1133,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             status: 'PENDING',
 
-            comment: `Affectation provisoire - ${pole.name} / ${level.name} - Test de niveau à organiser`,
+            comment: `Affectation provisoire - ${pole.name} / ${level.name} - Test de niveau Ã  organiser`,
 
           }, currentYear.id, registrationYearCode, usedRegistrationCodes);
 
@@ -1130,7 +1161,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             status: 'PENDING',
 
-            comment: 'Affectation provisoire - ' + (pole?.name || 'Pôle') + ' - Test de niveau à organiser',
+            comment: 'Affectation provisoire - ' + (pole?.name || 'PÃ´le') + ' - Test de niveau Ã  organiser',
 
           }, currentYear.id, registrationYearCode, usedRegistrationCodes);
 
@@ -1152,7 +1183,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
         if (error) {
 
-          throw new Error(`Fiche sanitaire élève ${student.firstName} ${student.lastName}: ${error}`);
+          throw new Error(`Fiche sanitaire Ã©lÃ¨ve ${student.firstName} ${student.lastName}: ${error}`);
 
         }
 
@@ -1274,7 +1305,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             legalMentionAccepted: Boolean(health.emergencyAuthorizationAccepted),
 
-            legalMentionLabel: 'Lu et approuvé',
+            legalMentionLabel: 'Lu et approuvÃ©',
 
             ipAddress,
 
@@ -1316,7 +1347,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             status: 'PENDING',
 
-            comment: 'Affectation provisoire — à confirmer par l’administration',
+            comment: 'Affectation provisoire â€” Ã  confirmer par lâ€™administration',
 
           }, currentYear.id, registrationYearCode, usedRegistrationCodes);
 
@@ -1362,7 +1393,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
           legalMentionAccepted: Boolean(engagement.legalMentionAccepted),
 
-          legalMentionLabel: 'Lu et approuvé',
+          legalMentionLabel: 'Lu et approuvÃ©',
 
           ipAddress,
 
@@ -1469,6 +1500,7 @@ async function completeExistingFamilyRegistration(req, res) {
               draftId: payload.draftId || null,
 
               payerName: payment.payerName || null,
+              ...bankDebitMetadata,
 
             },
 
@@ -1518,7 +1550,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             paymentId: paymentRecord.id,
 
-            type: selectedPaymentMethod,
+            type: selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE' ? 'ESPECES' : selectedPaymentMethod,
 
             status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
 
@@ -1533,6 +1565,8 @@ async function completeExistingFamilyRegistration(req, res) {
               createdFrom: 'existing_family_wizard',
 
               sepaFee: pricing.fraisPrelevement,
+
+              ...bankDebitMetadata,
 
             },
 
@@ -1565,6 +1599,7 @@ async function completeExistingFamilyRegistration(req, res) {
               draftId: payload.draftId || null,
 
               payerName: payment.payerName || null,
+              ...bankDebitMetadata,
 
             },
 
@@ -1585,6 +1620,7 @@ async function completeExistingFamilyRegistration(req, res) {
       if (provider === 'OFFLINE') {
 
         const isCheque = paymentMethod === 'CHEQUE';
+        const isBankDebit = paymentMethod === 'VIREMENT' && selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE';
 
         await tx.paymentTransaction.create({
 
@@ -1602,11 +1638,19 @@ async function completeExistingFamilyRegistration(req, res) {
 
             payerName: `${req.user.firstName} ${req.user.lastName}`,
 
-            description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
+            description: isCheque
+              ? 'Paiement par chÃ¨que en attente'
+              : isBankDebit
+                ? 'PrÃ©lÃ¨vement bancaire en attente'
+                : 'Paiement en espÃ¨ces en attente',
 
             metadata: {
 
-              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
+              instructions: isCheque
+                ? 'DÃ©poser les chÃ¨ques selon lâ€™Ã©chÃ©ancier communiquÃ© par association PARTAGE.'
+                : isBankDebit
+                  ? 'Le RIB est enregistrÃ© pour traitement. Le prÃ©lÃ¨vement sera mis en place par le service trÃ©sorerie.'
+                  : 'Veuillez dÃ©poser le montant en espÃ¨ces selon lâ€™Ã©chÃ©ancier fourni.',
 
             },
 
@@ -1922,7 +1966,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
       } catch (checkoutError) {
 
-        console.error('Erreur création Stripe Checkout hors transaction:', checkoutError);
+        console.error('Erreur crÃ©ation Stripe Checkout hors transaction:', checkoutError);
 
         await prisma.paymentPlan.update({
 
@@ -1946,7 +1990,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             status: 'FAILED',
 
-            description: 'Échec création Stripe Checkout',
+            description: 'Ã‰chec crÃ©ation Stripe Checkout',
 
             metadata: {
 
@@ -1968,35 +2012,35 @@ async function completeExistingFamilyRegistration(req, res) {
 
     if (result.payment.provider !== 'OFFLINE' && result.shouldCreateCheckout && !result.checkout) {
 
-      throw new Error('Le paiement Stripe n’a pas pu être initialisé. Veuillez réessayer plus tard.');
+      throw new Error('Le paiement Stripe nâ€™a pas pu Ãªtre initialisÃ©. Veuillez rÃ©essayer plus tard.');
 
     }
 
 
 
-    // Envoi du mail de demande d'inscription enregistrée après validation de la dernière étape
+    // Envoi du mail de demande d'inscription enregistrÃ©e aprÃ¨s validation de la derniÃ¨re Ã©tape
 
     const studentById = new Map(result.students.map((s) => [s.id, s]));
 
     const enrollmentDetailsHtml = result.enrollments.map((en) => {
 
-      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+      const student = studentById.get(en.studentId) || { firstName: 'Ã‰lÃ¨ve', lastName: '' };
 
       const cls = classById.get(en.classId);
 
-      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+      const waitlistNote = en.comment === 'Liste d\'attente' ? ' â€¢ Liste d\'attente' : '';
 
-      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+      return `â€¢ ${student.firstName} ${student.lastName} â€” ${cls?.level?.pole?.name || 'PÃ´le'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
 
     }).join('<br/>');
 
     const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
 
-      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
+      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} â‚¬<br/>
 
       <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
 
-      <strong>Échéances :</strong> ${result.installments.length}
+      <strong>Ã‰chÃ©ances :</strong> ${result.installments.length}
 
     </div>`;
 
@@ -2044,23 +2088,23 @@ async function completeExistingFamilyRegistration(req, res) {
 
       if (adminEmails.length > 0 && result.enrollments && result.enrollments.length > 0) {
 
-        const provisionalListHtml = result.enrollments.map((en) => `• ${en.registrationCode || en.id} — ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Élève'}`).join('<br/>');
+        const provisionalListHtml = result.enrollments.map((en) => `â€¢ ${en.registrationCode || en.id} â€” ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Ã‰lÃ¨ve'}`).join('<br/>');
 
         const contentHtml = `
 
           <p>Bonjour,</p>
 
-          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont été créées via l’assistant famille :</p>
+          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont Ã©tÃ© crÃ©Ã©es via lâ€™assistant famille :</p>
 
           <div style="margin:12px 0;padding:12px;background:#FEF3C7;border-radius:8px;">${provisionalListHtml}</div>
 
-          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces élèves :</p>
+          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces Ã©lÃ¨ves :</p>
 
-          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">Accéder aux inscriptions</a></p>
+          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">AccÃ©der aux inscriptions</a></p>
 
         `;
 
-        await sendMail({ to: adminEmails.join(','), subject: 'AMC — Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
+        await sendMail({ to: adminEmails.join(','), subject: 'AMC â€” Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
 
       }
 
@@ -2074,7 +2118,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
     return res.status(201).json({
 
-      message: 'Inscription du nouveau membre enregistrée. Les inscriptions seront confirmées après paiement réussi.',
+      message: 'Inscription du nouveau membre enregistrÃ©e. Les inscriptions seront confirmÃ©es aprÃ¨s paiement rÃ©ussi.',
 
       summary: {
 
@@ -2132,7 +2176,7 @@ async function checkEmailAvailability(req, res) {
 
     if (existing) {
 
-      return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+      return res.status(409).json({ error: 'Un compte existe dÃ©jÃ  avec cet email' });
 
     }
 
@@ -2166,7 +2210,7 @@ async function createFamilyPortalAccount(req, res) {
 
     if (!account.email || !account.password || !account.firstName || !account.lastName || !account.phone) {
 
-      return res.status(400).json({ error: 'Nom, email, téléphone et mot de passe sont obligatoires' });
+      return res.status(400).json({ error: 'Nom, email, tÃ©lÃ©phone et mot de passe sont obligatoires' });
 
     }
 
@@ -2180,7 +2224,7 @@ async function createFamilyPortalAccount(req, res) {
 
     const existing = await prisma.user.findUnique({ where: { email: account.email } });
 
-    if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+    if (existing) return res.status(409).json({ error: 'Un compte existe dÃ©jÃ  avec cet email' });
 
 
 
@@ -2260,7 +2304,7 @@ async function createFamilyPortalAccount(req, res) {
 
     return res.status(201).json({
 
-      message: 'Compte créé. Vérifiez votre email pour activer l’accès.',
+      message: 'Compte crÃ©Ã©. VÃ©rifiez votre email pour activer lâ€™accÃ¨s.',
 
       user: {
 
@@ -2340,7 +2384,7 @@ async function saveFamilyWizardSepaMandate(req, res) {
 
     if (payment.provider !== 'STRIPE' || payment.paymentMethod !== 'SEPA') {
 
-      return res.status(400).json({ error: 'Le paiement doit être un SEPA Stripe valide' });
+      return res.status(400).json({ error: 'Le paiement doit Ãªtre un SEPA Stripe valide' });
 
     }
 
@@ -2350,7 +2394,7 @@ async function saveFamilyWizardSepaMandate(req, res) {
 
     if (metadataEnrollmentIds.length > 0 && !metadataEnrollmentIds.includes(Number(inscriptionId))) {
 
-      return res.status(400).json({ error: 'L’inscription fournie ne correspond pas au paiement SEPA' });
+      return res.status(400).json({ error: 'Lâ€™inscription fournie ne correspond pas au paiement SEPA' });
 
     }
 
@@ -2474,7 +2518,7 @@ async function saveFamilyWizardSepaMandate(req, res) {
 
         payerName,
 
-        description: 'Mandat SEPA signé et premier prélèvement planifié.',
+        description: 'Mandat SEPA signÃ© et premier prÃ©lÃ¨vement planifiÃ©.',
 
         metadata: {
 
@@ -2500,7 +2544,7 @@ async function saveFamilyWizardSepaMandate(req, res) {
 
       success: true,
 
-      message: `Mandat SEPA signé et sauvegardé. Le premier prélèvement sera effectué le ${dueDate.toLocaleDateString('fr-FR')}.`,
+      message: `Mandat SEPA signÃ© et sauvegardÃ©. Le premier prÃ©lÃ¨vement sera effectuÃ© le ${dueDate.toLocaleDateString('fr-FR')}.`,
 
     });
 
@@ -2524,7 +2568,7 @@ async function completeFamilyRegistration(req, res) {
 
     if (blocked) {
 
-      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquées par le secrétariat' });
+      return res.status(403).json({ error: 'Les inscriptions sont temporairement bloquÃ©es par le secrÃ©tariat' });
 
     }
 
@@ -2554,7 +2598,7 @@ async function completeFamilyRegistration(req, res) {
 
     if (!account.email || !account.password || !account.firstName || !account.lastName) {
 
-      return res.status(400).json({ error: 'Informations du compte incomplètes' });
+      return res.status(400).json({ error: 'Informations du compte incomplÃ¨tes' });
 
     }
 
@@ -2568,7 +2612,7 @@ async function completeFamilyRegistration(req, res) {
 
     if (!address.addressLine1 || !address.postalCode || !address.city || !address.country || !address.phonePrimary) {
 
-      return res.status(400).json({ error: 'Adresse et téléphone principal sont obligatoires' });
+      return res.status(400).json({ error: 'Adresse et tÃ©lÃ©phone principal sont obligatoires' });
 
     }
 
@@ -2592,7 +2636,7 @@ async function completeFamilyRegistration(req, res) {
 
     const existing = await prisma.user.findUnique({ where: { email: account.email } });
 
-    if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+    if (existing) return res.status(409).json({ error: 'Un compte existe dÃ©jÃ  avec cet email' });
 
 
 
@@ -2644,7 +2688,7 @@ async function completeFamilyRegistration(req, res) {
 
       const anyLevel = await prisma.level.findFirst();
 
-      if (!anyLevel) throw new Error('Niveau introuvable pour créer la classe provisoire');
+      if (!anyLevel) throw new Error('Niveau introuvable pour crÃ©er la classe provisoire');
 
       fictiveClass = await prisma.class.create({
 
@@ -2753,6 +2797,7 @@ async function completeFamilyRegistration(req, res) {
     const ipAddress = getClientIp(req);
 
     const userAgent = req.headers['user-agent'] || null;
+    const bankDebitMetadata = buildBankDebitMetadata(payment);
 
 
 
@@ -2938,7 +2983,7 @@ async function completeFamilyRegistration(req, res) {
 
             status: 'PENDING',
 
-            comment: 'Affectation provisoire — à confirmer par l’administration',
+            comment: 'Affectation provisoire â€” Ã  confirmer par lâ€™administration',
 
           }, currentYear.id, registrationYearCode, usedRegistrationCodes);
 
@@ -2964,7 +3009,7 @@ async function completeFamilyRegistration(req, res) {
 
         if (error) {
 
-          throw new Error(`Fiche sanitaire élève ${student.firstName} ${student.lastName}: ${error}`);
+          throw new Error(`Fiche sanitaire Ã©lÃ¨ve ${student.firstName} ${student.lastName}: ${error}`);
 
         }
 
@@ -3086,7 +3131,7 @@ async function completeFamilyRegistration(req, res) {
 
             legalMentionAccepted: Boolean(health.emergencyAuthorizationAccepted),
 
-            legalMentionLabel: 'Lu et approuvé',
+            legalMentionLabel: 'Lu et approuvÃ©',
 
             ipAddress,
 
@@ -3138,7 +3183,7 @@ async function completeFamilyRegistration(req, res) {
 
           legalMentionAccepted: Boolean(engagement.legalMentionAccepted),
 
-          legalMentionLabel: 'Lu et approuvé',
+          legalMentionLabel: 'Lu et approuvÃ©',
 
           ipAddress,
 
@@ -3245,6 +3290,7 @@ async function completeFamilyRegistration(req, res) {
               draftId: payload.draftId || null,
 
               payerName: payment.payerName || null,
+              ...bankDebitMetadata,
 
             },
 
@@ -3294,7 +3340,7 @@ async function completeFamilyRegistration(req, res) {
 
             paymentId: paymentRecord.id,
 
-            type: selectedPaymentMethod,
+            type: selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE' ? 'ESPECES' : selectedPaymentMethod,
 
             status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
 
@@ -3309,6 +3355,8 @@ async function completeFamilyRegistration(req, res) {
               createdFrom: 'public_family_wizard',
 
               sepaFee: pricing.fraisPrelevement,
+
+              ...bankDebitMetadata,
 
             },
 
@@ -3339,6 +3387,7 @@ async function completeFamilyRegistration(req, res) {
               draftId: payload.draftId || null,
 
               payerName: payment.payerName || null,
+              ...bankDebitMetadata,
 
             },
 
@@ -3359,6 +3408,7 @@ async function completeFamilyRegistration(req, res) {
       if (provider === 'OFFLINE') {
 
         const isCheque = paymentMethod === 'CHEQUE';
+        const isBankDebit = paymentMethod === 'VIREMENT' && selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE';
 
         await tx.paymentTransaction.create({
 
@@ -3376,11 +3426,19 @@ async function completeFamilyRegistration(req, res) {
 
             payerName: `${user.firstName} ${user.lastName}`,
 
-            description: isCheque ? 'Paiement par chèque en attente' : 'Paiement en espèces en attente',
+            description: isCheque
+              ? 'Paiement par chÃ¨que en attente'
+              : isBankDebit
+                ? 'PrÃ©lÃ¨vement bancaire en attente'
+                : 'Paiement en espÃ¨ces en attente',
 
             metadata: {
 
-              instructions: isCheque ? 'Déposer les chèques selon l’échéancier communiqué par association PARTAGE.' : 'Veuillez déposer le montant en espèces selon l’échéancier fourni.',
+              instructions: isCheque
+                ? 'DÃ©poser les chÃ¨ques selon lâ€™Ã©chÃ©ancier communiquÃ© par association PARTAGE.'
+                : isBankDebit
+                  ? 'Le RIB est enregistrÃ© pour traitement. Le prÃ©lÃ¨vement sera mis en place par le service trÃ©sorerie.'
+                  : 'Veuillez dÃ©poser le montant en espÃ¨ces selon lâ€™Ã©chÃ©ancier fourni.',
 
             },
 
@@ -3702,7 +3760,7 @@ async function completeFamilyRegistration(req, res) {
 
       } catch (checkoutError) {
 
-        console.error('Erreur création Stripe Checkout hors transaction:', checkoutError);
+        console.error('Erreur crÃ©ation Stripe Checkout hors transaction:', checkoutError);
 
         await prisma.paymentPlan.update({
 
@@ -3726,7 +3784,7 @@ async function completeFamilyRegistration(req, res) {
 
             status: 'FAILED',
 
-            description: 'Échec création Stripe Checkout',
+            description: 'Ã‰chec crÃ©ation Stripe Checkout',
 
             metadata: {
 
@@ -3748,7 +3806,7 @@ async function completeFamilyRegistration(req, res) {
 
     if (result.payment.provider !== 'OFFLINE' && result.shouldCreateCheckout && !result.checkout) {
 
-      throw new Error('Le paiement Stripe n’a pas pu être initialisé. Veuillez réessayer plus tard.');
+      throw new Error('Le paiement Stripe nâ€™a pas pu Ãªtre initialisÃ©. Veuillez rÃ©essayer plus tard.');
 
     }
 
@@ -3760,29 +3818,29 @@ async function completeFamilyRegistration(req, res) {
 
     const enrollmentDetailsHtml = result.enrollments.map((en) => {
 
-      const student = studentById.get(en.studentId) || { firstName: 'Élève', lastName: '' };
+      const student = studentById.get(en.studentId) || { firstName: 'Ã‰lÃ¨ve', lastName: '' };
 
       const cls = classById.get(en.classId);
 
-      const waitlistNote = en.comment === 'Liste d\'attente' ? ' • Liste d\'attente' : '';
+      const waitlistNote = en.comment === 'Liste d\'attente' ? ' â€¢ Liste d\'attente' : '';
 
-      return `• ${student.firstName} ${student.lastName} — ${cls?.level?.pole?.name || 'Pôle'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
+      return `â€¢ ${student.firstName} ${student.lastName} â€” ${cls?.level?.pole?.name || 'PÃ´le'} / ${cls?.level?.name || 'Niveau'} ${cls?.dayOfWeek || ''} ${cls?.startTime || ''}-${cls?.endTime || ''}${waitlistNote}`;
 
     }).join('<br/>');
 
     const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
 
-      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} €<br/>
+      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} â‚¬<br/>
 
       <strong>Mode :</strong> ${paymentMethod}<br/>
 
-      <strong>Échéances :</strong> ${result.installments.length}
+      <strong>Ã‰chÃ©ances :</strong> ${result.installments.length}
 
     </div>`;
 
 
 
-    // Envoi du mail de demande d'inscription enregistrée après validation de la dernière étape
+    // Envoi du mail de demande d'inscription enregistrÃ©e aprÃ¨s validation de la derniÃ¨re Ã©tape
 
     sendEnrollmentRequestRegisteredEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
 
@@ -3826,23 +3884,23 @@ async function completeFamilyRegistration(req, res) {
 
       if (adminEmails.length > 0 && result.enrollments && result.enrollments.length > 0) {
 
-        const provisionalListHtml = result.enrollments.map((en) => `• ${en.registrationCode || en.id} — ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Élève'}`).join('<br/>');
+        const provisionalListHtml = result.enrollments.map((en) => `â€¢ ${en.registrationCode || en.id} â€” ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Ã‰lÃ¨ve'}`).join('<br/>');
 
         const contentHtml = `
 
           <p>Bonjour,</p>
 
-          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont été créées via l’assistant famille :</p>
+          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont Ã©tÃ© crÃ©Ã©es via lâ€™assistant famille :</p>
 
           <div style="margin:12px 0;padding:12px;background:#FEF3C7;border-radius:8px;">${provisionalListHtml}</div>
 
-          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces élèves :</p>
+          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces Ã©lÃ¨ves :</p>
 
-          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">Accéder aux inscriptions</a></p>
+          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">AccÃ©der aux inscriptions</a></p>
 
         `;
 
-        await sendMail({ to: adminEmails.join(','), subject: 'AMC — Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
+        await sendMail({ to: adminEmails.join(','), subject: 'AMC â€” Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
 
       }
 
