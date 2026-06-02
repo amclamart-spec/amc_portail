@@ -134,9 +134,9 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, famil
       let yRight = contentStartY;
       doc.fontSize(10).font('Helvetica-Bold').text('DÉTAILS DU PAIEMENT', rightX, yRight);
       yRight += 14;
-      doc.fontSize(9).font('Helvetica').text(`Statut: ${paymentData.status === 'COMPLETED' ? 'PAYÉ' : paymentData.status}`, rightX, yRight);
+      doc.fontSize(9).font('Helvetica').text(`Statut: ${formatPaymentStatus(paymentData.status)}`, rightX, yRight);
       yRight += 12;
-      doc.text(`Méthode: ${formatPaymentMethod(paymentData.paymentMethod)}`, rightX, yRight);
+      doc.text(`Méthode: ${formatPaymentMethod(paymentData.method || paymentData.paymentMethod, paymentData.metadata)}`, rightX, yRight);
       yRight += 12;
       doc.text(`Montant: ${Number(paymentData.totalAmount).toFixed(2)}€`, rightX, yRight, { font: 'Helvetica-Bold' });
       yRight += 14;
@@ -239,9 +239,9 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, famil
             const dateStr = new Date(tx.processedAt || tx.createdAt).toLocaleDateString('fr-FR');
             doc.text(dateStr, txTableX + 5, currentY + 4, { width: colDateW - 10 });
             doc.text(tx.id || (tx.reference || '-'), txTableX + colDateW + 5, currentY + 4, { width: colRefW - 10 });
-            doc.text(formatPaymentMethod(tx.method || tx.paymentMethod), txTableX + colDateW + colRefW + 5, currentY + 4, { width: colMethodW - 10 });
+            doc.text(formatPaymentMethod(tx.method || tx.paymentMethod, tx.metadata), txTableX + colDateW + colRefW + 5, currentY + 4, { width: colMethodW - 10 });
             doc.text(`${Number(tx.amount || tx.total || 0).toFixed(2)}€`, txTableX + colDateW + colRefW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
-            const statusLabel = (tx.status === 'SUCCEEDED' || tx.status === 'COMPLETED') ? 'Validé' : (tx.status || '-');
+            const statusLabel = formatPaymentStatus(tx.status);
             doc.text(statusLabel, txTableX + colDateW + colRefW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
             currentY += txCellH;
           });
@@ -328,8 +328,25 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, famil
   });
 }
 
-function formatPaymentMethod(method) {
+function formatPaymentStatus(status) {
+  const statusMap = {
+    COMPLETED: 'Payé',
+    SUCCEEDED: 'Payé',
+    PAID: 'Payé',
+    CANCELLED: 'Annulé',
+    FAILED: 'Échoué',
+    PENDING: 'En attente',
+    INITIATED: 'Initié',
+    PROCESSING: 'En traitement',
+    PARTIAL: 'Partiel',
+    OVERDUE: 'En retard',
+  };
+  return statusMap[status] || status || '-';
+}
+
+function formatPaymentMethod(method, metadata = {}) {
   const methodMap = {
+    PRELEVEMENT_BANCAIRE: 'Prélèvement',
     CB: 'Carte Bancaire',
     SEPA: 'Prélèvement SEPA',
     CHEQUE: 'Chèque',
@@ -338,6 +355,11 @@ function formatPaymentMethod(method) {
     STRIPE: 'Carte Bancaire (Stripe)',
     PAYPAL: 'PayPal',
   };
+
+  if (method === 'VIREMENT' && metadata?.bankDebitIban) {
+    return 'Prélèvement';
+  }
+
   return methodMap[method] || method || 'Non spécifié';
 }
 
