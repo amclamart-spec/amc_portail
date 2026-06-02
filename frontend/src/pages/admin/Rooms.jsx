@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { FiEdit2, FiTrash2 } from 'react-icons/fi';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 
@@ -158,8 +159,12 @@ export default function AdminRooms() {
                         </span>
                       </td>
                       <td style={{ display: 'flex', gap: 8 }}>
-                        <button className="btn btn-outline btn-sm" onClick={() => openEditModal(room)}>Modifier</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => handleDelete(room)}>Supprimer</button>
+                        <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(room)}>
+                          <FiEdit2 size={16} />
+                        </button>
+                        <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => handleDelete(room)}>
+                          <FiTrash2 size={16} />
+                        </button>
                       </td>
                     </tr>
                   ))

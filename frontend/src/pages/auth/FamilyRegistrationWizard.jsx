@@ -49,6 +49,8 @@ const emptyHealthForm = {
   noMedicationPolicyAccepted: true,
 };
 
+const WEEK_DAYS = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI', 'DIMANCHE'];
+
 const getDefaultHealthForm = (wizardState) => ({
   ...emptyHealthForm,
   legalRepresentativeFullName: `${wizardState.account.firstName || ''} ${wizardState.account.lastName || ''}`.trim(),
@@ -91,7 +93,7 @@ function getDefaultState(prefill = {}) {
       signedAt: new Date().toISOString().slice(0, 10),
     },
     payment: {
-      method: 'STRIPE_CARD',
+      method: 'CARTE_BANCAIRE',
       installmentsCount: 1,
       scheduleDay: 10,
       chequeInstructionsAccepted: false,
@@ -143,6 +145,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [allClasses, setAllClasses] = useState([]);
   const [poles, setPoles] = useState([]);
   const [pricingPreview, setPricingPreview] = useState(null);
+  const [courseFilterPoleId, setCourseFilterPoleId] = useState('');
+  const [courseFilterDay, setCourseFilterDay] = useState('');
   const [memberForm, setMemberForm] = useState(emptyMember);
   const [editingMemberIndex, setEditingMemberIndex] = useState(null);
   const [activeHealthMember, setActiveHealthMember] = useState(0);
@@ -305,6 +309,12 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       updateWizard('payment', { method: 'ESPECES' });
     }
   }, [wizard.members]);
+
+  useEffect(() => {
+    if (['STRIPE_CARD', 'STRIPE_SEPA', 'GO_CARDLESS_SEPA'].includes(wizard.payment.method)) {
+      updateWizard('payment', { method: 'ESPECES' });
+    }
+  }, [wizard.payment.method]);
 
   useEffect(() => {
     if (wizard.payment.method === 'GO_CARDLESS_SEPA') {
@@ -574,6 +584,10 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             profile: 'FAMILLE',
           },
         };
+
+      if (payload.payment?.method === 'CARTE_BANCAIRE') {
+        payload.payment.method = 'ESPECES';
+      }
 
       const endpoint = existingFamily ? '/family-wizard/complete-existing' : '/family-wizard/complete';
       const { data } = await api.post(endpoint, payload);
@@ -1069,46 +1083,88 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                           </div>
                       ) : null}
                       {isOldStudent && classesGroupedByPole.length > 0 ? (() => {
-                        const filteredGroups = classesGroupedByPole.map((group) => ({
-                          ...group,
-                          classes: group.classes.filter((cls) => isClassAllowedForAge(cls, memberAge)),
-                        }));
+                        const filteredGroups = classesGroupedByPole
+                          .map((group) => ({
+                            ...group,
+                            classes: group.classes.filter((cls) => {
+                              if (!isClassAllowedForAge(cls, memberAge)) return false;
+                              if (courseFilterPoleId && group.poleId !== courseFilterPoleId) return false;
+                              if (courseFilterDay && cls.dayOfWeek !== courseFilterDay) return false;
+                              return true;
+                            }),
+                          }))
+                          .filter((group) => group.classes.length > 0);
                         const hasAnyClass = filteredGroups.some((group) => group.classes.length > 0);
+                        const filtersSelected = Boolean(courseFilterPoleId || courseFilterDay);
                         return (
                           <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
-                            <div style={{ borderRadius: 16, background: '#F8FAFC', border: '1px solid #E2E8F0', padding: 16 }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                                <div>
-                                  <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>Niveaux disponibles par pôle</div>
-                                  <div style={{ color: '#64748B', fontSize: 13 }}>Affichage des niveaux par pôle en plus des cours Arabe et Coran.</div>
-                                </div>
-                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
-                                  {filteredGroups.length} pôles
-                                </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, padding: 16, borderRadius: 18, background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 10px 30px rgba(15, 23, 42, 0.05)' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 180, maxWidth: 240, flex: 1 }}>
+                                <label style={{ fontWeight: 700, fontSize: 12, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Pôle</label>
+                                <select
+                                  value={courseFilterPoleId}
+                                  onChange={(e) => setCourseFilterPoleId(e.target.value)}
+                                  style={{ border: '1px solid #CBD5E1', borderRadius: 14, padding: '12px 14px', background: '#F8FAFC', color: '#0F172A', outline: 'none', boxShadow: 'inset 0 1px 2px rgba(15, 23, 42, 0.06)' }}
+                                >
+                                  <option value="">Choisir</option>
+                                  {poles.map((pole) => (
+                                    <option key={pole.id} value={pole.id}>{pole.name}</option>
+                                  ))}
+                                </select>
                               </div>
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                                {filteredGroups.map((group) => {
-                                  const uniqueLevels = Array.from(new Set(group.classes.map((cls) => cls.level?.name).filter(Boolean)));
-                                  return (
-                                    <div key={`${group.poleId}-levels`} style={{ borderRadius: 14, background: '#FFFFFF', border: '1px solid #E2E8F0', padding: 12 }}>
-                                      <div style={{ fontSize: 14, fontWeight: 700, color: '#1D4ED8', marginBottom: 8 }}>{group.poleName}</div>
-                                      <div style={{ fontSize: 12, color: '#475569', minHeight: 32 }}>
-                                        {uniqueLevels.length > 0 ? uniqueLevels.join(', ') : 'Aucun niveau défini'}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 180, maxWidth: 240, flex: 1 }}>
+                                <label style={{ fontWeight: 700, fontSize: 12, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Jour</label>
+                                <select
+                                  value={courseFilterDay}
+                                  onChange={(e) => setCourseFilterDay(e.target.value)}
+                                  style={{ border: '1px solid #CBD5E1', borderRadius: 14, padding: '12px 14px', background: '#F8FAFC', color: '#0F172A', outline: 'none', boxShadow: 'inset 0 1px 2px rgba(15, 23, 42, 0.06)' }}
+                                >
+                                  <option value="">Choisir</option>
+                                  {WEEK_DAYS.map((day) => (
+                                    <option key={day} value={day}>{day}</option>
+                                  ))}
+                                </select>
                               </div>
                             </div>
-
-                            {!hasAnyClass ? (
-                              <div style={{ padding: 16, borderRadius: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' }}>
-                                Aucune classe disponible pour cet âge ({memberAge !== null ? `${memberAge} ans` : 'date de naissance invalide'}).
+                            {!filtersSelected ? (
+                              <div style={{ padding: 16, borderRadius: 12, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E' }}>
+                                Veuillez sélectionner au moins un Pôle ou un Jour pour afficher les cours disponibles.
                               </div>
-                            ) : null}
+                            ) : (
+                              <>
+                                <div style={{ borderRadius: 16, background: '#F8FAFC', border: '1px solid #E2E8F0', padding: 16 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                    <div>
+                                      <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>Niveaux disponibles par pôle</div>
+                                      <div style={{ color: '#64748B', fontSize: 13 }}>Affichage des niveaux par pôle en plus des cours Arabe et Coran.</div>
+                                    </div>
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
+                                      {filteredGroups.length} pôles
+                                    </div>
+                                  </div>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                                    {filteredGroups.map((group) => {
+                                      const uniqueLevels = Array.from(new Set(group.classes.map((cls) => cls.level?.name).filter(Boolean)));
+                                      return (
+                                        <div key={`${group.poleId}-levels`} style={{ borderRadius: 14, background: '#FFFFFF', border: '1px solid #E2E8F0', padding: 12 }}>
+                                          <div style={{ fontSize: 14, fontWeight: 700, color: '#1D4ED8', marginBottom: 8 }}>{group.poleName}</div>
+                                          <div style={{ fontSize: 12, color: '#475569', minHeight: 32 }}>
+                                            {uniqueLevels.length > 0 ? uniqueLevels.join(', ') : 'Aucun niveau défini'}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
 
-                            {filteredGroups.map((group) => (
-                              <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                                {!hasAnyClass ? (
+                                  <div style={{ padding: 16, borderRadius: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' }}>
+                                    Aucun cours disponible pour cet âge ou les filtres sélectionnés ({memberAge !== null ? `${memberAge} ans` : 'date de naissance invalide'}).
+                                  </div>
+                                ) : null}
+
+                                {filteredGroups.map((group) => (
+                                  <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
                                 <div>
                                   <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
@@ -1166,6 +1222,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                               </div>
                             </div>
                           ))}
+                                </>
+                              )}
                         </div>
                         );
                       })() : null}
@@ -1338,8 +1396,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                     const method = e.target.value;
                     updateWizard('payment', { method });
                   }}>
-                    <option value="STRIPE_SEPA">Prélèvement bancaire (IBAN via Stripe)</option>
-                    <option value="STRIPE_CARD">Carte bancaire (Stripe)</option>
+                    <option value="CARTE_BANCAIRE">Carte bancaire (au secrétariat)</option>
                     <option value="ESPECES">Espèces</option>
                     <option value="CHEQUE">Chèque</option>
                   </select>

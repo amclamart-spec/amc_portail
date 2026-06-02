@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { FiEdit2, FiTrash2 } from 'react-icons/fi';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 
@@ -182,11 +183,14 @@ export default function AdminTeachers() {
                         </span>
                       </td>
                       <td>{teacher._count?.classes || 0}</td>
-                      <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        <button className="btn btn-outline btn-sm" onClick={() => openDetails(teacher)}>Fiche</button>
-                        <button className="btn btn-outline btn-sm" onClick={() => openEditModal(teacher)}>Modifier</button>
-                        <button className="btn btn-outline btn-sm" onClick={() => resetPassword(teacher)}>Reset MDP</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => deactivateTeacher(teacher)}>Désactiver</button>
+                      <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(teacher)}>
+                          <FiEdit2 size={16} />
+                        </button>
+                        <button className="btn btn-icon btn-danger" title="Désactiver" onClick={() => deactivateTeacher(teacher)}>
+                          <FiTrash2 size={16} />
+                        </button>
+                        <button className="btn btn-outline btn-icon-text" onClick={() => openDetails(teacher)}>Fiche</button>
                       </td>
                     </tr>
                   ))

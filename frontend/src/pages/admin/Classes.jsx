@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { FiEdit2, FiTrash2 } from 'react-icons/fi';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 
@@ -170,6 +171,16 @@ export default function AdminClasses() {
   };
 
   const indicator = (cls) => cls.fillIndicator?.label || '🟢';
+  const statusLabel = (status) => {
+    const labels = {
+      OPEN: 'Ouverte',
+      CLOSED: 'Fermée',
+      FULL: 'Pleine',
+      ACTIVE: 'Active',
+      INACTIVE: 'Inactif',
+    };
+    return labels[status] || status;
+  };
 
   return (
     <div>
@@ -240,11 +251,15 @@ export default function AdminClasses() {
                       <td>{cls.roomRef?.name || cls.room || '-'}</td>
                       <td>{cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : '-'}</td>
                       <td>{indicator(cls)} {cls.enrolledCount}/{cls.capacity}</td>
-                      <td><span className={`badge ${cls.status === 'OPEN' ? 'badge-success' : 'badge-warning'}`}>{cls.status}</span></td>
+                      <td><span className={`badge ${cls.status === 'OPEN' ? 'badge-success' : 'badge-warning'}`}>{statusLabel(cls.status)}</span></td>
                       <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <Link className="btn btn-outline btn-sm" to={`/admin/classes/${cls.id}`}>Détail</Link>
-                        <button className="btn btn-outline btn-sm" onClick={() => openEditModal(cls)}>Modifier</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => deleteClass(cls)}>Supprimer</button>
+                        <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(cls)}>
+                          <FiEdit2 size={16} />
+                        </button>
+                        <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => deleteClass(cls)}>
+                          <FiTrash2 size={16} />
+                        </button>
                       </td>
                     </tr>
                   ))
