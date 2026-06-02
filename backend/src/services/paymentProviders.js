@@ -88,7 +88,8 @@ async function createStripeCheckout({ amount, currency = 'eur', paymentId, retur
 
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data?.error?.message || 'Erreur Stripe lors de la création Checkout');
+    console.error(`[STRIPE CHECKOUT] Erreur création session (status=${response.status}) pour paymentId=${paymentId}:`, data);
+    throw new Error(data?.error?.message || `Erreur Stripe lors de la création Checkout (status=${response.status})`);
   }
 
   let paymentIntentId = null;
