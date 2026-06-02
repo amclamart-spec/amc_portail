@@ -110,6 +110,16 @@ button {
   text-decoration: none;
 }
 
+.btn-icon.btn-outline {
+  color: #60A5FA;
+  border-color: #60A5FA;
+  background-color: rgba(96, 165, 250, 0.12);
+}
+
+.btn-icon.btn-outline:hover {
+  background-color: rgba(96, 165, 250, 0.22);
+}
+
 .btn-danger {
   background-color: var(--amc-danger);
   color: var(--amc-white);
@@ -127,6 +137,44 @@ button {
 .btn-sm {
   padding: 6px 14px;
   font-size: 13px;
+}
+
+.btn-icon {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  font-size: 0;
+}
+
+.btn-icon:hover {
+  opacity: 0.95;
+}
+
+.btn-icon > svg {
+  display: block;
+}
+
+.btn-icon-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+}
+
+.btn-icon.btn-danger {
+  background-color: #FEE2E2;
+  color: #991B1B;
+}
+
+.btn-icon.btn-danger:hover {
+  background-color: #FCA5A5;
 }
 
 .btn-lg {

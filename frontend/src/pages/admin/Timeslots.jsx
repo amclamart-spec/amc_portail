@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { FiEdit2, FiTrash2 } from 'react-icons/fi';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 
@@ -152,8 +153,12 @@ export default function AdminTimeslots() {
                         <div style={{ fontSize: 13 }}>{slot.room?.name}</div>
                         <div style={{ fontSize: 12, color: '#6B7280' }}>{slot.recurring ? 'Chaque semaine' : 'Ponctuel'}</div>
                         <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
-                          <button className="btn btn-outline btn-sm" onClick={() => openEditModal(slot)}>Modifier</button>
-                          <button className="btn btn-danger btn-sm" onClick={() => deleteSlot(slot)}>Supprimer</button>
+                          <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(slot)}>
+                            <FiEdit2 size={16} />
+                          </button>
+                          <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => deleteSlot(slot)}>
+                            <FiTrash2 size={16} />
+                          </button>
                         </div>
                       </div>
                     ))}
