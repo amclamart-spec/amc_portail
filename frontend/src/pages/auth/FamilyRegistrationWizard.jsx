@@ -1489,7 +1489,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                     updateWizard('payment', { method });
                   }}>
                     <option value="CARTE_BANCAIRE">Carte bancaire (au secrétariat)</option>
-                    <option value="STRIPE_CARD">Carte bancaire (en ligne)</option>
+                    {/* <option value="STRIPE_CARD">Carte bancaire (en ligne)</option> */}
                     <option value="PRELEVEMENT_BANCAIRE">Prélèvement bancaire</option>
                     <option value="ESPECES">Espèces</option>
                     <option value="CHEQUE">Chèque</option>
