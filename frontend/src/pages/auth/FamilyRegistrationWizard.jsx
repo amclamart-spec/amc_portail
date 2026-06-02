@@ -97,8 +97,44 @@ function getDefaultState(prefill = {}) {
       installmentsCount: 1,
       scheduleDay: 10,
       chequeInstructionsAccepted: false,
+      bankDebitIban: '',
+      bankDebitSwift: '',
+      ribDocument: null,
     },
   };
+}
+
+function isValidIban(value) {
+  if (!value) return false;
+  const sanitized = String(value).toUpperCase().replace(/\s+/g, '');
+  return /^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(sanitized);
+}
+
+function formatIban(value) {
+  if (!value) return '';
+  return String(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .replace(/(.{4})/g, '$1 ')
+    .trim();
+}
+
+function isValidSwift(value) {
+  if (!value) return false;
+  return /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(String(value).trim().toUpperCase());
+}
+
+function formatSwift(value) {
+  if (!value) return '';
+  const cleaned = String(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .trim();
+  // Format: ABCDEF + GH + XXX
+  if (cleaned.length >= 6) {
+    return (cleaned.slice(0, 6) + cleaned.slice(6, 8) + cleaned.slice(8, 11)).trim();
+  }
+  return cleaned;
 }
 
 function getAgeFromDate(dateString) {
@@ -183,6 +219,16 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     const reader = new FileReader();
     reader.onload = () => {
       setMemberForm((prev) => ({ ...prev, photoBase64: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRibDocumentChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      updateWizard('payment', { ribDocument: { name: file.name, base64: reader.result } });
     };
     reader.readAsDataURL(file);
   };
@@ -528,6 +574,28 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         toast.error('Jour de prélèvement invalide (10/20/30)');
         return false;
       }
+      if (p.method === 'PRELEVEMENT_BANCAIRE') {
+        if (!p.bankDebitIban || !isValidIban(p.bankDebitIban)) {
+          toast.error('Veuillez saisir un IBAN valide');
+          return false;
+        }
+        if (!p.bankDebitSwift || !isValidSwift(p.bankDebitSwift)) {
+          toast.error('Veuillez saisir un code SWIFT/BIC valide');
+          return false;
+        }
+        if (!p.ribDocument?.base64) {
+          toast.error('Veuillez joindre le RIB');
+          return false;
+        }
+        if (!Number.isInteger(Number(p.scheduleDay)) || Number(p.scheduleDay) < 1 || Number(p.scheduleDay) > 28) {
+          toast.error('Veuillez choisir un jour de prélèvement entre 1 et 28');
+          return false;
+        }
+        if (!Number.isInteger(Number(p.installmentsCount)) || Number(p.installmentsCount) < 1 || Number(p.installmentsCount) > 8) {
+          toast.error('Le nombre d’échéances doit être compris entre 1 et 8');
+          return false;
+        }
+      }
       if (p.method === 'CHEQUE' && !p.chequeInstructionsAccepted) {
         toast.error('Veuillez confirmer avoir lu les instructions de paiement par chèque');
         return false;
@@ -552,6 +620,29 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     const target = Math.max(step - 1, 0);
     setStep(target);
     await persistDraft(target);
+  };
+
+  const isPaymentFormValid = () => {
+    const stepPaymentIndex = existingFamily ? 4 : 5;
+    if (step !== stepPaymentIndex) return true;
+
+    const p = wizard.payment;
+
+    if ((p.method === 'STRIPE_CARD' || p.method === 'STRIPE_SEPA') && p.installmentsCount > 1) {
+      if (![10, 20, 30].includes(Number(p.scheduleDay))) return false;
+    }
+
+    if (p.method === 'PRELEVEMENT_BANCAIRE') {
+      if (!p.bankDebitIban || !isValidIban(p.bankDebitIban)) return false;
+      if (!p.bankDebitSwift || !isValidSwift(p.bankDebitSwift)) return false;
+      if (!p.ribDocument?.base64) return false;
+      if (!Number.isInteger(Number(p.scheduleDay)) || Number(p.scheduleDay) < 1 || Number(p.scheduleDay) > 28) return false;
+      if (!Number.isInteger(Number(p.installmentsCount)) || Number(p.installmentsCount) < 1 || Number(p.installmentsCount) > 8) return false;
+    }
+
+    if (p.method === 'CHEQUE' && !p.chequeInstructionsAccepted) return false;
+
+    return true;
   };
 
   const refreshPricing = async () => {
@@ -1397,6 +1488,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                     updateWizard('payment', { method });
                   }}>
                     <option value="CARTE_BANCAIRE">Carte bancaire (au secrétariat)</option>
+                    <option value="PRELEVEMENT_BANCAIRE">Prélèvement bancaire</option>
                     <option value="ESPECES">Espèces</option>
                     <option value="CHEQUE">Chèque</option>
                   </select>
@@ -1439,6 +1531,68 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               </div>
             )}
 
+            {wizard.payment.method === 'PRELEVEMENT_BANCAIRE' && (
+              <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+                <div className="form-group" style={{ maxWidth: 320 }}>
+                  <label>Échéances</label>
+                  <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n} {n === 1 ? 'échéance' : 'échéances'}</option>)}
+                  </select>
+                </div>
+                <div className="form-group" style={{ maxWidth: 320 }}>
+                  <label>Jour du prélèvement</label>
+                  <select className="form-control" value={wizard.payment.scheduleDay} onChange={(e) => updateWizard('payment', { scheduleDay: Number(e.target.value) })}>
+                    {[...Array(28)].map((_, idx) => {
+                      const day = idx + 1;
+                      return <option key={day} value={day}>{day}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="form-group" style={{ maxWidth: 320 }}>
+                  <label>IBAN</label>
+                  <input
+                    className="form-control"
+                    type="text"
+                    value={wizard.payment.bankDebitIban || ''}
+                    onChange={(e) => updateWizard('payment', { bankDebitIban: formatIban(e.target.value) })}
+                    onBlur={(e) => updateWizard('payment', { bankDebitIban: formatIban(e.target.value) })}
+                    placeholder="FR76 XXXX XXXX XXXX XXXX XX"
+                  />
+                  {wizard.payment.bankDebitIban && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: isValidIban(wizard.payment.bankDebitIban) ? '#16a34a' : '#dc2626', fontFamily: 'monospace' }}>
+                      {wizard.payment.bankDebitIban}
+                    </div>
+                  )}
+                </div>
+                <div className="form-group" style={{ maxWidth: 320 }}>
+                  <label>SWIFT / BIC</label>
+                  <input
+                    className="form-control"
+                    type="text"
+                    value={wizard.payment.bankDebitSwift || ''}
+                    onChange={(e) => updateWizard('payment', { bankDebitSwift: formatSwift(e.target.value) })}
+                    onBlur={(e) => updateWizard('payment', { bankDebitSwift: formatSwift(e.target.value) })}
+                    placeholder="ABCDEFGHXXX"
+                  />
+                  {wizard.payment.bankDebitSwift && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: isValidSwift(wizard.payment.bankDebitSwift) ? '#16a34a' : '#dc2626', fontFamily: 'monospace' }}>
+                      {wizard.payment.bankDebitSwift}
+                    </div>
+                  )}
+                </div>
+                <div className="form-group" style={{ maxWidth: 320 }}>
+                  <label>RIB</label>
+                  <input type="file" accept="application/pdf,image/*" className="form-control" onChange={handleRibDocumentChange} />
+                  {wizard.payment.ribDocument?.name && (
+                    <div style={{ marginTop: 6, fontSize: 13, color: '#475569' }}>{wizard.payment.ribDocument.name}</div>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>
+                  Ce mode permet de transmettre vos informations bancaires et le RIB pour mise en place du prélèvement.
+                </div>
+              </div>
+            )}
+
             {wizard.payment.method === 'CHEQUE' && (
               <>
                 <div className="form-group">
@@ -1467,7 +1621,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             {step < steps.length - 1 ? (
               <button className="btn btn-primary" onClick={next}>Suivant</button>
             ) : (
-              <button className="btn btn-primary" onClick={submitFinal} disabled={submitting}>{submitting ? 'Validation...' : 'Confirmer & payer'}</button>
+              <button className="btn btn-primary" onClick={submitFinal} disabled={submitting || !isPaymentFormValid()}>{submitting ? 'Validation...' : 'Confirmer & payer'}</button>
             )}
           </div>
         </div>

@@ -37,6 +37,21 @@ export default function AdminPayments() {
     }
   };
 
+  const formatPaymentMethodLabel = (transaction = {}) => {
+    const payment = transaction.payment || {};
+    const method = transaction.method || payment.method || payment.paymentMethod;
+    const metadata = payment.metadata || transaction.metadata || {};
+    const bankDebitIban = metadata.bankDebitIban || payment.bankDebitIban || transaction.bankDebitIban;
+
+    if (method === 'PRELEVEMENT_BANCAIRE') return 'Prélèvement';
+    if (method === 'VIREMENT' && bankDebitIban) return 'Prélèvement';
+    if (method === 'STRIPE_SEPA' || method === 'GO_CARDLESS_SEPA') return 'Prélèvement SEPA';
+    if (method === 'CB' || method === 'STRIPE_CARD') return 'Carte bancaire';
+    if (method === 'CHEQUE') return 'Chèque';
+    if (method === 'ESPECES') return 'Espèces';
+    return method || '-';
+  };
+
   const handleTransactionAction = async (tx, action) => {
     const actionLabel = action === 'SUCCEEDED' ? 'valider' : 'annuler';
     const confirmed = window.confirm(`Confirmer la décision de ${actionLabel} ce paiement ?`);
@@ -144,24 +159,22 @@ export default function AdminPayments() {
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Paiement</th>
                 <th>Famille</th>
                 <th>Payeur</th>
                 <th>Méthode</th>
                 <th>Montant</th>
                 <th>Statut</th>
-                  <th>Reçu</th>
-                  <th>Actions</th>
+                <th>Reçu</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {transactions.map((t) => (
                 <tr key={t.id}>
                   <td>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
-                  <td>{t.paymentId}</td>
                   <td>{t.familyName || (t.payment?.family?.familyName) || '-'}</td>
                   <td>{t.payerName || '-'}</td>
-                  <td>{t.method}</td>
+                  <td>{formatPaymentMethodLabel(t)}</td>
                   <td>{Number(t.amount).toFixed(2)} €</td>
                   <td>{txStatusLabel(t.status)}</td>
                   <td>

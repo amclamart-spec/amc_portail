@@ -20,6 +20,16 @@ const paymentStatusLabels = {
   PROCESSING: 'En traitement',
 };
 
+const paymentMethodLabels = {
+  PRELEVEMENT_BANCAIRE: 'Prélèvement',
+  VIREMENT: 'Virement',
+  SEPA: 'Prélèvement SEPA',
+  CB: 'Carte bancaire',
+  ESPECES: 'Espèces',
+  CHEQUE: 'Chèque',
+  STRIPE: 'Carte bancaire (Stripe)',
+};
+
 const refundStatusLabels = {
   PENDING: 'Initié',
   PROCESSED: 'Validé',
@@ -33,7 +43,35 @@ const refundStatusOptions = [
 ];
 
 const formatPaymentStatus = (status) => paymentStatusLabels[status] || status || '-';
+const formatPaymentMethodLabel = (payment = {}, transaction = {}) => {
+  const method = transaction.method || payment.method || payment.paymentMethod;
+  const bankDebitIban = payment.metadata?.bankDebitIban || transaction.metadata?.bankDebitIban;
+  if (method === 'PRELEVEMENT_BANCAIRE') return 'Prélèvement';
+  if (method === 'VIREMENT' && bankDebitIban) return 'Prélèvement';
+  return paymentMethodLabels[method] || method || '-';
+};
+
 const formatRefundStatus = (status) => refundStatusLabels[status] || status || '-';
+
+const normalizeBankValue = (value) => {
+  if (!value) return '';
+  return String(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+};
+
+const formatBankIbanForDisplay = (value) => {
+  const cleaned = normalizeBankValue(value);
+  return cleaned.replace(/(.{4})/g, '$1 ').trim();
+};
+
+const formatBankSwiftForDisplay = (value) => normalizeBankValue(value);
+
+const resolveUploadUrl = (url) => {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  const base = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
+  const prefix = base.endsWith('/') ? base.slice(0, -1) : base;
+  return `${prefix}${url.startsWith('/') ? '' : '/'}${url}`;
+};
 
 const overlayStyle = {
   position: 'fixed',
@@ -83,7 +121,14 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   const [refundCodeValidating, setRefundCodeValidating] = useState(false);
 
   const paymentId = transaction?.paymentId;
-  const payment = transaction?.payment || {};
+  const payment = transaction?.payment || transaction || {};
+  const bankDebitMetadata = payment.metadata || transaction?.metadata || {};
+  const bankDebitIbanRaw = bankDebitMetadata.bankDebitIban || payment.bankDebitIban || transaction?.bankDebitIban;
+  const bankDebitSwiftRaw = bankDebitMetadata.bankDebitSwift || payment.bankDebitSwift || transaction?.bankDebitSwift;
+  const bankDebitIban = formatBankIbanForDisplay(bankDebitIbanRaw);
+  const bankDebitSwift = formatBankSwiftForDisplay(bankDebitSwiftRaw);
+  const bankDebitDay = bankDebitMetadata.bankDebitDay || payment.scheduleDay || payment.bankDebitDay || transaction?.scheduleDay || transaction?.bankDebitDay;
+  const bankDebitInstallmentsCount = payment.numberOfInstallments || payment.installmentsCount || bankDebitMetadata.bankDebitInstallmentsCount || transaction?.numberOfInstallments || transaction?.installmentsCount;
 
   useEffect(() => {
     if (!isOpen) {
@@ -194,6 +239,28 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
     }
   };
 
+  const handleDownloadRib = async (ribUrl, filename) => {
+    try {
+      const downloadUrl = resolveUploadUrl(ribUrl);
+      if (!downloadUrl) throw new Error('URL RIB invalide');
+      const response = await api.get(downloadUrl, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: response.data.type || 'application/pdf' });
+      const objectUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename || 'rib.pdf';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(objectUrl);
+      toast.success('Téléchargement du RIB en cours...');
+    } catch (err) {
+      console.error('Erreur téléchargement RIB', err);
+      toast.error('Impossible de télécharger le RIB');
+    }
+  };
+
   if (!isOpen || !transaction) {
     return null;
   }
@@ -285,17 +352,57 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
             </div>
             <div>
               <div style={{ color: '#64748b', marginBottom: 8 }}>Méthode</div>
-              <div style={{ fontWeight: 600 }}>{payment.paymentMethod || '-'}</div>
+              <div style={{ fontWeight: 600 }}>{formatPaymentMethodLabel(payment, transaction)}</div>
             </div>
             <div>
               <div style={{ color: '#64748b', marginBottom: 8 }}>Nombre d&apos;échéances</div>
-              <div style={{ fontWeight: 600 }}>{payment.numberOfInstallments || '-'}</div>
+              <div style={{ fontWeight: 600 }}>{bankDebitInstallmentsCount || '-'}</div>
             </div>
+            {bankDebitDay !== undefined && bankDebitDay !== null && (
+              <div>
+                <div style={{ color: '#64748b', marginBottom: 8 }}>Jour du prélèvement</div>
+                <div style={{ fontWeight: 600 }}>{bankDebitDay}</div>
+              </div>
+            )}
             <div>
               <div style={{ color: '#64748b', marginBottom: 8 }}>Date</div>
               <div style={{ fontWeight: 600 }}>{payment.createdAt ? new Date(payment.createdAt).toLocaleString('fr-FR') : '-'}</div>
             </div>
           </div>
+          {(bankDebitIban || bankDebitSwift || bankDebitMetadata.bankDebitRibUrl) && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginTop: 12 }}>
+              <div>
+                <div style={{ color: '#64748b', marginBottom: 8 }}>IBAN</div>
+                <div style={{ fontWeight: 600 }}>{bankDebitIban || '-'}</div>
+              </div>
+              <div>
+                <div style={{ color: '#64748b', marginBottom: 8 }}>BIC / SWIFT</div>
+                <div style={{ fontWeight: 600 }}>{bankDebitSwift || '-'}</div>
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <div style={{ color: '#64748b', marginBottom: 8 }}>RIB</div>
+                {bankDebitMetadata.bankDebitRibUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadRib(bankDebitMetadata.bankDebitRibUrl, bankDebitMetadata.bankDebitRibFilename)}
+                    style={{ 
+                      fontWeight: 600,
+                      backgroundColor: 'transparent',
+                      border: 'none',
+                      padding: 0,
+                      color: '#1d4ed8',
+                      cursor: 'pointer',
+                      textDecoration: 'underline'
+                    }}
+                  >
+                    {bankDebitMetadata.bankDebitRibFilename || 'Télécharger le RIB'}
+                  </button>
+                ) : (
+                  <div style={{ fontWeight: 600 }}>-</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ marginTop: 16, padding: 16, border: '1px solid #E5E7EB', borderRadius: 12, background: '#F8FAFC' }}>

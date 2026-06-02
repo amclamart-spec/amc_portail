@@ -106,6 +106,90 @@ export default function AdminEnrollments() {
     return enrollment.status === 'PENDING' && (enrollment.class?.status === 'FULL' || hasWaitlistComment);
   };
 
+  const decodeText = (value) => {
+    if (value === undefined || value === null || value === '') return '—';
+    const original = String(value);
+    let decoded = original;
+
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.innerHTML = original;
+      decoded = textarea.value;
+    } catch (err) {
+      decoded = original;
+    }
+
+    if (decoded.includes('Ã') || decoded.includes('Â')) {
+      try {
+        decoded = decodeURIComponent(escape(decoded));
+      } catch (err) {
+        // keep decoded as-is if conversion fails
+      }
+    }
+
+    try {
+      return String(decoded).normalize('NFC');
+    } catch (err) {
+      return String(decoded);
+    }
+  };
+
+  const formatPaymentMethodLabel = (payment = {}) => {
+    const method = payment.method || payment.paymentMethod;
+    const metadata = payment.paymentMetadata || {};
+    const bankDebitIban = metadata.bankDebitIban || payment.bankDebitIban;
+
+    if (method === 'PRELEVEMENT_BANCAIRE') return 'Prélèvement';
+    if (method === 'VIREMENT' && bankDebitIban) return 'Prélèvement';
+    if (method === 'STRIPE_SEPA' || method === 'GO_CARDLESS_SEPA') return 'Prélèvement SEPA';
+    if (method === 'CB' || method === 'STRIPE_CARD') return 'Carte bancaire';
+    if (method === 'CHEQUE') return 'Chèque';
+    if (method === 'ESPECES') return 'Espèces';
+    return method || '—';
+  };
+
+  const normalizeBankValue = (value) => {
+    if (!value) return '';
+    return String(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  };
+
+  const formatBankIbanForDisplay = (value) => {
+    const cleaned = normalizeBankValue(value);
+    return cleaned.replace(/(.{4})/g, '$1 ').trim();
+  };
+
+  const formatBankSwiftForDisplay = (value) => normalizeBankValue(value);
+
+  const resolveUploadUrl = (url) => {
+    if (!url) return url;
+    if (/^https?:\/\//i.test(url)) return url;
+    const base = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
+    const prefix = base.endsWith('/') ? base.slice(0, -1) : base;
+    return `${prefix}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const handleDownloadRib = async (ribUrl, filename) => {
+    try {
+      const downloadUrl = resolveUploadUrl(ribUrl);
+      if (!downloadUrl) throw new Error('URL RIB invalide');
+      const response = await api.get(downloadUrl, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: response.data.type || 'application/pdf' });
+      const objectUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename || 'rib.pdf';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(objectUrl);
+      toast.success('Téléchargement du RIB en cours...');
+    } catch (err) {
+      console.error('Erreur téléchargement RIB', err);
+      toast.error('Impossible de télécharger le RIB');
+    }
+  };
+
   const exportEnrollments = async () => {
     setExporting(true);
     try {
@@ -1692,10 +1776,50 @@ export default function AdminEnrollments() {
                         <tr key={payment.id}>
                           <td>{formatDate(payment.processedAt || payment.createdAt)}</td>
                           <td>{payment.payerName || '—'}</td>
-                          <td>{payment.method || '—'}</td>
+                          <td>{formatPaymentMethodLabel(payment)}</td>
                           <td>{Number(payment.amount).toFixed(2)} €</td>
                           <td>{paymentStatusLabel(payment.status)}</td>
-                          <td>{payment.description || '—'}</td>
+                          <td>
+                            <div>{decodeText(payment.description)}</div>
+                            {(() => {
+                              const metadata = payment.paymentMetadata || {};
+                              const bankDebitIbanRaw = metadata.bankDebitIban || payment.bankDebitIban;
+                              const bankDebitSwiftRaw = metadata.bankDebitSwift || payment.bankDebitSwift;
+                              const bankDebitDay = metadata.bankDebitDay || payment.scheduleDay || payment.bankDebitDay;
+                              const bankDebitInstallmentsCount = metadata.bankDebitInstallmentsCount || payment.numberOfInstallments || payment.installmentsCount;
+                              const bankDebitRibUrl = metadata.bankDebitRibUrl;
+                              const bankDebitRibFilename = metadata.bankDebitRibFilename || 'RIB';
+                              const isBankDebit = payment.method === 'PRELEVEMENT_BANCAIRE'
+                                || (payment.method === 'VIREMENT' && bankDebitIbanRaw)
+                                || payment.method === 'STRIPE_SEPA'
+                                || payment.method === 'GO_CARDLESS_SEPA';
+
+                              if (!isBankDebit) return null;
+
+                              return (
+                                <div style={{ marginTop: 8, fontSize: 12, color: '#475569', lineHeight: '1.5' }}>
+                                  <div><strong>IBAN :</strong> {formatBankIbanForDisplay(bankDebitIbanRaw) || '—'}</div>
+                                  <div><strong>BIC / SWIFT :</strong> {formatBankSwiftForDisplay(bankDebitSwiftRaw) || '—'}</div>
+                                  {bankDebitInstallmentsCount !== undefined && bankDebitInstallmentsCount !== null && (
+                                    <div><strong>Échéances :</strong> {bankDebitInstallmentsCount}</div>
+                                  )}
+                                  {bankDebitDay !== undefined && bankDebitDay !== null && (
+                                    <div><strong>Jour prélèvement :</strong> {bankDebitDay}</div>
+                                  )}
+                                  {bankDebitRibUrl && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-link"
+                                      onClick={() => handleDownloadRib(bankDebitRibUrl, bankDebitRibFilename)}
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, marginTop: 6, color: '#1d4ed8' }}
+                                    >
+                                      <FiDownload size={14} /> Télécharger le RIB
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </td>
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                               {canActionPayment(payment) ? (
