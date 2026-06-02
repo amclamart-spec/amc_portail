@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { FiEdit2, FiTrash2 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 
@@ -170,8 +171,12 @@ export default function AdminEmailTemplates() {
                     <td>{new Date(template.updatedAt).toLocaleString('fr-FR')}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-outline btn-sm" onClick={() => editTemplate(template)}>Éditer</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => deleteTemplate(template.id)}>Supprimer</button>
+                        <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => editTemplate(template)}>
+                          <FiEdit2 size={16} />
+                        </button>
+                        <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => deleteTemplate(template.id)}>
+                          <FiTrash2 size={16} />
+                        </button>
                       </div>
                     </td>
                   </tr>

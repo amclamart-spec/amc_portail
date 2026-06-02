@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { FiEdit2, FiTrash2, FiPlus } from 'react-icons/fi';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 
@@ -191,8 +192,12 @@ export default function AdminLevels() {
                     <p style={{ margin: 0, color: '#6B7280' }}>{pole.description || 'Sans description'}</p>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn btn-outline btn-sm" onClick={() => openCreateLevel(pole.id)}>Ajouter niveau</button>
-                    <button className="btn btn-danger btn-sm" onClick={() => deletePole(pole)}>Supprimer pôle</button>
+                    <button className="btn btn-icon btn-outline" title="Ajouter un niveau" onClick={() => openCreateLevel(pole.id)}>
+                    <FiPlus size={16} />
+                  </button>
+                    <button className="btn btn-icon btn-danger" title="Supprimer le pôle" onClick={() => deletePole(pole)}>
+                      <FiTrash2 size={16} />
+                    </button>
                   </div>
                 </div>
 
@@ -224,8 +229,12 @@ export default function AdminLevels() {
                             <td>{level.maxAge || '-'}</td>
                             <td>{level._count?.classes || 0}</td>
                             <td style={{ display: 'flex', gap: 8 }}>
-                              <button className="btn btn-outline btn-sm" onClick={() => openEditLevel(level)}>Modifier</button>
-                              <button className="btn btn-danger btn-sm" onClick={() => deleteLevel(level)}>Supprimer</button>
+                              <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditLevel(level)}>
+                                <FiEdit2 size={16} />
+                              </button>
+                              <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => deleteLevel(level)}>
+                                <FiTrash2 size={16} />
+                              </button>
                             </td>
                           </tr>
                         ))
