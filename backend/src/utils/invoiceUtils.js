@@ -138,6 +138,16 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, famil
       yRight += 12;
       doc.text(`Méthode: ${formatPaymentMethod(paymentData.method || paymentData.paymentMethod, paymentData.metadata)}`, rightX, yRight);
       yRight += 12;
+      
+      // Add first payment date for VIREMENT and CHEQUE
+      const paymentMethod = paymentData.method || paymentData.paymentMethod;
+      const isVirementOrCheque = paymentMethod === 'VIREMENT' || paymentMethod === 'PRELEVEMENT_BANCAIRE' || paymentMethod === 'CHEQUE';
+      if (isVirementOrCheque && paymentData.metadata?.firstPaymentDate) {
+        const firstPaymentDate = new Date(paymentData.metadata.firstPaymentDate);
+        doc.text(`Début de prélèvement: ${firstPaymentDate.toLocaleDateString('fr-FR')}`, rightX, yRight);
+        yRight += 12;
+      }
+      
       doc.text(`Montant: ${Number(paymentData.totalAmount).toFixed(2)}€`, rightX, yRight, { font: 'Helvetica-Bold' });
       yRight += 14;
       const payerName = paymentData.payerName || familyData.familyName || `${familyData.user.firstName} ${familyData.user.lastName}`;
@@ -347,18 +357,14 @@ function formatPaymentStatus(status) {
 function formatPaymentMethod(method, metadata = {}) {
   const methodMap = {
     PRELEVEMENT_BANCAIRE: 'Prélèvement',
+    VIREMENT: 'Prélèvement',
     CB: 'Carte Bancaire',
     SEPA: 'Prélèvement SEPA',
     CHEQUE: 'Chèque',
     ESPECES: 'Espèces',
-    VIREMENT: 'Virement',
     STRIPE: 'Carte Bancaire (Stripe)',
     PAYPAL: 'PayPal',
   };
-
-  if (method === 'VIREMENT' && metadata?.bankDebitIban) {
-    return 'Prélèvement';
-  }
 
   return methodMap[method] || method || 'Non spécifié';
 }

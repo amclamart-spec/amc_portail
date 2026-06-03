@@ -483,6 +483,10 @@ function buildBankDebitMetadata(payment) {
       metadata.bankDebitInstallmentsCount = Number(payment.numberOfInstallments);
     }
 
+    if (payment.firstPaymentDate) {
+      metadata.firstPaymentDate = String(payment.firstPaymentDate).trim();
+    }
+
     if (payment.ribDocument?.base64) {
       metadata.bankDebitRibUrl = saveBase64File(payment.ribDocument.base64, 'ribs', payment.ribDocument.name || 'rib.pdf');
       metadata.bankDebitRibFilename = String(payment.ribDocument.name || 'RIB');
