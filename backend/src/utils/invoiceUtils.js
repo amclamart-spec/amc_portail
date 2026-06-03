@@ -52,6 +52,75 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function formatDateValue(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value).trim();
+  return date.toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function formatPaymentMethod(method, metadata = {}) {
+  const sourceMethod = method || metadata.paymentPlanType || metadata.method || metadata.paymentMethod;
+  const methodMap = {
+    PRELEVEMENT_BANCAIRE: 'Prélèvement',
+    VIREMENT: 'Prélèvement',
+    SEPA: 'Prélèvement SEPA',
+    CB: 'Carte Bancaire',
+    ESPECES: 'Espèces',
+    STRIPE: 'Stripe',
+    STRIPE_CARD: 'Carte Bancaire',
+    STRIPE_SEPA: 'Prélèvement SEPA',
+    PAYPAL: 'PayPal',
+    CHEQUE: 'Chèque',
+  };
+
+  return methodMap[sourceMethod] || String(sourceMethod || 'Non spécifié');
+}
+
+function getPaymentDetails(paymentData) {
+  const metadata = paymentData.metadata || {};
+  const methodKey = paymentData.paymentMethod || paymentData.method || metadata.paymentPlanType || metadata.method || metadata.paymentMethod;
+  const paymentMethodLabel = formatPaymentMethod(methodKey, metadata);
+  const details = [
+    { label: 'Mode de paiement', value: paymentMethodLabel },
+  ];
+
+  const installments = Number(paymentData.numberOfInstallments || metadata.bankDebitInstallmentsCount || metadata.numberOfInstallments || 0) || 0;
+  const isDirectDebit = methodKey === 'PRELEVEMENT_BANCAIRE' || methodKey === 'VIREMENT' || metadata.paymentPlanType === 'PRELEVEMENT_BANCAIRE' || metadata.method === 'VIREMENT';
+
+  if (isDirectDebit) {
+    if (installments > 0) {
+      details.push({ label: 'Nombre d’échéances', value: String(installments) });
+    }
+    if (metadata.firstPaymentDate) {
+      details.push({ label: 'Date première échéance', value: formatDateValue(metadata.firstPaymentDate) || metadata.firstPaymentDate });
+    }
+    if (metadata.bankDebitDay !== undefined && metadata.bankDebitDay !== null) {
+      details.push({ label: 'Jour prélèvement', value: String(metadata.bankDebitDay) });
+    }
+    if (metadata.bankDebitIban) {
+      details.push({ label: 'IBAN', value: metadata.bankDebitIban });
+    }
+    if (metadata.bankDebitSwift) {
+      details.push({ label: 'SWIFT', value: metadata.bankDebitSwift });
+    }
+  }
+
+  if (methodKey === 'CHEQUE' || metadata.chequeDepositDay !== undefined || metadata.chequeFirstPaymentDate) {
+    if (installments > 0) {
+      details.push({ label: 'Nombre de chèques', value: String(installments) });
+    }
+    if (metadata.chequeFirstPaymentDate) {
+      details.push({ label: 'Date dépôt chèque', value: formatDateValue(metadata.chequeFirstPaymentDate) || metadata.chequeFirstPaymentDate });
+    }
+    if (metadata.chequeDepositDay !== undefined && metadata.chequeDepositDay !== null) {
+      details.push({ label: 'Jour de dépôt', value: String(metadata.chequeDepositDay) });
+    }
+  }
+
+  return details;
+}
+
 function computeEnrollmentAmounts(enrollments, pricing, paymentTotal) {
   const rows = enrollments.map((enrollment) => {
     const details = getEnrollmentCourseDetails(enrollment);
@@ -220,7 +289,9 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
       doc.fontSize(9).font('Helvetica');
       doc.text(`Numéro de reçu: ${paymentData.id.substring(0, 8).toUpperCase()}`, { align: 'left' });
       doc.text(`Date: ${invoiceDate.toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric' })}`);
-      doc.moveDown(0.5);
+      doc.moveDown(0.3);
+
+      const paymentDetails = getPaymentDetails(paymentData);
 
       // Two-column layout: Family info (left) and Payment info (right)
       const leftX = 40;
@@ -281,24 +352,44 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
       });
 
       const transactionSource = Array.isArray(paymentData.transactions) ? paymentData.transactions : [];
-        const eligibleStatuses = new Set(['INITIATED', 'SUCCEEDED', 'COMPLETED', 'PAID']);
-        const paymentTransactionsTotal = transactionSource
-          .filter((tx) => {
-            const status = String(tx.status);
-            return status !== 'CANCELLED' && status !== 'FAILED' && eligibleStatuses.has(status);
-          })
-          .reduce((sum, tx) => sum + Number(tx.amount || tx.total || 0), 0);
+      const eligibleStatuses = new Set(['INITIATED', 'SUCCEEDED', 'COMPLETED', 'PAID']);
+      const paymentTransactionsTotal = transactionSource
+        .filter((tx) => {
+          const status = String(tx.status);
+          return status !== 'CANCELLED' && status !== 'FAILED' && eligibleStatuses.has(status);
+        })
+        .reduce((sum, tx) => sum + Number(tx.amount || tx.total || 0), 0);
 
-        if (transactionSource.length > 0) {
+      const paymentDetailsToShow = Array.isArray(paymentDetails) ? paymentDetails.filter((detail) => detail.value) : [];
+      const shouldShowPaymentDetails = paymentDetailsToShow.length > 0;
+      const shouldShowTransactionTable = transactionSource.length > 0;
+
+      if (shouldShowPaymentDetails || shouldShowTransactionTable) {
+        if (currentY > doc.page.height - 180) {
+          doc.addPage();
+          currentY = 40;
+        }
+
+        currentY += 10;
+        doc.fontSize(10).font('Helvetica-Bold').text('DÉTAILS DES PAIEMENTS', 40, currentY);
+        currentY += 18;
+
+        if (shouldShowPaymentDetails) {
+          doc.fontSize(9).font('Helvetica');
+          paymentDetailsToShow.forEach((detail) => {
+            doc.text(`${detail.label}: ${detail.value}`, 40, currentY);
+            currentY += 14;
+          });
+          currentY += 6;
+        }
+
+        if (shouldShowTransactionTable) {
           if (currentY > doc.page.height - 180) {
             doc.addPage();
             currentY = 40;
           }
-          doc.moveDown(0.5);
-          doc.fontSize(10).font('Helvetica-Bold').text('DÉTAILS DES PAIEMENTS', 40, currentY);
-          currentY += 18;
 
-          // Table header
+          // Transaction table header
           const txTableX = 40;
           const txTableWidth = 515;
           const txCellH = 18;
@@ -333,6 +424,7 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
           });
           currentY += 8;
         }
+      }
 
       // Summary section
       currentY += 10;
@@ -429,21 +521,6 @@ function formatPaymentStatus(status) {
     OVERDUE: 'En retard',
   };
   return statusMap[status] || status || '-';
-}
-
-function formatPaymentMethod(method, metadata = {}) {
-  const methodMap = {
-    PRELEVEMENT_BANCAIRE: 'Prélèvement',
-    VIREMENT: 'Prélèvement',
-    CB: 'Carte Bancaire',
-    SEPA: 'Prélèvement SEPA',
-    CHEQUE: 'Chèque',
-    ESPECES: 'Espèces',
-    STRIPE: 'Carte Bancaire (Stripe)',
-    PAYPAL: 'PayPal',
-  };
-
-  return methodMap[method] || method || 'Non spécifié';
 }
 
 /**

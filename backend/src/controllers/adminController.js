@@ -181,6 +181,14 @@ async function getAllUsers(req, res) {
     const where = {};
     if (status) where.validationStatus = status;
     if (role) where.role = role;
+    const name = String(req.query.name || '').trim();
+    if (name) {
+      where.OR = [
+        { firstName: { contains: name, mode: 'insensitive' } },
+        { lastName: { contains: name, mode: 'insensitive' } },
+        { email: { contains: name, mode: 'insensitive' } },
+      ];
+    }
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -299,13 +307,14 @@ async function getStats(req, res) {
     let currentFamilies = null;
 
     const yearWhere = scope === 'current' && currentYear ? { schoolYearId: currentYear.id } : {};
-    const [scopeEnrollmentsByStatusRaw, scopeEnrollmentsTestRequired] = await Promise.all([
+    const [scopeEnrollmentsByStatusRaw, scopeEnrollmentsTestRequired, scopeValidatedEnrollmentsCount] = await Promise.all([
       prisma.enrollment.groupBy({
         by: ['status'],
         where: { ...yearWhere, status: { in: activeEnrollmentStatuses } },
         _count: { status: true },
       }).catch(() => []),
       prisma.enrollment.count({ where: { ...yearWhere, levelValidated: false, status: { in: activeEnrollmentStatuses } } }),
+      prisma.enrollment.count({ where: { ...yearWhere, status: 'CONFIRMED', levelValidated: true } }),
     ]);
 
     const scopeEnrollmentsByStatus = (scopeEnrollmentsByStatusRaw || []).reduce((acc, item) => {
@@ -360,6 +369,7 @@ async function getStats(req, res) {
         },
         displayScope: scope,
         displayLabel,
+        validatedEnrollmentsCount: scopeValidatedEnrollmentsCount || 0,
       },
       schoolYears,
     });

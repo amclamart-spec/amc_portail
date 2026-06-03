@@ -357,6 +357,8 @@ async function getPricingPreview(req, res) {
 
     let existingArabicCount = 0;
 
+    let totalFamilyEnrollmentsByPole = {};
+
 
 
     if (req.user) {
@@ -413,6 +415,55 @@ async function getPricingPreview(req, res) {
 
         });
 
+
+
+        // Fetch existing enrollments with pole info for totalFamilyEnrollmentsByPole
+        const existingEnrollments = await prisma.enrollment.findMany({
+
+          where: {
+
+            student: { familyId: family.id },
+
+            schoolYearId: currentYear.id,
+
+            status: { in: ['PENDING', 'CONFIRMED'] },
+
+          },
+
+          include: {
+
+            class: {
+
+              include: {
+
+                level: { include: { pole: true } },
+
+              },
+
+            },
+
+          },
+
+        });
+
+
+
+        for (const enrollment of existingEnrollments) {
+
+          const poleName = String(enrollment.class?.level?.pole?.name || '').toLowerCase();
+
+          const poleId = enrollment.class?.level?.pole?.id || '';
+
+          const poleKey = poleId || poleName;
+
+          if (poleKey) {
+
+            totalFamilyEnrollmentsByPole[poleKey] = (totalFamilyEnrollmentsByPole[poleKey] || 0) + 1;
+
+          }
+
+        }
+
       }
 
     }
@@ -424,6 +475,8 @@ async function getPricingPreview(req, res) {
       skipRegistrationFee,
 
       existingArabicCount,
+
+      totalFamilyEnrollmentsByPole: totalFamilyEnrollmentsByPole || {},
 
     });
 
@@ -956,11 +1009,64 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
+    // Fetch existing enrollments with pole info to build totalFamilyEnrollmentsByPole
+    const existingEnrollments = await prisma.enrollment.findMany({
+
+      where: {
+
+        student: { familyId: family.id },
+
+        schoolYearId: currentYear.id,
+
+        status: { in: ['PENDING', 'CONFIRMED'] },
+
+      },
+
+      include: {
+
+        class: {
+
+          include: {
+
+            level: { include: { pole: true } },
+
+          },
+
+        },
+
+      },
+
+    });
+
+
+
+    const totalFamilyEnrollmentsByPole = {};
+
+    for (const enrollment of existingEnrollments) {
+
+      const poleName = String(enrollment.class?.level?.pole?.name || '').toLowerCase();
+
+      const poleId = enrollment.class?.level?.pole?.id || '';
+
+      const poleKey = poleId || poleName;
+
+      if (poleKey) {
+
+        totalFamilyEnrollmentsByPole[poleKey] = (totalFamilyEnrollmentsByPole[poleKey] || 0) + 1;
+
+      }
+
+    }
+
+
+
     const pricing = calculateFamilyTotal(enrollmentForPricing, pricingConfig, {
 
       skipRegistrationFee: existingEnrollmentsCount > 0,
 
       existingArabicCount,
+
+      totalFamilyEnrollmentsByPole,
 
     });
 

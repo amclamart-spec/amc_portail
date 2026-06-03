@@ -116,9 +116,9 @@ async function generateInvoiceForPayment(paymentId) {
       // Fallback: find enrollments for this family in the same school year
       const fallbackEnrollments = await prisma.enrollment.findMany({
         where: {
-          familyId: payment.familyId,
           schoolYearId: payment.schoolYearId,
           status: { in: ['PENDING', 'CONFIRMED'] },
+          student: { familyId: payment.familyId },
         },
         include: {
           class: {
@@ -210,7 +210,11 @@ async function handlePaymentCompletionForEnrollment(paymentId) {
         });
       } else {
         enrollments = await prisma.enrollment.findMany({
-          where: { familyId: payment.familyId, schoolYearId: payment.schoolYearId, status: { in: ['PENDING', 'CONFIRMED'] } },
+          where: {
+            schoolYearId: payment.schoolYearId,
+            status: { in: ['PENDING', 'CONFIRMED'] },
+            student: { familyId: payment.familyId },
+          },
           include: { class: { include: { level: { include: { pole: true } } } }, student: true },
         });
       }
@@ -430,9 +434,22 @@ async function createFamilyEnrollmentPayment(req, res) {
 
     const pricingConfig = await resolvePricingConfig(prisma);
     const enrollmentData = enrollments.map((e) => ({
-      levelCode: e.class.level.code,
+      poleId: e.class.level.pole.id,
+      levelId: e.class.level.id,
       poleName: e.class.level.pole.name,
+      levelCode: e.class.level.code,
     }));
+
+    // Build totalFamilyEnrollmentsByPole from the current enrollments
+    const totalFamilyEnrollmentsByPole = {};
+    for (const e of enrollments) {
+      const poleName = String(e.class.level.pole.name || '').toLowerCase();
+      const poleId = e.class.level.pole.id || '';
+      const poleKey = poleId || poleName;
+      if (poleKey) {
+        totalFamilyEnrollmentsByPole[poleKey] = (totalFamilyEnrollmentsByPole[poleKey] || 0) + 1;
+      }
+    }
 
     const hasPreviousRegistrationPayment = await prisma.payment.findFirst({
       where: {
@@ -445,6 +462,7 @@ async function createFamilyEnrollmentPayment(req, res) {
 
     const pricing = calculateFamilyTotal(enrollmentData, pricingConfig, {
       skipRegistrationFee: Boolean(hasPreviousRegistrationPayment),
+      totalFamilyEnrollmentsByPole,
     });
     const paymentTotal = pricing.total;
 
@@ -2078,9 +2096,11 @@ async function generatePaymentReceiptPDF(req, res) {
 
     const enrolledCourses = await prisma.enrollment.findMany({
       where: {
-        familyId: payment.familyId,
         schoolYearId: payment.schoolYearId,
         status: { in: ['PENDING', 'CONFIRMED'] },
+        student: {
+          familyId: payment.familyId,
+        },
       },
       include: {
         class: {
