@@ -22,7 +22,20 @@ export default function AdminEnrollments() {
   const [enrollmentPayments, setEnrollmentPayments] = useState([]);
   const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [showPaymentDetail, setShowPaymentDetail] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+  const [paymentForm, setPaymentForm] = useState({ 
+    payerName: '', 
+    date: new Date().toISOString().slice(0, 10), 
+    method: 'CHEQUE', 
+    status: 'validé', 
+    comment: '', 
+    amount: '',
+    bankDebitIban: '',
+    bankDebitSwift: '',
+    numberOfInstallments: 1,
+    firstPaymentDate: new Date().toISOString().slice(0, 10),
+    scheduleDay: 10,
+    ribDocument: null,
+  });
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [refundAccessCode, setRefundAccessCode] = useState('');
   const [refundCodeValidated, setRefundCodeValidated] = useState(false);
@@ -172,8 +185,11 @@ export default function AdminEnrollments() {
     try {
       const downloadUrl = resolveUploadUrl(ribUrl);
       if (!downloadUrl) throw new Error('URL RIB invalide');
-      const response = await api.get(downloadUrl, { responseType: 'blob' });
-      const blob = new Blob([response.data], { type: response.data.type || 'application/pdf' });
+      const response = await fetch(downloadUrl, { method: 'GET' });
+      if (!response.ok) {
+        throw new Error(`Erreur HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
       const objectUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = objectUrl;
@@ -188,7 +204,7 @@ export default function AdminEnrollments() {
       console.error('Erreur téléchargement RIB', err);
       toast.error('Impossible de télécharger le RIB');
     }
-  };
+  }; 
 
   const exportEnrollments = async () => {
     setExporting(true);
@@ -429,7 +445,20 @@ export default function AdminEnrollments() {
     setPaymentEnrollment(enrollment);
     setEditingPaymentId(null);
     setShowPaymentDetail(false);
-    setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+    setPaymentForm({ 
+      payerName: '', 
+      date: new Date().toISOString().slice(0, 10), 
+      method: 'CHEQUE', 
+      status: 'validé', 
+      comment: '', 
+      amount: '',
+      bankDebitIban: '',
+      bankDebitSwift: '',
+      numberOfInstallments: 1,
+      firstPaymentDate: new Date().toISOString().slice(0, 10),
+      scheduleDay: 10,
+      ribDocument: null,
+    });
     setRefundAccessCode('');
     setRefundCodeValidated(false);
     setRefundCodeValidating(false);
@@ -446,7 +475,20 @@ export default function AdminEnrollments() {
     setEnrollmentPayments([]);
     setEditingPaymentId(null);
     setShowPaymentDetail(false);
-    setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+    setPaymentForm({ 
+      payerName: '', 
+      date: new Date().toISOString().slice(0, 10), 
+      method: 'CHEQUE', 
+      status: 'validé', 
+      comment: '', 
+      amount: '',
+      bankDebitIban: '',
+      bankDebitSwift: '',
+      numberOfInstallments: 1,
+      firstPaymentDate: new Date().toISOString().slice(0, 10),
+      scheduleDay: 10,
+      ribDocument: null,
+    });
     setRefundAccessCode('');
     setRefundCodeValidated(false);
     setRefundCodeValidating(false);
@@ -470,6 +512,18 @@ export default function AdminEnrollments() {
         amount: Number(paymentForm.amount),
       };
 
+      // Add prelevement fields if applicable
+      if (['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(paymentForm.method)) {
+        requestBody.bankDebitIban = paymentForm.bankDebitIban;
+        requestBody.bankDebitSwift = paymentForm.bankDebitSwift;
+        requestBody.numberOfInstallments = Number(paymentForm.numberOfInstallments) || 1;
+        requestBody.firstPaymentDate = paymentForm.firstPaymentDate;
+        requestBody.scheduleDay = Number(paymentForm.scheduleDay) || 10;
+        if (paymentForm.ribDocument) {
+          requestBody.ribDocument = paymentForm.ribDocument;
+        }
+      }
+
       // If editing an existing transaction, detect provider to confirm Stripe actions
       if (editingPaymentId) {
         const original = enrollmentPayments.find((p) => p.id === editingPaymentId) || {};
@@ -490,7 +544,20 @@ export default function AdminEnrollments() {
         toast.success('Paiement enregistré');
       }
 
-      setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+      setPaymentForm({ 
+        payerName: '', 
+        date: new Date().toISOString().slice(0, 10), 
+        method: 'CHEQUE', 
+        status: 'validé', 
+        comment: '', 
+        amount: '',
+        bankDebitIban: '',
+        bankDebitSwift: '',
+        numberOfInstallments: 1,
+        firstPaymentDate: new Date().toISOString().slice(0, 10),
+        scheduleDay: 10,
+        ribDocument: null,
+      });
       setEditingPaymentId(null);
       fetchEnrollmentPayments(activeEnrollment.id);
     } catch (error) {
@@ -503,20 +570,40 @@ export default function AdminEnrollments() {
   const editEnrollmentPayment = (payment) => {
     setEditingPaymentId(payment.id);
     setShowPaymentDetail(true);
+    const metadata = payment.paymentMetadata || {};
     setPaymentForm({
       payerName: payment.payerName || '',
       date: payment.processedAt ? new Date(payment.processedAt).toISOString().slice(0, 10) : (payment.createdAt ? new Date(payment.createdAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)),
-      method: payment.method || 'CHEQUE',
+      method: payment.method === 'PRELEVEMENT_BANCAIRE' ? 'VIREMENT' : (payment.method || 'CHEQUE'),
       status: payment.status === 'SUCCEEDED' ? 'validé' : payment.status === 'CANCELLED' ? 'annulé' : 'non validé',
       comment: payment.description || '',
       amount: payment.amount || '',
+      bankDebitIban: metadata.bankDebitIban || '',
+      bankDebitSwift: metadata.bankDebitSwift || '',
+      numberOfInstallments: metadata.bankDebitInstallmentsCount || 1,
+      firstPaymentDate: metadata.firstPaymentDate || new Date().toISOString().slice(0, 10),
+      scheduleDay: metadata.bankDebitDay || 10,
+      ribDocument: null,
     });
   };
 
   const cancelEditPayment = () => {
     setEditingPaymentId(null);
     setShowPaymentDetail(false);
-    setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+    setPaymentForm({ 
+      payerName: '', 
+      date: new Date().toISOString().slice(0, 10), 
+      method: 'CHEQUE', 
+      status: 'validé', 
+      comment: '', 
+      amount: '',
+      bankDebitIban: '',
+      bankDebitSwift: '',
+      numberOfInstallments: 1,
+      firstPaymentDate: new Date().toISOString().slice(0, 10),
+      scheduleDay: 10,
+      ribDocument: null,
+    });
   };
 
   const deleteEnrollmentPayment = async (paymentId) => {
@@ -1643,7 +1730,20 @@ export default function AdminEnrollments() {
                   onClick={() => {
                     setShowPaymentDetail(true);
                     setEditingPaymentId(null);
-                    setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+                    setPaymentForm({ 
+                      payerName: '', 
+                      date: new Date().toISOString().slice(0, 10), 
+                      method: 'CHEQUE', 
+                      status: 'validé', 
+                      comment: '', 
+                      amount: '',
+                      bankDebitIban: '',
+                      bankDebitSwift: '',
+                      numberOfInstallments: 1,
+                      firstPaymentDate: new Date().toISOString().slice(0, 10),
+                      scheduleDay: 10,
+                      ribDocument: null,
+                    });
                   }}
                 >
                   Ajouter un paiement
@@ -1660,7 +1760,20 @@ export default function AdminEnrollments() {
                       onClick={() => {
                         setShowPaymentDetail(false);
                         setEditingPaymentId(null);
-                        setPaymentForm({ payerName: '', date: new Date().toISOString().slice(0, 10), method: 'CHEQUE', status: 'validé', comment: '', amount: '' });
+                        setPaymentForm({ 
+                          payerName: '', 
+                          date: new Date().toISOString().slice(0, 10), 
+                          method: 'CHEQUE', 
+                          status: 'validé', 
+                          comment: '', 
+                          amount: '',
+                          bankDebitIban: '',
+                          bankDebitSwift: '',
+                          numberOfInstallments: 1,
+                          firstPaymentDate: new Date().toISOString().slice(0, 10),
+                          scheduleDay: 10,
+                          ribDocument: null,
+                        });
                       }}
                     >
                       Fermer
@@ -1697,6 +1810,7 @@ export default function AdminEnrollments() {
                           <option value="CHEQUE">Chèque</option>
                           <option value="ESPECES">Espèces</option>
                           <option value="CB">Carte Bancaire</option>
+                          <option value="VIREMENT">Prélèvement</option>
                         </select>
                       </div>
                     </div>
@@ -1733,7 +1847,105 @@ export default function AdminEnrollments() {
                         onChange={(event) => setPaymentForm((prev) => ({ ...prev, comment: event.target.value }))}
                       />
                     </div>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+
+                    {['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(paymentForm.method) && (
+                      <div style={{ border: '1px solid #D1D5DB', borderRadius: 8, padding: 12, background: '#F9FAFB', marginTop: 12 }}>
+                        <h6 style={{ margin: '0 0 12px 0', color: '#111827', fontSize: 14, fontWeight: 600 }}>Informations de prélèvement</h6>
+                        
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                          <div className="form-group" style={{ margin: 0 }}>
+                            <label>IBAN</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              placeholder="Ex: FR1420041010050500013M02606"
+                              value={paymentForm.bankDebitIban}
+                              onChange={(event) => setPaymentForm((prev) => ({ ...prev, bankDebitIban: normalizeBankValue(event.target.value) }))}
+                              style={{ fontFamily: 'monospace', letterSpacing: '0.05em' }}
+                            />
+                          </div>
+                          <div className="form-group" style={{ margin: 0 }}>
+                            <label>SWIFT / BIC</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              placeholder="Ex: BNPAFRPP"
+                              value={paymentForm.bankDebitSwift}
+                              onChange={(event) => setPaymentForm((prev) => ({ ...prev, bankDebitSwift: normalizeBankValue(event.target.value) }))}
+                              style={{ fontFamily: 'monospace', letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+                          <div className="form-group" style={{ margin: 0 }}>
+                            <label>Nombre d'échéances</label>
+                            <input
+                              type="number"
+                              className="form-control"
+                              min="1"
+                              max="12"
+                              value={paymentForm.numberOfInstallments}
+                              onChange={(event) => setPaymentForm((prev) => ({ ...prev, numberOfInstallments: Number(event.target.value) || 1 }))}
+                            />
+                          </div>
+                          <div className="form-group" style={{ margin: 0 }}>
+                            <label>Date première échéance</label>
+                            <input
+                              type="date"
+                              className="form-control"
+                              value={paymentForm.firstPaymentDate}
+                              onChange={(event) => setPaymentForm((prev) => ({ ...prev, firstPaymentDate: event.target.value }))}
+                            />
+                          </div>
+                          <div className="form-group" style={{ margin: 0 }}>
+                            <label>Jour de prélèvement</label>
+                            <select
+                              className="form-control"
+                              value={paymentForm.scheduleDay}
+                              onChange={(event) => setPaymentForm((prev) => ({ ...prev, scheduleDay: Number(event.target.value) }))}
+                            >
+                              <option value="10">10</option>
+                              <option value="20">20</option>
+                              <option value="30">30</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="form-group" style={{ margin: 0 }}>
+                          <label>Fichier RIB (PDF/Image)</label>
+                          <input
+                            type="file"
+                            className="form-control"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = (e) => {
+                                  setPaymentForm((prev) => ({
+                                    ...prev,
+                                    ribDocument: {
+                                      base64: e.target.result,
+                                      name: file.name,
+                                      type: file.type,
+                                    },
+                                  }));
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          {paymentForm.ribDocument && (
+                            <small style={{ color: '#059669', marginTop: 4, display: 'block' }}>
+                              ✓ Fichier sélectionné : {paymentForm.ribDocument.name}
+                            </small>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 12 }}>
                       <button
                         type="button"
                         className="btn btn-primary"
@@ -1789,32 +2001,48 @@ export default function AdminEnrollments() {
                               const bankDebitInstallmentsCount = metadata.bankDebitInstallmentsCount || payment.numberOfInstallments || payment.installmentsCount;
                               const bankDebitRibUrl = metadata.bankDebitRibUrl;
                               const bankDebitRibFilename = metadata.bankDebitRibFilename || 'RIB';
+                              const chequeDepositDay = metadata.chequeDepositDay || payment.scheduleDay;
+                              const chequeFirstPaymentDate = metadata.chequeFirstPaymentDate || payment.firstPaymentDate;
                               const isBankDebit = payment.method === 'PRELEVEMENT_BANCAIRE'
                                 || (payment.method === 'VIREMENT' && bankDebitIbanRaw)
                                 || payment.method === 'STRIPE_SEPA'
                                 || payment.method === 'GO_CARDLESS_SEPA';
 
-                              if (!isBankDebit) return null;
+                              if (!isBankDebit && payment.method !== 'CHEQUE') return null;
 
                               return (
                                 <div style={{ marginTop: 8, fontSize: 12, color: '#475569', lineHeight: '1.5' }}>
-                                  <div><strong>IBAN :</strong> {formatBankIbanForDisplay(bankDebitIbanRaw) || '—'}</div>
-                                  <div><strong>BIC / SWIFT :</strong> {formatBankSwiftForDisplay(bankDebitSwiftRaw) || '—'}</div>
-                                  {bankDebitInstallmentsCount !== undefined && bankDebitInstallmentsCount !== null && (
-                                    <div><strong>Échéances :</strong> {bankDebitInstallmentsCount}</div>
-                                  )}
-                                  {bankDebitDay !== undefined && bankDebitDay !== null && (
-                                    <div><strong>Jour prélèvement :</strong> {bankDebitDay}</div>
-                                  )}
-                                  {bankDebitRibUrl && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-link"
-                                      onClick={() => handleDownloadRib(bankDebitRibUrl, bankDebitRibFilename)}
-                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, marginTop: 6, color: '#1d4ed8' }}
-                                    >
-                                      <FiDownload size={14} /> Télécharger le RIB
-                                    </button>
+                                  {payment.method === 'CHEQUE' ? (
+                                    <>
+                                      <div><strong>Date dépôt :</strong> {formatDate(payment.processedAt || payment.createdAt)}</div>
+                                      {chequeDepositDay !== undefined && chequeDepositDay !== null && (
+                                        <div><strong>Jour dépôt :</strong> {chequeDepositDay}</div>
+                                      )}
+                                      {chequeFirstPaymentDate && (
+                                        <div><strong>Date premier chèque :</strong> {formatDate(chequeFirstPaymentDate)}</div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div><strong>IBAN :</strong> {formatBankIbanForDisplay(bankDebitIbanRaw) || '—'}</div>
+                                      <div><strong>BIC / SWIFT :</strong> {formatBankSwiftForDisplay(bankDebitSwiftRaw) || '—'}</div>
+                                      {bankDebitInstallmentsCount !== undefined && bankDebitInstallmentsCount !== null && (
+                                        <div><strong>Échéances :</strong> {bankDebitInstallmentsCount}</div>
+                                      )}
+                                      {bankDebitDay !== undefined && bankDebitDay !== null && (
+                                        <div><strong>Jour prélèvement :</strong> {bankDebitDay}</div>
+                                      )}
+                                      {bankDebitRibUrl && (
+                                        <button
+                                          type="button"
+                                          className="btn btn-link"
+                                          onClick={() => handleDownloadRib(bankDebitRibUrl, bankDebitRibFilename)}
+                                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, marginTop: 6, color: '#1d4ed8' }}
+                                        >
+                                          <FiDownload size={14} /> Télécharger le RIB
+                                        </button>
+                                      )}
+                                    </>
                                   )}
                                 </div>
                               );

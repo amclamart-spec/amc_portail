@@ -464,27 +464,39 @@ function mapPaymentMethod(method) {
 
 
 function buildBankDebitMetadata(payment) {
-  if (payment.method !== 'PRELEVEMENT_BANCAIRE') return {};
-
   const metadata = {};
-  if (payment.bankDebitIban) metadata.bankDebitIban = String(payment.bankDebitIban).trim();
-  if (payment.bankDebitSwift) metadata.bankDebitSwift = String(payment.bankDebitSwift).trim();
 
-  if (payment.scheduleDay !== undefined && payment.scheduleDay !== null) {
-    metadata.bankDebitDay = Number(payment.scheduleDay);
-  } else if (payment.bankDebitDay !== undefined && payment.bankDebitDay !== null) {
-    metadata.bankDebitDay = Number(payment.bankDebitDay);
+  // Handle PRELEVEMENT_BANCAIRE
+  if (payment.method === 'PRELEVEMENT_BANCAIRE') {
+    if (payment.bankDebitIban) metadata.bankDebitIban = String(payment.bankDebitIban).trim();
+    if (payment.bankDebitSwift) metadata.bankDebitSwift = String(payment.bankDebitSwift).trim();
+
+    if (payment.scheduleDay !== undefined && payment.scheduleDay !== null) {
+      metadata.bankDebitDay = Number(payment.scheduleDay);
+    } else if (payment.bankDebitDay !== undefined && payment.bankDebitDay !== null) {
+      metadata.bankDebitDay = Number(payment.bankDebitDay);
+    }
+
+    if (payment.installmentsCount !== undefined && payment.installmentsCount !== null) {
+      metadata.bankDebitInstallmentsCount = Number(payment.installmentsCount);
+    } else if (payment.numberOfInstallments !== undefined && payment.numberOfInstallments !== null) {
+      metadata.bankDebitInstallmentsCount = Number(payment.numberOfInstallments);
+    }
+
+    if (payment.ribDocument?.base64) {
+      metadata.bankDebitRibUrl = saveBase64File(payment.ribDocument.base64, 'ribs', payment.ribDocument.name || 'rib.pdf');
+      metadata.bankDebitRibFilename = String(payment.ribDocument.name || 'RIB');
+    }
   }
 
-  if (payment.installmentsCount !== undefined && payment.installmentsCount !== null) {
-    metadata.bankDebitInstallmentsCount = Number(payment.installmentsCount);
-  } else if (payment.numberOfInstallments !== undefined && payment.numberOfInstallments !== null) {
-    metadata.bankDebitInstallmentsCount = Number(payment.numberOfInstallments);
-  }
-
-  if (payment.ribDocument?.base64) {
-    metadata.bankDebitRibUrl = saveBase64File(payment.ribDocument.base64, 'ribs', payment.ribDocument.name || 'rib.pdf');
-    metadata.bankDebitRibFilename = String(payment.ribDocument.name || 'RIB');
+  // Handle CHEQUE
+  if (payment.method === 'CHEQUE') {
+    if (payment.scheduleDay !== undefined && payment.scheduleDay !== null) {
+      metadata.chequeDepositDay = Number(payment.scheduleDay);
+    }
+    if (payment.firstPaymentDate) {
+      metadata.chequeFirstPaymentDate = String(payment.firstPaymentDate).trim();
+    }
   }
 
   return metadata;

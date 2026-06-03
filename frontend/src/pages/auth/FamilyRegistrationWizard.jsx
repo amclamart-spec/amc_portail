@@ -96,6 +96,7 @@ function getDefaultState(prefill = {}) {
       method: 'CARTE_BANCAIRE',
       installmentsCount: 1,
       scheduleDay: 10,
+      firstPaymentDate: new Date().toISOString().slice(0, 10),
       chequeInstructionsAccepted: false,
       bankDebitIban: '',
       bankDebitSwift: '',
@@ -581,8 +582,12 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
           toast.error('Veuillez joindre le RIB');
           return false;
         }
-        if (!Number.isInteger(Number(p.scheduleDay)) || Number(p.scheduleDay) < 1 || Number(p.scheduleDay) > 28) {
-          toast.error('Veuillez choisir un jour de prélèvement entre 1 et 28');
+        if (!p.firstPaymentDate || Number.isNaN(new Date(p.firstPaymentDate).getTime())) {
+          toast.error('Veuillez choisir la date de la première échéance');
+          return false;
+        }
+        if (![10, 20, 30].includes(Number(p.scheduleDay))) {
+          toast.error('Jour de prélèvement invalide (10/20/30)');
           return false;
         }
         if (!Number.isInteger(Number(p.installmentsCount)) || Number(p.installmentsCount) < 1 || Number(p.installmentsCount) > 8) {
@@ -590,9 +595,19 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
           return false;
         }
       }
-      if (p.method === 'CHEQUE' && !p.chequeInstructionsAccepted) {
-        toast.error('Veuillez confirmer avoir lu les instructions de paiement par chèque');
-        return false;
+      if (p.method === 'CHEQUE') {
+        if (!p.firstPaymentDate || Number.isNaN(new Date(p.firstPaymentDate).getTime())) {
+          toast.error('Veuillez choisir la date du premier chèque');
+          return false;
+        }
+        if (![10, 20, 30].includes(Number(p.scheduleDay))) {
+          toast.error('Jour de dépôt invalide (10/20/30)');
+          return false;
+        }
+        if (!p.chequeInstructionsAccepted) {
+          toast.error('Veuillez confirmer avoir lu les instructions de paiement par chèque');
+          return false;
+        }
       }
     }
 
@@ -630,11 +645,16 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       if (!p.bankDebitIban || !isValidIban(p.bankDebitIban)) return false;
       if (!p.bankDebitSwift || !isValidSwift(p.bankDebitSwift)) return false;
       if (!p.ribDocument?.base64) return false;
-      if (!Number.isInteger(Number(p.scheduleDay)) || Number(p.scheduleDay) < 1 || Number(p.scheduleDay) > 28) return false;
+      if (!p.firstPaymentDate || Number.isNaN(new Date(p.firstPaymentDate).getTime())) return false;
+      if (![10, 20, 30].includes(Number(p.scheduleDay))) return false;
       if (!Number.isInteger(Number(p.installmentsCount)) || Number(p.installmentsCount) < 1 || Number(p.installmentsCount) > 8) return false;
     }
 
-    if (p.method === 'CHEQUE' && !p.chequeInstructionsAccepted) return false;
+    if (p.method === 'CHEQUE') {
+      if (!p.firstPaymentDate || Number.isNaN(new Date(p.firstPaymentDate).getTime())) return false;
+      if (![10, 20, 30].includes(Number(p.scheduleDay))) return false;
+      if (!p.chequeInstructionsAccepted) return false;
+    }
 
     return true;
   };
@@ -1535,52 +1555,62 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
             {wizard.payment.method === 'PRELEVEMENT_BANCAIRE' && (
               <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
-                <div className="form-group" style={{ maxWidth: 320 }}>
-                  <label>Échéances</label>
-                  <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n} {n === 1 ? 'échéance' : 'échéances'}</option>)}
-                  </select>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ flex: '1 1 180px', minWidth: 160 }}>
+                    <label>Échéances</label>
+                    <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n} {n === 1 ? 'échéance' : 'échéances'}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ flex: '1 1 200px', minWidth: 160 }}>
+                    <label>Première échéance</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={wizard.payment.firstPaymentDate || ''}
+                      onChange={(e) => updateWizard('payment', { firstPaymentDate: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ flex: '1 1 140px', minWidth: 120 }}>
+                    <label>Jour de prélèvement</label>
+                    <select className="form-control" value={wizard.payment.scheduleDay} onChange={(e) => updateWizard('payment', { scheduleDay: Number(e.target.value) })}>
+                      {[10, 20, 30].map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
                 </div>
-                <div className="form-group" style={{ maxWidth: 320 }}>
-                  <label>Jour du prélèvement</label>
-                  <select className="form-control" value={wizard.payment.scheduleDay} onChange={(e) => updateWizard('payment', { scheduleDay: Number(e.target.value) })}>
-                    {[...Array(28)].map((_, idx) => {
-                      const day = idx + 1;
-                      return <option key={day} value={day}>{day}</option>;
-                    })}
-                  </select>
-                </div>
-                <div className="form-group" style={{ maxWidth: 320 }}>
-                  <label>IBAN</label>
-                  <input
-                    className="form-control"
-                    type="text"
-                    value={wizard.payment.bankDebitIban || ''}
-                    onChange={(e) => updateWizard('payment', { bankDebitIban: formatIban(e.target.value) })}
-                    onBlur={(e) => updateWizard('payment', { bankDebitIban: formatIban(e.target.value) })}
-                    placeholder="FR76 XXXX XXXX XXXX XXXX XX"
-                  />
-                  {wizard.payment.bankDebitIban && (
-                    <div style={{ marginTop: 6, fontSize: 12, color: isValidIban(wizard.payment.bankDebitIban) ? '#16a34a' : '#dc2626', fontFamily: 'monospace' }}>
-                      {wizard.payment.bankDebitIban}
-                    </div>
-                  )}
-                </div>
-                <div className="form-group" style={{ maxWidth: 320 }}>
-                  <label>SWIFT / BIC</label>
-                  <input
-                    className="form-control"
-                    type="text"
-                    value={wizard.payment.bankDebitSwift || ''}
-                    onChange={(e) => updateWizard('payment', { bankDebitSwift: formatSwift(e.target.value) })}
-                    onBlur={(e) => updateWizard('payment', { bankDebitSwift: formatSwift(e.target.value) })}
-                    placeholder="ABCDEFGHXXX"
-                  />
-                  {wizard.payment.bankDebitSwift && (
-                    <div style={{ marginTop: 6, fontSize: 12, color: isValidSwift(wizard.payment.bankDebitSwift) ? '#16a34a' : '#dc2626', fontFamily: 'monospace' }}>
-                      {wizard.payment.bankDebitSwift}
-                    </div>
-                  )}
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ flex: '1 1 240px', minWidth: 180 }}>
+                    <label>IBAN</label>
+                    <input
+                      className="form-control"
+                      type="text"
+                      value={wizard.payment.bankDebitIban || ''}
+                      onChange={(e) => updateWizard('payment', { bankDebitIban: formatIban(e.target.value) })}
+                      onBlur={(e) => updateWizard('payment', { bankDebitIban: formatIban(e.target.value) })}
+                      placeholder="FR76 XXXX XXXX XXXX XXXX XX"
+                    />
+                    {wizard.payment.bankDebitIban && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: isValidIban(wizard.payment.bankDebitIban) ? '#16a34a' : '#dc2626', fontFamily: 'monospace' }}>
+                        {wizard.payment.bankDebitIban}
+                      </div>
+                    )}
+                  </div>
+                  <div className="form-group" style={{ flex: '1 1 160px', minWidth: 140 }}>
+                    <label>SWIFT / BIC</label>
+                    <input
+                      className="form-control"
+                      type="text"
+                      value={wizard.payment.bankDebitSwift || ''}
+                      onChange={(e) => updateWizard('payment', { bankDebitSwift: formatSwift(e.target.value) })}
+                      onBlur={(e) => updateWizard('payment', { bankDebitSwift: formatSwift(e.target.value) })}
+                      placeholder="ABCDEFGHXXX"
+                    />
+                    {wizard.payment.bankDebitSwift && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: isValidSwift(wizard.payment.bankDebitSwift) ? '#16a34a' : '#dc2626', fontFamily: 'monospace' }}>
+                        {wizard.payment.bankDebitSwift}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="form-group" style={{ maxWidth: 320 }}>
                   <label>RIB</label>
@@ -1597,13 +1627,30 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
             {wizard.payment.method === 'CHEQUE' && (
               <>
-                <div className="form-group">
-                  <label>Nombre de chèques (1 à 8)</label>
-                  <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n} chèque(s)</option>)}
-                  </select>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 12 }}>
+                  <div className="form-group" style={{ flex: '1 1 160px', minWidth: 140 }}>
+                    <label>Nombre de chèques</label>
+                    <select className="form-control" value={wizard.payment.installmentsCount} onChange={(e) => updateWizard('payment', { installmentsCount: Number(e.target.value) })}>
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n} chèque{n > 1 ? 's' : ''}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ flex: '1 1 200px', minWidth: 160 }}>
+                    <label>Date premier chèque</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={wizard.payment.firstPaymentDate || ''}
+                      onChange={(e) => updateWizard('payment', { firstPaymentDate: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ flex: '1 1 140px', minWidth: 120 }}>
+                    <label>Jour de dépôt</label>
+                    <select className="form-control" value={wizard.payment.scheduleDay} onChange={(e) => updateWizard('payment', { scheduleDay: Number(e.target.value) })}>
+                      {[10, 20, 30].map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
                 </div>
-                <div className="card" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                <div className="card" style={{ background: '#FFFBEB', border: '1px solid #FDE68A', marginTop: 12 }}>
                   <p><strong>Instructions chèque :</strong></p>
                   <ul>
                     <li>Libeller à l’ordre de l’Association PARTAGE.</li>
