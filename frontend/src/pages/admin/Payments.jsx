@@ -15,6 +15,7 @@ const transactionStatusOptions = [
 export default function AdminPayments() {
   const [transactions, setTransactions] = useState([]);
   const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
+  const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 1 });
   const [selectedTransaction, setSelectedTransaction] = useState(null);
 
   const buildQueryParams = (values) => {
@@ -26,11 +27,19 @@ export default function AdminPayments() {
     }, {});
   };
 
-  const load = async (queryFilters = {}) => {
+  const load = async (queryFilters = filters, page = pagination.page, limit = pagination.limit) => {
     try {
-      const txRes = await api.get('/payments/transactions', { params: buildQueryParams(queryFilters) });
+      const params = { ...buildQueryParams(queryFilters), page, limit };
+      const txRes = await api.get('/payments/transactions', { params });
       const uniqueTransactions = [...new Map((txRes.data.transactions || []).map((tx) => [tx.id, tx])).values()];
       setTransactions(uniqueTransactions);
+      setPagination((prev) => ({
+        ...prev,
+        total: txRes.data.total || 0,
+        totalPages: txRes.data.totalPages || 1,
+        page: txRes.data.page || page,
+        limit: txRes.data.limit || limit,
+      }));
     } catch (e) {
       console.error('Impossible de charger les transactions', e);
       toast.error('Impossible de charger les transactions');
@@ -60,7 +69,7 @@ export default function AdminPayments() {
     try {
       await api.patch(`/payments/transactions/${tx.id}`, { status: action });
       toast.success(action === 'SUCCEEDED' ? 'Paiement validé' : 'Paiement annulé');
-      await load(filters);
+      await load(filters, pagination.page, pagination.limit);
     } catch (err) {
       console.error('Erreur mise à jour transaction', err);
       const serverMsg = err?.response?.data?.error;
@@ -76,13 +85,20 @@ export default function AdminPayments() {
     setSelectedTransaction(null);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load(filters, pagination.page, pagination.limit);
+  }, [pagination.page, pagination.limit]);
 
-  const applyFilters = () => load(filters);
+  const applyFilters = () => {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    load(filters, 1, pagination.limit);
+  };
+
   const resetFilters = () => {
     const reset = { familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
     setFilters(reset);
-    load(reset);
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    load(reset, 1, pagination.limit);
   };
 
   const exportPayments = async () => {
@@ -114,7 +130,7 @@ export default function AdminPayments() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h3>Recherche</h3>
-        <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+        <form onSubmit={(e) => { e.preventDefault(); applyFilters(); }} style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
             <input
               className="form-control"
@@ -138,7 +154,7 @@ export default function AdminPayments() {
               ))}
             </select>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-secondary" type="button" onClick={applyFilters}>Filtrer</button>
+              <button className="btn btn-secondary" type="submit">Filtrer</button>
               <button className="btn btn-outline" type="button" onClick={resetFilters}>Réinitialiser</button>
             </div>
           </div>
@@ -149,7 +165,7 @@ export default function AdminPayments() {
               <button className="btn btn-primary" type="button" onClick={exportPayments}>Exporter Excel</button>
             </div>
           </div>
-        </div>
+        </form>
       </div>
 
       <div className="card">
@@ -169,80 +185,113 @@ export default function AdminPayments() {
               </tr>
             </thead>
             <tbody>
-              {transactions.map((t) => (
-                <tr key={t.id}>
-                  <td>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
-                  <td>{t.familyName || (t.payment?.family?.familyName) || '-'}</td>
-                  <td>{t.payerName || '-'}</td>
-                  <td>{formatPaymentMethodLabel(t)}</td>
-                  <td>{Number(t.amount).toFixed(2)} €</td>
-                  <td>{txStatusLabel(t.status)}</td>
-                  <td>
-                    <button
-                      className="btn btn-outline btn-sm"
-                      onClick={async () => {
-                        try {
-                          const response = await api.get(`/finance/payments/${t.paymentId}/receipt/download`, { responseType: 'blob' });
-                          const url = window.URL.createObjectURL(new Blob([response.data]));
-                          const link = document.createElement('a');
-                          link.href = url;
-                          link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
-                          document.body.appendChild(link);
-                          link.click();
-                          link.remove();
-                          window.URL.revokeObjectURL(url);
-                        } catch (error) {
-                          console.error('Erreur téléchargement reçu', error);
-                          toast.error('Impossible de télécharger le reçu de paiement');
-                        }
-                      }}
-                    >
-                      <FiDownload size={16} /> Reçu
-                    </button>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
-                      {String(t.status) === 'INITIATED' && (
-                        <>
-                          <button
-                            className="btn btn-success btn-sm"
-                            title="Valider"
-                            onClick={() => handleTransactionAction(t, 'SUCCEEDED')}
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
-                          >
-                            <FiCheckCircle size={14} />
-                          </button>
-                          <button
-                            className="btn btn-danger btn-sm"
-                            title="Annuler"
-                            onClick={() => handleTransactionAction(t, 'CANCELLED')}
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
-                          >
-                            <FiXCircle size={14} />
-                          </button>
-                        </>
-                      )}
-                      <button
-                        className="btn btn-outline btn-sm"
-                        title="Détail"
-                        onClick={() => openDetailModal(t)}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
-                      >
-                        <FiEye size={14} />
-                      </button>
-                    </div>
+              {transactions.length === 0 ? (
+                <tr>
+                  <td colSpan="8" style={{ textAlign: 'center', padding: '24px 0', color: '#6B7280' }}>
+                    Aucune transaction trouvée
                   </td>
                 </tr>
-              ))}
+              ) : (
+                transactions.map((t) => (
+                  <tr key={t.id}>
+                    <td>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
+                    <td>{t.familyName || (t.payment?.family?.familyName) || '-'}</td>
+                    <td>{t.payerName || '-'}</td>
+                    <td>{formatPaymentMethodLabel(t)}</td>
+                    <td>{Number(t.amount).toFixed(2)} €</td>
+                    <td>{txStatusLabel(t.status)}</td>
+                    <td>
+                      <button
+                        className="btn btn-outline btn-sm"
+                        onClick={async () => {
+                          try {
+                            const response = await api.get(`/finance/payments/${t.paymentId}/receipt/download`, { responseType: 'blob' });
+                            const url = window.URL.createObjectURL(new Blob([response.data]));
+                            const link = document.createElement('a');
+                            link.href = url;
+                            link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
+                            document.body.appendChild(link);
+                            link.click();
+                            link.remove();
+                            window.URL.revokeObjectURL(url);
+                          } catch (error) {
+                            console.error('Erreur téléchargement reçu', error);
+                            toast.error('Impossible de télécharger le reçu de paiement');
+                          }
+                        }}
+                      >
+                        <FiDownload size={16} /> Reçu
+                      </button>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
+                        {String(t.status) === 'INITIATED' && (
+                          <>
+                            <button
+                              className="btn btn-success btn-sm"
+                              title="Valider"
+                              onClick={() => handleTransactionAction(t, 'SUCCEEDED')}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                            >
+                              <FiCheckCircle size={14} />
+                            </button>
+                            <button
+                              className="btn btn-danger btn-sm"
+                              title="Annuler"
+                              onClick={() => handleTransactionAction(t, 'CANCELLED')}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                            >
+                              <FiXCircle size={14} />
+                            </button>
+                          </>
+                        )}
+                        <button
+                          className="btn btn-outline btn-sm"
+                          title="Détail"
+                          onClick={() => openDetailModal(t)}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                        >
+                          <FiEye size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
+        {pagination.totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ color: '#6B7280' }}>
+              Affichage {transactions.length} / {pagination.total} • Page {pagination.page} / {pagination.totalPages}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={pagination.page <= 1}
+                onClick={() => setPagination((prev) => ({ ...prev, page: Math.max(prev.page - 1, 1) }))}
+              >
+                Précédent
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={pagination.page >= pagination.totalPages}
+                onClick={() => setPagination((prev) => ({ ...prev, page: Math.min(prev.page + 1, prev.totalPages) }))}
+              >
+                Suivant
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       <PaymentDetailModal
         transaction={selectedTransaction}
         isOpen={Boolean(selectedTransaction)}
         onClose={closeDetailModal}
-        onRefundCreated={() => load(filters)}
+        onRefundCreated={() => load(filters, pagination.page, pagination.limit)}
       />
     </div>
   );

@@ -47,10 +47,15 @@ export default function AdminEnrollments() {
   const [selectedPole, setSelectedPole] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('');
+  const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 1 });
   const [expandedFamilies, setExpandedFamilies] = useState({});
   const [registrationsBlocked, setRegistrationsBlocked] = useState(false);
   const [registrationBlockLoading, setRegistrationBlockLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter]);
 
   useEffect(() => {
     setLoading(true);
@@ -64,7 +69,9 @@ export default function AdminEnrollments() {
     } else if (selectedStatusFilter) {
       params.set('status', selectedStatusFilter);
     }
-    const enrollmentsCall = api.get(`/admin/enrollments${params.toString() ? `?${params.toString()}` : ''}`);
+    params.set('page', pagination.page);
+    params.set('limit', pagination.limit);
+    const enrollmentsCall = api.get(`/admin/enrollments?${params.toString()}`);
     Promise.all([
       enrollmentsCall,
       api.get('/admin/classes'),
@@ -72,12 +79,33 @@ export default function AdminEnrollments() {
     ])
       .then(([enrollmentsRes, classesRes, yearsRes]) => {
         setEnrollments(enrollmentsRes.data.enrollments || []);
+        setPagination((prev) => {
+          const nextPage = enrollmentsRes.data.page || prev.page;
+          const nextLimit = enrollmentsRes.data.limit || prev.limit;
+          const nextTotal = enrollmentsRes.data.total || 0;
+          const nextTotalPages = enrollmentsRes.data.totalPages || Math.max(Math.ceil(nextTotal / nextLimit), 1);
+          if (
+            prev.page === nextPage &&
+            prev.limit === nextLimit &&
+            prev.total === nextTotal &&
+            prev.totalPages === nextTotalPages
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            page: nextPage,
+            limit: nextLimit,
+            total: nextTotal,
+            totalPages: nextTotalPages,
+          };
+        });
         setClasses(classesRes.data.classes || []);
         setSchoolYears(yearsRes.data.schoolYears || []);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter]);
+  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, pagination.page, pagination.limit]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1073,7 +1101,9 @@ export default function AdminEnrollments() {
               <input type="checkbox" checked={provisionalOnly} onChange={(e) => setProvisionalOnly(e.target.checked)} />
               Montrer uniquement les affectations provisoires
             </label>
-            <div style={{ color: '#6B7280' }}>Résultats: {enrollments.length}</div>
+            <div style={{ color: '#6B7280' }}>
+              Résultats: {enrollments.length} / {pagination.total}
+            </div>
           </div>
           <button
             className="btn btn-primary"
@@ -1089,139 +1119,167 @@ export default function AdminEnrollments() {
 
       <div className="card">
         {loading ? <p>Chargement...</p> : (
-          <div className="table-container" style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: '0 10px' }}>
-              <thead>
-                <tr>
-                  <th>Réf. inscription</th>
-                  <th>Date inscription</th>
-                  <th>Élève</th>
-                  <th>Pôle</th>
-                  <th>Niveau</th>
-                  <th>Niveau validé</th>
-                  <th>Liste d'attente</th>
-                  <th>Statut</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {enrollments.length === 0 ? (
-                  <tr><td colSpan="9" style={{ textAlign: 'center', color: '#6B7280', padding: '24px 0' }}>Aucune inscription</td></tr>
-                ) : (
-                  groupedEnrollments.map((group) => (
-                    <Fragment key={group.familyId}>
-                      <tr style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                        <td colSpan="9" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <span style={{ fontSize: 14, color: '#1D4ED8' }}>{isFamilyExpanded(group.familyId) ? '▾' : '▸'}</span>
-                              <span>{group.familyName}</span>
-                              <span style={{ fontSize: 13, color: '#475569' }}>({group.enrollments.length} inscription{group.enrollments.length > 1 ? 's' : ''})</span>
-                            </div>
-                            <span style={{ fontSize: 13, color: '#6B7280' }}>Cliquer pour {isFamilyExpanded(group.familyId) ? 'replier' : 'déplier'}</span>
-                          </div>
-                        </td>
-                      </tr>
-
-                      {isFamilyExpanded(group.familyId) && group.enrollments.map((e) => {
-                        const selectedStatus = statusUpdates[e.id] || e.status;
-                        const waitlist = isEnrollmentWaitlist(e);
-                        return (
-                          <tr key={e.id} style={{ background: '#FFFFFF', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)' }}>
-                            <td style={{ fontWeight: 700, padding: '16px 12px' }}>{e.registrationCode || '—'}</td>
-                            <td style={{ padding: '16px 12px' }}>{formatDateTime(e.createdAt)}</td>
-                            <td style={{ fontWeight: 700, padding: '16px 12px', paddingLeft: 36 }}>
-                              {e.student.lastName} {e.student.firstName}
-                              {e.isProvisional && (
-                                <div style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 8 }}>
-                                  <span style={{ background: '#FEF3C7', color: '#92400E', padding: '4px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Affectation provisoire</span>
-                                </div>
-                              )}
-                            </td>
-                            <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.pole?.name || '—')}</td>
-                            <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.name || '—')}</td>
-                            <td style={{ padding: '16px 12px', textAlign: 'center' }}>
-                              <input
-                                type="checkbox"
-                                checked={Boolean(e.levelValidated)}
-                                onChange={(event) => handleLevelValidatedChange(e.id, event.target.checked)}
-                              />
-                            </td>
-                            <td style={{ padding: '16px 12px' }}>
-                              <span className={`badge ${waitlist ? 'badge-danger' : 'badge-success'}`}>
-                                {waitlist ? 'Oui' : 'Non'}
-                              </span>
-                            </td>
-                            <td style={{ padding: '16px 12px' }}>{statusBadge(selectedStatus, waitlist)}</td>
-                            <td className="table-actions" style={{ justifyContent: 'flex-end', padding: '16px 12px' }}>
-                              {(() => {
-                                const currentStatus = statusUpdates[e.id] || e.status;
-                                if (currentStatus === 'CONFIRMED' || currentStatus === 'CANCELLED') return null;
-                                return (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    <button
-                                      type="button"
-                                      className="btn btn-success btn-sm"
-                                      title="Valider l'inscription"
-                                      onClick={() => saveStatus(e, 'CONFIRMED')}
-                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', width: 36, height: 36 }}
-                                    >
-                                      <FiCheckCircle size={16} />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn-danger btn-sm"
-                                      title="Annuler l'inscription"
-                                      onClick={() => saveStatus(e, 'CANCELLED')}
-                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', width: 36, height: 36 }}
-                                    >
-                                      <FiXCircle size={16} />
-                                    </button>
-                                  </div>
-                                );
-                              })()}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <button
-                                  className="btn btn-outline btn-sm"
-                                  type="button"
-                                  onClick={() => openRecordModal(e.student)}
-                                  title="Fiche pédagogique"
-                                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
-                                >
-                                  <FiFileText size={14} />
-                                  <span style={{ fontSize: 13 }}>Fiche</span>
-                                </button>
-                                <button
-                                  className="btn btn-outline btn-sm"
-                                  type="button"
-                                  onClick={() => openPaymentModal(e)}
-                                  title="Paiement"
-                                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
-                                >
-                                  <FiCreditCard size={14} />
-                                  <span style={{ fontSize: 13 }}>Paiement</span>
-                                </button>
-                                <button
-                                  className="btn btn-outline btn-sm"
-                                  type="button"
-                                  onClick={() => openEditModal(e)}
-                                  title="Modifier l'inscription"
-                                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
-                                >
-                                  <FiEdit2 size={14} />
-                                  <span style={{ fontSize: 13 }}>Modifier</span>
-                                </button>
+          <>
+            <div className="table-container" style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: '0 10px' }}>
+                <thead>
+                  <tr>
+                    <th>Réf. inscription</th>
+                    <th>Date inscription</th>
+                    <th>Élève</th>
+                    <th>Pôle</th>
+                    <th>Niveau</th>
+                    <th>Niveau validé</th>
+                    <th>Liste d'attente</th>
+                    <th>Statut</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {enrollments.length === 0 ? (
+                    <tr><td colSpan="9" style={{ textAlign: 'center', color: '#6B7280', padding: '24px 0' }}>Aucune inscription</td></tr>
+                  ) : (
+                    groupedEnrollments.map((group) => (
+                      <Fragment key={group.familyId}>
+                        <tr style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
+                          <td colSpan="9" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <span style={{ fontSize: 14, color: '#1D4ED8' }}>{isFamilyExpanded(group.familyId) ? '▾' : '▸'}</span>
+                                <span>{group.familyName}</span>
+                                <span style={{ fontSize: 13, color: '#475569' }}>({group.enrollments.length} inscription{group.enrollments.length > 1 ? 's' : ''})</span>
                               </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </Fragment>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                              <span style={{ fontSize: 13, color: '#6B7280' }}>Cliquer pour {isFamilyExpanded(group.familyId) ? 'replier' : 'déplier'}</span>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {isFamilyExpanded(group.familyId) && group.enrollments.map((e) => {
+                          const selectedStatus = statusUpdates[e.id] || e.status;
+                          const waitlist = isEnrollmentWaitlist(e);
+                          return (
+                            <tr key={e.id} style={{ background: '#FFFFFF', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)' }}>
+                              <td style={{ fontWeight: 700, padding: '16px 12px' }}>{e.registrationCode || '—'}</td>
+                              <td style={{ padding: '16px 12px' }}>{formatDateTime(e.createdAt)}</td>
+                              <td style={{ fontWeight: 700, padding: '16px 12px', paddingLeft: 36 }}>
+                                {e.student.lastName} {e.student.firstName}
+                                {e.isProvisional && (
+                                  <div style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 8 }}>
+                                    <span style={{ background: '#FEF3C7', color: '#92400E', padding: '4px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Affectation provisoire</span>
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.pole?.name || '—')}</td>
+                              <td style={{ padding: '16px 12px' }}>{e.isProvisional ? 'Classe fictive' : (e.class?.level?.name || '—')}</td>
+                              <td style={{ padding: '16px 12px', textAlign: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(e.levelValidated)}
+                                  onChange={(event) => handleLevelValidatedChange(e.id, event.target.checked)}
+                                />
+                              </td>
+                              <td style={{ padding: '16px 12px' }}>
+                                <span className={`badge ${waitlist ? 'badge-danger' : 'badge-success'}`}>
+                                  {waitlist ? 'Oui' : 'Non'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '16px 12px' }}>{statusBadge(selectedStatus, waitlist)}</td>
+                              <td className="table-actions" style={{ justifyContent: 'flex-end', padding: '16px 12px' }}>
+                                {(() => {
+                                  const currentStatus = statusUpdates[e.id] || e.status;
+                                  if (currentStatus === 'CONFIRMED' || currentStatus === 'CANCELLED') return null;
+                                  return (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <button
+                                        type="button"
+                                        className="btn btn-success btn-sm"
+                                        title="Valider l'inscription"
+                                        onClick={() => saveStatus(e, 'CONFIRMED')}
+                                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', width: 36, height: 36 }}
+                                      >
+                                        <FiCheckCircle size={16} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-danger btn-sm"
+                                        title="Annuler l'inscription"
+                                        onClick={() => saveStatus(e, 'CANCELLED')}
+                                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', width: 36, height: 36 }}
+                                      >
+                                        <FiXCircle size={16} />
+                                      </button>
+                                    </div>
+                                  );
+                                })()}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <button
+                                    className="btn btn-outline btn-sm"
+                                    type="button"
+                                    onClick={() => openRecordModal(e.student)}
+                                    title="Fiche pédagogique"
+                                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
+                                  >
+                                    <FiFileText size={14} />
+                                    <span style={{ fontSize: 13 }}>Fiche</span>
+                                  </button>
+                                  <button
+                                    className="btn btn-outline btn-sm"
+                                    type="button"
+                                    onClick={() => openPaymentModal(e)}
+                                    title="Paiement"
+                                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
+                                  >
+                                    <FiCreditCard size={14} />
+                                    <span style={{ fontSize: 13 }}>Paiement</span>
+                                  </button>
+                                  <button
+                                    className="btn btn-outline btn-sm"
+                                    type="button"
+                                    onClick={() => openEditModal(e)}
+                                    title="Modifier l'inscription"
+                                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}
+                                  >
+                                    <FiEdit2 size={14} />
+                                    <span style={{ fontSize: 13 }}>Modifier</span>
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </Fragment>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {pagination.totalPages > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ color: '#6B7280' }}>
+                  Page {pagination.page} / {pagination.totalPages}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    disabled={pagination.page <= 1}
+                    onClick={() => setPagination((prev) => ({ ...prev, page: Math.max(prev.page - 1, 1) }))}
+                  >
+                    Précédent
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    disabled={pagination.page >= pagination.totalPages}
+                    onClick={() => setPagination((prev) => ({ ...prev, page: Math.min(prev.page + 1, prev.totalPages) }))}
+                  >
+                    Suivant
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -1890,7 +1948,7 @@ export default function AdminEnrollments() {
                             />
                           </div>
                           <div className="form-group" style={{ margin: 0 }}>
-                            <label>Date première échéance</label>
+                            <label>Date début prélèvement</label>
                             <input
                               type="date"
                               className="form-control"
@@ -1999,6 +2057,7 @@ export default function AdminEnrollments() {
                               const bankDebitSwiftRaw = metadata.bankDebitSwift || payment.bankDebitSwift;
                               const bankDebitDay = metadata.bankDebitDay || payment.scheduleDay || payment.bankDebitDay;
                               const bankDebitInstallmentsCount = metadata.bankDebitInstallmentsCount || payment.numberOfInstallments || payment.installmentsCount;
+                              const bankDebitFirstPaymentDate = metadata.firstPaymentDate || payment.firstPaymentDate;
                               const bankDebitRibUrl = metadata.bankDebitRibUrl;
                               const bankDebitRibFilename = metadata.bankDebitRibFilename || 'RIB';
                               const chequeDepositDay = metadata.chequeDepositDay || payment.scheduleDay;
@@ -2028,6 +2087,9 @@ export default function AdminEnrollments() {
                                       <div><strong>BIC / SWIFT :</strong> {formatBankSwiftForDisplay(bankDebitSwiftRaw) || '—'}</div>
                                       {bankDebitInstallmentsCount !== undefined && bankDebitInstallmentsCount !== null && (
                                         <div><strong>Échéances :</strong> {bankDebitInstallmentsCount}</div>
+                                      )}
+                                      {bankDebitFirstPaymentDate && (
+                                        <div><strong>Date début prélèvement :</strong> {formatDate(bankDebitFirstPaymentDate)}</div>
                                       )}
                                       {bankDebitDay !== undefined && bankDebitDay !== null && (
                                         <div><strong>Jour prélèvement :</strong> {bankDebitDay}</div>
