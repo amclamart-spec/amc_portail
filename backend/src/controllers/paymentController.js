@@ -2275,6 +2275,117 @@ async function downloadSepaMandatePdf(req, res) {
   }
 }
 
+async function updatePaymentDetails(req, res) {
+  try {
+    const { paymentId } = req.params;
+    const updates = req.body || {};
+
+    if (!paymentId) {
+      return res.status(400).json({ error: 'Identifiant paiement manquant' });
+    }
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { family: true, paymentPlan: true },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Paiement non trouvé' });
+    }
+
+    const paymentMethod = payment.paymentMethod || 'CHEQUE';
+    const isVirement = paymentMethod === 'VIREMENT';
+    const isCheque = paymentMethod === 'CHEQUE';
+
+    if (!isVirement && !isCheque) {
+      return res.status(400).json({ error: 'La modification n\'est pas disponible pour ce type de paiement' });
+    }
+
+    const metadata = payment.metadata || {};
+    const updateData = {};
+
+    // Update number of installments
+    if (updates.numberOfInstallments !== undefined) {
+      const installments = Number(updates.numberOfInstallments);
+      if (Number.isNaN(installments) || installments < 1 || installments > 12) {
+        return res.status(400).json({ error: 'Le nombre d\'échéances doit être entre 1 et 12' });
+      }
+      updateData.numberOfInstallments = installments;
+    }
+
+    // Update first payment date
+    if (updates.firstPaymentDate !== undefined && updates.firstPaymentDate) {
+      const date = new Date(updates.firstPaymentDate);
+      if (Number.isNaN(date.getTime())) {
+        return res.status(400).json({ error: 'Date première échéance invalide' });
+      }
+      metadata.firstPaymentDate = updates.firstPaymentDate;
+    }
+
+    // Update bank debit day (for VIREMENT and CHEQUE)
+    if (updates.bankDebitDay !== undefined) {
+      const day = Number(updates.bankDebitDay);
+      if (![10, 20, 30].includes(day)) {
+        return res.status(400).json({ error: 'Le jour de prélèvement doit être 10, 20 ou 30' });
+      }
+      metadata.bankDebitDay = day;
+    }
+
+    // Update IBAN (VIREMENT only)
+    if (isVirement && updates.bankDebitIban !== undefined && updates.bankDebitIban) {
+      const ibanNorm = String(updates.bankDebitIban).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (ibanNorm.length < 15) {
+        return res.status(400).json({ error: 'L\'IBAN doit avoir au moins 15 caractères' });
+      }
+      metadata.bankDebitIban = ibanNorm;
+    }
+
+    // Update SWIFT (VIREMENT only)
+    if (isVirement && updates.bankDebitSwift !== undefined && updates.bankDebitSwift) {
+      const swiftNorm = String(updates.bankDebitSwift).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (swiftNorm.length < 8) {
+        return res.status(400).json({ error: 'Le SWIFT/BIC doit avoir au moins 8 caractères' });
+      }
+      metadata.bankDebitSwift = swiftNorm;
+    }
+
+    // Merge metadata
+    updateData.metadata = {
+      ...(payment.metadata || {}),
+      ...metadata,
+    };
+
+    // Update payment
+    const updatedPayment = await prisma.payment.update({
+      where: { id: paymentId },
+      data: updateData,
+      include: { family: true, paymentPlan: true },
+    });
+
+    // Also update payment plan if it exists
+    if (payment.paymentPlan) {
+      await prisma.paymentPlan.update({
+        where: { id: payment.paymentPlan.id },
+        data: {
+          metadata: {
+            ...(payment.paymentPlan.metadata || {}),
+            ...metadata,
+          },
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Paiement modifié avec succès',
+      payment: updatedPayment,
+    });
+  } catch (error) {
+    console.error('Erreur updatePaymentDetails:', error);
+    return res.status(500).json({ error: error.message || 'Erreur serveur lors de la mise à jour du paiement' });
+  }
+}
+
 module.exports = {
   createFamilyEnrollmentPayment,
   createPaymentIntent,
@@ -2306,4 +2417,5 @@ module.exports = {
   finalizeStripePayment,
   cancelStripePayment,
   downloadSepaMandatePdf,
+  updatePaymentDetails,
 };

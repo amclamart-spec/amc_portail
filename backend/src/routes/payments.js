@@ -33,6 +33,7 @@ const {
   downloadPaymentReceipt,
   generatePaymentReceiptPDF,
   downloadSepaMandatePdf,
+  updatePaymentDetails,
 } = require('../controllers/paymentController');
 
 const receiptsUploadDir = path.join(__dirname, '../../uploads/receipts');
@@ -89,6 +90,7 @@ router.patch('/transactions/:transactionId', authorizeAnyPermission(PERMISSIONS.
 router.get('/transactions/export', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), exportTransactions);
 router.get('/cheques/plans', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getChequePaymentPlans);
 router.patch('/cheques/installments/:installmentId', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), markChequeInstallmentStatus);
+router.patch('/:paymentId', authorizeAnyPermission(PERMISSIONS.PAYMENTS_MANAGE, PERMISSIONS.ENROLLMENTS_MANAGE), updatePaymentDetails);
 router.get('/refunds', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), getRefunds);
 router.post('/refunds', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), requestRefund);
 router.patch('/refunds/:refundId', authorizePermission(PERMISSIONS.PAYMENTS_REFUND), processRefund);
