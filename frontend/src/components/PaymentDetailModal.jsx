@@ -119,6 +119,13 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   const [refundAccessCode, setRefundAccessCode] = useState('');
   const [refundCodeValidated, setRefundCodeValidated] = useState(false);
   const [refundCodeValidating, setRefundCodeValidating] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editNumberOfInstallments, setEditNumberOfInstallments] = useState('');
+  const [editFirstPaymentDate, setEditFirstPaymentDate] = useState('');
+  const [editBankDebitDay, setEditBankDebitDay] = useState('');
+  const [editBankDebitIban, setEditBankDebitIban] = useState('');
+  const [editBankDebitSwift, setEditBankDebitSwift] = useState('');
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   const paymentId = transaction?.paymentId;
   const payment = transaction?.payment || transaction || {};
@@ -140,6 +147,12 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
       setStatus('PENDING');
       setReason('');
       setError('');
+      setEditMode(false);
+      setEditNumberOfInstallments('');
+      setEditFirstPaymentDate('');
+      setEditBankDebitDay('');
+      setEditBankDebitIban('');
+      setEditBankDebitSwift('');
       return;
     }
 
@@ -236,6 +249,104 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
       toast.error(err?.response?.data?.error || 'Code invalide ou expiré');
     } finally {
       setRefundCodeValidating(false);
+    }
+  };
+
+  const startEditing = () => {
+    setEditNumberOfInstallments(String(bankDebitInstallmentsCount || ''));
+    setEditFirstPaymentDate(bankDebitMetadata.firstPaymentDate ? bankDebitMetadata.firstPaymentDate.split('T')[0] : '');
+    setEditBankDebitDay(String(bankDebitDay || ''));
+    setEditBankDebitIban(normalizeBankValue(bankDebitIbanRaw) || '');
+    setEditBankDebitSwift(normalizeBankValue(bankDebitSwiftRaw) || '');
+    setEditMode(true);
+  };
+
+  const cancelEditing = () => {
+    setEditMode(false);
+    setEditNumberOfInstallments('');
+    setEditFirstPaymentDate('');
+    setEditBankDebitDay('');
+    setEditBankDebitIban('');
+    setEditBankDebitSwift('');
+  };
+
+  const saveChanges = async () => {
+    if (!paymentId) {
+      toast.error('Identifiant paiement manquant');
+      return;
+    }
+
+    const paymentMethod = transaction?.method || payment.paymentMethod || 'CHEQUE';
+    const isVirement = paymentMethod === 'VIREMENT' || paymentMethod === 'PRELEVEMENT_BANCAIRE';
+    const isCheque = paymentMethod === 'CHEQUE';
+
+    if (!isVirement && !isCheque) {
+      toast.error('La modification n\'est pas disponible pour ce type de paiement');
+      return;
+    }
+
+    const updates = {};
+
+    if (editNumberOfInstallments) {
+      const installments = Number(editNumberOfInstallments);
+      if (Number.isNaN(installments) || installments < 1 || installments > 12) {
+        toast.error('Le nombre d\'échéances doit être entre 1 et 12');
+        return;
+      }
+      updates.numberOfInstallments = installments;
+    }
+
+    if (editFirstPaymentDate) {
+      updates.firstPaymentDate = editFirstPaymentDate;
+    }
+
+    if (editBankDebitDay) {
+      const day = Number(editBankDebitDay);
+      if (Number.isNaN(day) || ![10, 20, 30].includes(day)) {
+        toast.error('Le jour de prélèvement doit être 10, 20 ou 30');
+        return;
+      }
+      updates.bankDebitDay = day;
+    }
+
+    if (isVirement) {
+      if (editBankDebitIban) {
+        const ibanNorm = normalizeBankValue(editBankDebitIban);
+        if (!ibanNorm || ibanNorm.length < 15) {
+          toast.error('L\'IBAN doit avoir au moins 15 caractères');
+          return;
+        }
+        updates.bankDebitIban = ibanNorm;
+      }
+
+      if (editBankDebitSwift) {
+        const swiftNorm = normalizeBankValue(editBankDebitSwift);
+        if (!swiftNorm || swiftNorm.length < 8) {
+          toast.error('Le SWIFT/BIC doit avoir au moins 8 caractères');
+          return;
+        }
+        updates.bankDebitSwift = swiftNorm;
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      toast.error('Aucune modification à enregistrer');
+      return;
+    }
+
+    setEditSubmitting(true);
+    try {
+      await api.patch(`/payments/${paymentId}`, updates);
+      toast.success('Paiement modifié avec succès');
+      setEditMode(false);
+      if (typeof onRefundCreated === 'function') {
+        onRefundCreated();
+      }
+    } catch (err) {
+      console.error('Erreur mise à jour paiement', err);
+      toast.error(err?.response?.data?.error || 'Impossible de modifier le paiement');
+    } finally {
+      setEditSubmitting(false);
     }
   };
 
@@ -347,62 +458,169 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
         </div>
 
         <div style={{ ...sectionStyle, padding: 20, borderRadius: 14, backgroundColor: '#fff', boxShadow: '0 6px 18px rgba(15, 23, 42, 0.04)' }}>
-          <div style={sectionTitleStyle}>Informations du paiement</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
-            <div>
-              <div style={{ color: '#64748b', marginBottom: 8 }}>Famille</div>
-              <div style={{ fontWeight: 600 }}>{payment.family?.familyName || '-'}</div>
-            </div>
-            <div>
-              <div style={{ color: '#64748b', marginBottom: 8 }}>Méthode</div>
-              <div style={{ fontWeight: 600 }}>{formatPaymentMethodLabel(payment, transaction)}</div>
-            </div>
-            <div>
-              <div style={{ color: '#64748b', marginBottom: 8 }}>Nombre d&apos;échéances</div>
-              <div style={{ fontWeight: 600 }}>{bankDebitInstallmentsCount || '-'}</div>
-            </div>
-            {bankDebitDay !== undefined && bankDebitDay !== null && (
-              <div>
-                <div style={{ color: '#64748b', marginBottom: 8 }}>Jour du prélèvement</div>
-                <div style={{ fontWeight: 600 }}>{bankDebitDay}</div>
-              </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div style={sectionTitleStyle}>Informations du paiement</div>
+            {!editMode && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={startEditing}
+              >
+                Éditer
+              </button>
             )}
-            <div>
-              <div style={{ color: '#64748b', marginBottom: 8 }}>Date</div>
-              <div style={{ fontWeight: 600 }}>{payment.createdAt ? new Date(payment.createdAt).toLocaleString('fr-FR') : '-'}</div>
-            </div>
           </div>
-          {(bankDebitIban || bankDebitSwift || bankDebitMetadata.bankDebitRibUrl) && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginTop: 12 }}>
-              <div>
-                <div style={{ color: '#64748b', marginBottom: 8 }}>IBAN</div>
-                <div style={{ fontWeight: 600 }}>{bankDebitIban || '-'}</div>
-              </div>
-              <div>
-                <div style={{ color: '#64748b', marginBottom: 8 }}>BIC / SWIFT</div>
-                <div style={{ fontWeight: 600 }}>{bankDebitSwift || '-'}</div>
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <div style={{ color: '#64748b', marginBottom: 8 }}>RIB</div>
-                {bankDebitMetadata.bankDebitRibUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => handleDownloadRib(bankDebitMetadata.bankDebitRibUrl, bankDebitMetadata.bankDebitRibFilename)}
-                    style={{ 
-                      fontWeight: 600,
-                      backgroundColor: 'transparent',
-                      border: 'none',
-                      padding: 0,
-                      color: '#1d4ed8',
-                      cursor: 'pointer',
-                      textDecoration: 'underline'
-                    }}
-                  >
-                    {bankDebitMetadata.bankDebitRibFilename || 'Télécharger le RIB'}
-                  </button>
-                ) : (
-                  <div style={{ fontWeight: 600 }}>-</div>
+
+          {!editMode ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
+                <div>
+                  <div style={{ color: '#64748b', marginBottom: 8 }}>Famille</div>
+                  <div style={{ fontWeight: 600 }}>{payment.family?.familyName || '-'}</div>
+                </div>
+                <div>
+                  <div style={{ color: '#64748b', marginBottom: 8 }}>Méthode</div>
+                  <div style={{ fontWeight: 600 }}>{formatPaymentMethodLabel(payment, transaction)}</div>
+                </div>
+                <div>
+                  <div style={{ color: '#64748b', marginBottom: 8 }}>Nombre d&apos;échéances</div>
+                  <div style={{ fontWeight: 600 }}>{bankDebitInstallmentsCount || '-'}</div>
+                </div>
+                {bankDebitDay !== undefined && bankDebitDay !== null && (
+                  <div>
+                    <div style={{ color: '#64748b', marginBottom: 8 }}>Jour du prélèvement</div>
+                    <div style={{ fontWeight: 600 }}>{bankDebitDay}</div>
+                  </div>
                 )}
+                {bankDebitMetadata.firstPaymentDate && (
+                  <div>
+                    <div style={{ color: '#64748b', marginBottom: 8 }}>Date début prélèvement</div>
+                    <div style={{ fontWeight: 600 }}>{new Date(bankDebitMetadata.firstPaymentDate).toLocaleDateString('fr-FR')}</div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ color: '#64748b', marginBottom: 8 }}>Date</div>
+                  <div style={{ fontWeight: 600 }}>{payment.createdAt ? new Date(payment.createdAt).toLocaleString('fr-FR') : '-'}</div>
+                </div>
+              </div>
+              {(bankDebitIban || bankDebitSwift || bankDebitMetadata.bankDebitRibUrl) && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginTop: 12 }}>
+                  <div>
+                    <div style={{ color: '#64748b', marginBottom: 8 }}>IBAN</div>
+                    <div style={{ fontWeight: 600 }}>{bankDebitIban || '-'}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: '#64748b', marginBottom: 8 }}>BIC / SWIFT</div>
+                    <div style={{ fontWeight: 600 }}>{bankDebitSwift || '-'}</div>
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <div style={{ color: '#64748b', marginBottom: 8 }}>RIB</div>
+                    {bankDebitMetadata.bankDebitRibUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadRib(bankDebitMetadata.bankDebitRibUrl, bankDebitMetadata.bankDebitRibFilename)}
+                        style={{ 
+                          fontWeight: 600,
+                          backgroundColor: 'transparent',
+                          border: 'none',
+                          padding: 0,
+                          color: '#1d4ed8',
+                          cursor: 'pointer',
+                          textDecoration: 'underline'
+                        }}
+                      >
+                        {bankDebitMetadata.bankDebitRibFilename || 'Télécharger le RIB'}
+                      </button>
+                    ) : (
+                      <div style={{ fontWeight: 600 }}>-</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ display: 'grid', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Nombre d&apos;échéances</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min="1"
+                    max="12"
+                    value={editNumberOfInstallments}
+                    onChange={(e) => setEditNumberOfInstallments(e.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Jour de prélèvement</label>
+                  <select
+                    className="form-control"
+                    value={editBankDebitDay}
+                    onChange={(e) => setEditBankDebitDay(e.target.value)}
+                  >
+                    <option value="">--</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="30">30</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Date première échéance</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={editFirstPaymentDate}
+                  onChange={(e) => setEditFirstPaymentDate(e.target.value)}
+                />
+              </div>
+
+              {(transaction?.method === 'VIREMENT' || transaction?.method === 'PRELEVEMENT_BANCAIRE' || payment.paymentMethod === 'VIREMENT') && (
+                <>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>IBAN</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Ex: FR1420041010050500013M02606"
+                      value={editBankDebitIban}
+                      onChange={(e) => setEditBankDebitIban(normalizeBankValue(e.target.value))}
+                      style={{ fontFamily: 'monospace', letterSpacing: '0.05em' }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>SWIFT / BIC</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Ex: BNPAFRPP"
+                      value={editBankDebitSwift}
+                      onChange={(e) => setEditBankDebitSwift(normalizeBankValue(e.target.value))}
+                      style={{ fontFamily: 'monospace', letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                    />
+                  </div>
+                </>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={cancelEditing}
+                  disabled={editSubmitting}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={saveChanges}
+                  disabled={editSubmitting}
+                >
+                  {editSubmitting ? 'Enregistrement...' : 'Enregistrer'}
+                </button>
               </div>
             </div>
           )}
