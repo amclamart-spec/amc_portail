@@ -6,6 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail } = require('../services/emailService');
 const { finalizeStripePayment, cancelStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
+const { saveBase64File } = require('../utils/fileUtils');
 const { isProvisionalClass, getProvisionalClassFilter } = require('../utils/provisionalClassUtils');
 const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
 const { getReceiptInfo } = require('../utils/receiptUtils');
@@ -725,7 +726,7 @@ async function updateEnrollmentPayment(req, res) {
     }
 
     if (method !== undefined) {
-      const allowedMethods = ['CHEQUE', 'ESPECES', 'CB', 'STRIPE'];
+      const allowedMethods = ['CHEQUE', 'ESPECES', 'CB', 'STRIPE', 'VIREMENT', 'PRELEVEMENT_BANCAIRE'];
       if (!allowedMethods.includes(method)) {
         return res.status(400).json({ error: 'Moyen de paiement invalide' });
       }
@@ -932,12 +933,12 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
 
 async function createEnrollmentPayment(req, res) {
   try {
-    const { payerName, date, method, status, comment, amount } = req.body;
+    const { payerName, date, method, status, comment, amount, bankDebitIban, bankDebitSwift, numberOfInstallments, firstPaymentDate, scheduleDay, ribDocument } = req.body;
     const parsedAmount = amount ? new Prisma.Decimal(amount) : null;
     if (!parsedAmount || parsedAmount.lte(0)) {
       return res.status(400).json({ error: 'Montant de paiement invalide' });
     }
-    const allowedMethods = ['CHEQUE', 'ESPECES', 'CB', 'STRIPE'];
+    const allowedMethods = ['CHEQUE', 'ESPECES', 'CB', 'STRIPE', 'VIREMENT', 'PRELEVEMENT_BANCAIRE'];
     if (!allowedMethods.includes(method)) {
       return res.status(400).json({ error: 'Moyen de paiement invalide' });
     }
@@ -959,12 +960,27 @@ async function createEnrollmentPayment(req, res) {
     const normalizedPayerName = payerName && String(payerName).trim()
       ? String(payerName).trim()
       : (['CHEQUE', 'ESPECES'].includes(method) ? defaultPayer : null);
-    if (!normalizedPayerName) {
+    if (!normalizedPayerName && !['VIREMENT', 'PRELEVEMENT_BANCAIRE', 'CB', 'STRIPE'].includes(method)) {
       return res.status(400).json({ error: 'Nom du payeur requis' });
     }
+
+    // Build metadata for prelevement
+    const paymentMetadata = {};
+    if (['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(method)) {
+      if (bankDebitIban) paymentMetadata.bankDebitIban = String(bankDebitIban).trim();
+      if (bankDebitSwift) paymentMetadata.bankDebitSwift = String(bankDebitSwift).trim();
+      if (numberOfInstallments !== undefined) paymentMetadata.bankDebitInstallmentsCount = Number(numberOfInstallments) || 1;
+      if (firstPaymentDate) paymentMetadata.firstPaymentDate = String(firstPaymentDate).trim();
+      if (scheduleDay !== undefined) paymentMetadata.bankDebitDay = Number(scheduleDay) || 10;
+      if (ribDocument?.base64) {
+        paymentMetadata.bankDebitRibUrl = saveBase64File(ribDocument.base64, 'ribs', ribDocument.name || 'rib.pdf');
+        paymentMetadata.bankDebitRibFilename = String(ribDocument.name || 'RIB');
+      }
+    }
+
     const paymentData = {
       paymentMethod: method,
-      provider: 'OFFLINE',
+      provider: ['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(method) ? 'OFFLINE' : 'OFFLINE',
     };
 
     if (!targetPayment) {
@@ -976,9 +992,9 @@ async function createEnrollmentPayment(req, res) {
           paidAmount: transactionStatus === 'SUCCEEDED' ? parsedAmount : new Prisma.Decimal(0),
           paymentMethod: method,
           provider: 'OFFLINE',
-          numberOfInstallments: 1,
+          numberOfInstallments: ['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(method) ? (Number(numberOfInstallments) || 1) : 1,
           status: transactionStatus === 'SUCCEEDED' ? 'COMPLETED' : 'PENDING',
-          metadata: { enrollmentIds: [enrollment.id] },
+          metadata: { enrollmentIds: [enrollment.id], ...paymentMetadata },
         },
       });
     } else {
@@ -987,7 +1003,7 @@ async function createEnrollmentPayment(req, res) {
         : [enrollment.id];
       const updateData = {
         ...paymentData,
-        metadata: { ...targetPayment.metadata, enrollmentIds },
+        metadata: { ...targetPayment.metadata, enrollmentIds, ...paymentMetadata },
       };
       if (transactionStatus === 'SUCCEEDED') {
         // Ensure all enrollments linked to the target payment have their level validated
@@ -1021,7 +1037,7 @@ async function createEnrollmentPayment(req, res) {
         method,
         amount: parsedAmount,
         status: transactionStatus,
-        payerName: normalizedPayerName,
+        payerName: normalizedPayerName || 'Non spécifié',
         description: comment || 'Paiement ajouté par admin',
         recordedById: req.user.id,
         processedAt: txDate,

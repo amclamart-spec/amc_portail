@@ -142,7 +142,7 @@ async function sendWithAbacus({ to, subject, html, text, attachments }) {
   const response = await fetch(`${apiBaseUrl}${endpoint}`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
+      'Content-Type': 'application/json; charset=UTF-8',
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
@@ -330,9 +330,8 @@ function getEmbeddedLogoDataUri(fileName, fallbackColor = '#213B88', fallbackTex
 }
 
 function getEmailLogoUrls() {
-  const baseFrontendUrl = config.frontendUrl ? config.frontendUrl.replace(/\/$/, '') : null;
-  const logoUrl = baseFrontendUrl ? `${baseFrontendUrl}/amc_logo.png` : getEmbeddedLogoDataUri('amc_logo.png');
-  const partnerLogoUrl = baseFrontendUrl ? `${baseFrontendUrl}/amc_logo_partner.png` : getEmbeddedLogoDataUri('amc_logo_partner.png', '#64748b', 'PARTAGE');
+  const logoUrl = getEmbeddedLogoDataUri('amc_logo.png');
+  const partnerLogoUrl = getEmbeddedLogoDataUri('amc_logo_partner.png', '#64748b', 'PARTAGE');
   return { logoUrl, partnerLogoUrl };
 }
 
@@ -470,7 +469,7 @@ async function sendEnrollmentConfirmedEmail(user, enrollmentSummary = '', attach
 async function sendEnrollmentRequestRegisteredEmail(user, enrollmentSummary = '') {
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
-    <p>Votre inscription a bien été enregistrée. Elle sera étudiée par l'administration avant validation de paiement. Vous serez informé(e) par email de l'état de votre inscription.</p>
+    <p>Votre inscription a bien été enregistrée. A fin de valider définitivement votre inscription, nous vous invitons à éffectuer le réglement directement sur place. Votre inscription sera considérée comme confirmée après réception du paiement et validation par l'administration. Vous serez informé(e) par email de l'état de votre inscription.</p>
     ${enrollmentSummary ? `<div style="margin:18px 0;padding:18px;background:#eef2ff;border-radius:12px;"><strong>Détails des inscriptions :</strong><br/>${enrollmentSummary}</div>` : ''}
   `;
 
