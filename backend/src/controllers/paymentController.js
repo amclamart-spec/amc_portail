@@ -95,6 +95,7 @@ async function generateInvoiceForPayment(paymentId) {
       include: {
         family: { include: { user: true } },
         schoolYear: true,
+        transactions: { orderBy: { createdAt: 'desc' } },
       },
     });
 
@@ -143,38 +144,31 @@ async function generateInvoiceForPayment(paymentId) {
             schoolYear: true,
           },
         },
+        student: true,
       },
     });
 
     console.log(`Génération facture pour ${paymentId} avec ${enrollments.length} inscriptions`);
 
-    // Fetch all children (students) of the family to include on the receipt
-    let children = [];
-    try {
-      children = await prisma.student.findMany({
-        where: { familyId: payment.familyId },
-        select: { id: true, firstName: true, lastName: true, dateOfBirth: true },
-        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-      });
-    } catch (err) {
-      console.warn('Impossible de récupérer les enfants de la famille pour la facture', err?.message || err);
+    // Derive the list of children concerned by these enrollments (unique)
+    const studentList = (enrollments || [])
+      .map((e) => e.student)
+      .filter(Boolean);
+    const uniqueStudentsMap = new Map();
+    for (const s of studentList) {
+      if (!s || !s.id) continue;
+      uniqueStudentsMap.set(String(s.id), { id: s.id, firstName: s.firstName, lastName: s.lastName, dateOfBirth: s.dateOfBirth });
     }
-
-    const familyWithChildren = { ...payment.family, children };
-
-    const familyPayments = await prisma.payment.findMany({
-      where: {
-        familyId: payment.familyId,
-        schoolYearId: payment.schoolYearId,
-      },
-      include: {
-        transactions: { orderBy: { createdAt: 'desc' } },
-      },
-      orderBy: { createdAt: 'desc' },
+    const uniqueStudents = Array.from(uniqueStudentsMap.values()).sort((a, b) => {
+      const la = (a.lastName || '').localeCompare(b.lastName || '');
+      if (la !== 0) return la;
+      return (a.firstName || '').localeCompare(b.firstName || '');
     });
 
+    const familyWithChildren = { ...payment.family, children: uniqueStudents };
+
     // Generate PDF invoice
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, familyPayments);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments);
     console.log(`✅ Facture générée: ${invoiceResult.filename}`);
 
     return invoiceResult;
@@ -843,10 +837,25 @@ function buildTransactionQuery(query = {}) {
     maxAmount,
   } = query;
 
+  // support multiple input names for family search (family, familyName, family_name)
+  const rawFamilyName = query.familyName || query.family || query.family_name || null;
+
   const where = {};
+  const paymentWhere = {};
 
   if (familyId) {
-    where.payment = { familyId };
+    paymentWhere.familyId = familyId;
+  }
+
+  if (rawFamilyName) {
+    // filter on related payment.family.familyName
+    paymentWhere.family = {
+      familyName: { contains: String(rawFamilyName), mode: 'insensitive' },
+    };
+  }
+
+  if (Object.keys(paymentWhere).length > 0) {
+    where.payment = paymentWhere;
   }
 
   if (payerName) {
@@ -1045,20 +1054,29 @@ async function updateTransactionStatus(req, res) {
 async function getTransactions(req, res) {
   try {
     const where = buildTransactionQuery(req.query);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.max(Math.min(parseInt(req.query.limit, 10) || 50, 100), 1);
+    const offset = (page - 1) * limit;
 
-    const transactions = await prisma.paymentTransaction.findMany({
-      where,
-      include: {
-        payment: {
-          include: {
-            family: true,
+    const [total, transactions] = await Promise.all([
+      prisma.paymentTransaction.count({ where }),
+      prisma.paymentTransaction.findMany({
+        where,
+        include: {
+          payment: {
+            include: {
+              family: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+    ]);
 
-    return res.json({ transactions });
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+    return res.json({ transactions, total, page, limit, totalPages });
   } catch (error) {
     console.error('Erreur getTransactions:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
@@ -2058,31 +2076,12 @@ async function generatePaymentReceiptPDF(req, res) {
       console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
     }
 
-    const familyPayments = await prisma.payment.findMany({
+    const enrolledCourses = await prisma.enrollment.findMany({
       where: {
         familyId: payment.familyId,
         schoolYearId: payment.schoolYearId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
       },
-      include: {
-        transactions: { orderBy: { createdAt: 'desc' } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    let enrollmentIds = Array.isArray(payment.metadata?.enrollmentIds) ? payment.metadata.enrollmentIds : [];
-    if (!enrollmentIds || enrollmentIds.length === 0) {
-      const fallbackEnrollments = await prisma.enrollment.findMany({
-        where: {
-          familyId: payment.familyId,
-          schoolYearId: payment.schoolYearId,
-          status: { in: ['PENDING', 'CONFIRMED'] },
-        },
-      });
-      enrollmentIds = fallbackEnrollments.map((e) => e.id);
-    }
-
-    const enrolledCourses = await prisma.enrollment.findMany({
-      where: { id: { in: enrollmentIds } },
       include: {
         class: {
           include: {
@@ -2093,7 +2092,7 @@ async function generatePaymentReceiptPDF(req, res) {
       },
     });
 
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrolledCourses, familyPayments);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrolledCourses);
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });

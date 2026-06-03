@@ -399,7 +399,7 @@ async function updateRegistrationBlockStatus(req, res) {
  */
 async function getEnrollments(req, res) {
   try {
-    const { schoolYearId, status, studentName, poleId, classId, page = 1, limit = 20, testRequired } = req.query;
+    const { schoolYearId, status, studentName, poleId, classId, page = 1, limit = 50, testRequired } = req.query;
     const waitlist = req.query.waitlist === 'true';
     const where = {};
     if (schoolYearId) where.schoolYearId = schoolYearId;
@@ -525,7 +525,13 @@ async function getEnrollments(req, res) {
       });
     }
 
-    res.json({ enrollments: enhanced, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
+    res.json({
+      enrollments: enhanced,
+      total,
+      page: parseInt(page, 10),
+      limit: parseInt(limit, 10),
+      totalPages: Math.max(Math.ceil(total / parseInt(limit, 10)), 1),
+    });
   } catch (error) {
     console.error('Erreur getEnrollments:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -881,15 +887,6 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
       return res.status(404).json({ error: 'Paiement introuvable' });
     }
 
-    // Fetch full enrollment info (for course/level details)
-    const enrollmentFull = await prisma.enrollment.findUnique({
-      where: { id: enrollment.id },
-      include: {
-        class: { include: { level: { include: { pole: true } } } },
-        student: true,
-      },
-    });
-
     // Ensure family includes children list
     let familyWithChildren = payment.family;
     try {
@@ -899,23 +896,42 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
       console.warn('Impossible de récupérer les enfants pour le reçu (adminController):', err?.message || err);
     }
 
-    const familyPayments = await prisma.payment.findMany({
-      where: {
-        familyId: payment.familyId,
-        schoolYearId: payment.schoolYearId,
-      },
-      include: {
-        transactions: { orderBy: { createdAt: 'desc' } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    // Fetch all enrollments linked to this payment or fallback to the family's current year enrollments
+    let enrollmentRows = [];
+    const paymentEnrollmentIds = Array.isArray(payment.metadata?.enrollmentIds) ? payment.metadata.enrollmentIds : [];
+    if (paymentEnrollmentIds.length > 0) {
+      enrollmentRows = await prisma.enrollment.findMany({
+        where: {
+          id: { in: paymentEnrollmentIds },
+          student: { familyId: payment.familyId },
+          schoolYearId: payment.schoolYearId,
+        },
+        include: {
+          class: { include: { level: { include: { pole: true } } } },
+          student: true,
+        },
+      });
+    }
+
+    if (enrollmentRows.length === 0) {
+      enrollmentRows = await prisma.enrollment.findMany({
+        where: {
+          student: { familyId: payment.familyId },
+          schoolYearId: payment.schoolYearId,
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+        include: {
+          class: { include: { level: { include: { pole: true } } } },
+          student: true,
+        },
+      });
+    }
 
     // Generate invoice-like PDF file using shared utility
     const invoiceResult = await generateInvoicePDF(
       payment,
       familyWithChildren,
-      enrollmentFull ? [enrollmentFull] : [],
-      familyPayments,
+      enrollmentRows,
     );
     if (!invoiceResult) {
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
