@@ -95,6 +95,7 @@ async function generateInvoiceForPayment(paymentId) {
       include: {
         family: { include: { user: true } },
         schoolYear: true,
+        transactions: { orderBy: { createdAt: 'desc' } },
       },
     });
 
@@ -143,38 +144,31 @@ async function generateInvoiceForPayment(paymentId) {
             schoolYear: true,
           },
         },
+        student: true,
       },
     });
 
     console.log(`Génération facture pour ${paymentId} avec ${enrollments.length} inscriptions`);
 
-    // Fetch all children (students) of the family to include on the receipt
-    let children = [];
-    try {
-      children = await prisma.student.findMany({
-        where: { familyId: payment.familyId },
-        select: { id: true, firstName: true, lastName: true, dateOfBirth: true },
-        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-      });
-    } catch (err) {
-      console.warn('Impossible de récupérer les enfants de la famille pour la facture', err?.message || err);
+    // Derive the list of children concerned by these enrollments (unique)
+    const studentList = (enrollments || [])
+      .map((e) => e.student)
+      .filter(Boolean);
+    const uniqueStudentsMap = new Map();
+    for (const s of studentList) {
+      if (!s || !s.id) continue;
+      uniqueStudentsMap.set(String(s.id), { id: s.id, firstName: s.firstName, lastName: s.lastName, dateOfBirth: s.dateOfBirth });
     }
-
-    const familyWithChildren = { ...payment.family, children };
-
-    const familyPayments = await prisma.payment.findMany({
-      where: {
-        familyId: payment.familyId,
-        schoolYearId: payment.schoolYearId,
-      },
-      include: {
-        transactions: { orderBy: { createdAt: 'desc' } },
-      },
-      orderBy: { createdAt: 'desc' },
+    const uniqueStudents = Array.from(uniqueStudentsMap.values()).sort((a, b) => {
+      const la = (a.lastName || '').localeCompare(b.lastName || '');
+      if (la !== 0) return la;
+      return (a.firstName || '').localeCompare(b.firstName || '');
     });
 
+    const familyWithChildren = { ...payment.family, children: uniqueStudents };
+
     // Generate PDF invoice
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, familyPayments);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments);
     console.log(`✅ Facture générée: ${invoiceResult.filename}`);
 
     return invoiceResult;
@@ -843,10 +837,25 @@ function buildTransactionQuery(query = {}) {
     maxAmount,
   } = query;
 
+  // support multiple input names for family search (family, familyName, family_name)
+  const rawFamilyName = query.familyName || query.family || query.family_name || null;
+
   const where = {};
+  const paymentWhere = {};
 
   if (familyId) {
-    where.payment = { familyId };
+    paymentWhere.familyId = familyId;
+  }
+
+  if (rawFamilyName) {
+    // filter on related payment.family.familyName
+    paymentWhere.family = {
+      familyName: { contains: String(rawFamilyName), mode: 'insensitive' },
+    };
+  }
+
+  if (Object.keys(paymentWhere).length > 0) {
+    where.payment = paymentWhere;
   }
 
   if (payerName) {
@@ -1045,20 +1054,29 @@ async function updateTransactionStatus(req, res) {
 async function getTransactions(req, res) {
   try {
     const where = buildTransactionQuery(req.query);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.max(Math.min(parseInt(req.query.limit, 10) || 50, 100), 1);
+    const offset = (page - 1) * limit;
 
-    const transactions = await prisma.paymentTransaction.findMany({
-      where,
-      include: {
-        payment: {
-          include: {
-            family: true,
+    const [total, transactions] = await Promise.all([
+      prisma.paymentTransaction.count({ where }),
+      prisma.paymentTransaction.findMany({
+        where,
+        include: {
+          payment: {
+            include: {
+              family: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+    ]);
 
-    return res.json({ transactions });
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+    return res.json({ transactions, total, page, limit, totalPages });
   } catch (error) {
     console.error('Erreur getTransactions:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
@@ -2058,31 +2076,12 @@ async function generatePaymentReceiptPDF(req, res) {
       console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
     }
 
-    const familyPayments = await prisma.payment.findMany({
+    const enrolledCourses = await prisma.enrollment.findMany({
       where: {
         familyId: payment.familyId,
         schoolYearId: payment.schoolYearId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
       },
-      include: {
-        transactions: { orderBy: { createdAt: 'desc' } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    let enrollmentIds = Array.isArray(payment.metadata?.enrollmentIds) ? payment.metadata.enrollmentIds : [];
-    if (!enrollmentIds || enrollmentIds.length === 0) {
-      const fallbackEnrollments = await prisma.enrollment.findMany({
-        where: {
-          familyId: payment.familyId,
-          schoolYearId: payment.schoolYearId,
-          status: { in: ['PENDING', 'CONFIRMED'] },
-        },
-      });
-      enrollmentIds = fallbackEnrollments.map((e) => e.id);
-    }
-
-    const enrolledCourses = await prisma.enrollment.findMany({
-      where: { id: { in: enrollmentIds } },
       include: {
         class: {
           include: {
@@ -2093,7 +2092,7 @@ async function generatePaymentReceiptPDF(req, res) {
       },
     });
 
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrolledCourses, familyPayments);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrolledCourses);
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
@@ -2275,6 +2274,117 @@ async function downloadSepaMandatePdf(req, res) {
   }
 }
 
+async function updatePaymentDetails(req, res) {
+  try {
+    const { paymentId } = req.params;
+    const updates = req.body || {};
+
+    if (!paymentId) {
+      return res.status(400).json({ error: 'Identifiant paiement manquant' });
+    }
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { family: true, paymentPlan: true },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Paiement non trouvé' });
+    }
+
+    const paymentMethod = payment.paymentMethod || 'CHEQUE';
+    const isVirement = paymentMethod === 'VIREMENT';
+    const isCheque = paymentMethod === 'CHEQUE';
+
+    if (!isVirement && !isCheque) {
+      return res.status(400).json({ error: 'La modification n\'est pas disponible pour ce type de paiement' });
+    }
+
+    const metadata = payment.metadata || {};
+    const updateData = {};
+
+    // Update number of installments
+    if (updates.numberOfInstallments !== undefined) {
+      const installments = Number(updates.numberOfInstallments);
+      if (Number.isNaN(installments) || installments < 1 || installments > 12) {
+        return res.status(400).json({ error: 'Le nombre d\'échéances doit être entre 1 et 12' });
+      }
+      updateData.numberOfInstallments = installments;
+    }
+
+    // Update first payment date
+    if (updates.firstPaymentDate !== undefined && updates.firstPaymentDate) {
+      const date = new Date(updates.firstPaymentDate);
+      if (Number.isNaN(date.getTime())) {
+        return res.status(400).json({ error: 'Date première échéance invalide' });
+      }
+      metadata.firstPaymentDate = updates.firstPaymentDate;
+    }
+
+    // Update bank debit day (for VIREMENT and CHEQUE)
+    if (updates.bankDebitDay !== undefined) {
+      const day = Number(updates.bankDebitDay);
+      if (![10, 20, 30].includes(day)) {
+        return res.status(400).json({ error: 'Le jour de prélèvement doit être 10, 20 ou 30' });
+      }
+      metadata.bankDebitDay = day;
+    }
+
+    // Update IBAN (VIREMENT only)
+    if (isVirement && updates.bankDebitIban !== undefined && updates.bankDebitIban) {
+      const ibanNorm = String(updates.bankDebitIban).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (ibanNorm.length < 15) {
+        return res.status(400).json({ error: 'L\'IBAN doit avoir au moins 15 caractères' });
+      }
+      metadata.bankDebitIban = ibanNorm;
+    }
+
+    // Update SWIFT (VIREMENT only)
+    if (isVirement && updates.bankDebitSwift !== undefined && updates.bankDebitSwift) {
+      const swiftNorm = String(updates.bankDebitSwift).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (swiftNorm.length < 8) {
+        return res.status(400).json({ error: 'Le SWIFT/BIC doit avoir au moins 8 caractères' });
+      }
+      metadata.bankDebitSwift = swiftNorm;
+    }
+
+    // Merge metadata
+    updateData.metadata = {
+      ...(payment.metadata || {}),
+      ...metadata,
+    };
+
+    // Update payment
+    const updatedPayment = await prisma.payment.update({
+      where: { id: paymentId },
+      data: updateData,
+      include: { family: true, paymentPlan: true },
+    });
+
+    // Also update payment plan if it exists
+    if (payment.paymentPlan) {
+      await prisma.paymentPlan.update({
+        where: { id: payment.paymentPlan.id },
+        data: {
+          metadata: {
+            ...(payment.paymentPlan.metadata || {}),
+            ...metadata,
+          },
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Paiement modifié avec succès',
+      payment: updatedPayment,
+    });
+  } catch (error) {
+    console.error('Erreur updatePaymentDetails:', error);
+    return res.status(500).json({ error: error.message || 'Erreur serveur lors de la mise à jour du paiement' });
+  }
+}
+
 module.exports = {
   createFamilyEnrollmentPayment,
   createPaymentIntent,
@@ -2306,4 +2416,5 @@ module.exports = {
   finalizeStripePayment,
   cancelStripePayment,
   downloadSepaMandatePdf,
+  updatePaymentDetails,
 };
