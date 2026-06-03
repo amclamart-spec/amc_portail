@@ -32,6 +32,10 @@ function redirectWithError(res, message) {
 }
 
 async function issueTokensForUser(user) {
+  if (user.validationStatus && String(user.validationStatus).toUpperCase() !== 'APPROVED') {
+    throw new Error('Compte en attente d\'activation par un administrateur');
+  }
+
   const accessToken = generateAccessToken(user);
   const refreshToken = generateRefreshToken(user);
 
@@ -152,7 +156,19 @@ async function login(req, res) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
 
-    const { accessToken, refreshToken } = await issueTokensForUser(user);
+    // Prevent login for users not validated by admin
+    if (user.validationStatus && String(user.validationStatus).toUpperCase() !== 'APPROVED') {
+      return res.status(403).json({ error: "Compte en attente d'activation par un administrateur", validationStatus: user.validationStatus });
+    }
+
+    let accessToken;
+    let refreshToken;
+    try {
+      ({ accessToken, refreshToken } = await issueTokensForUser(user));
+    } catch (tokErr) {
+      console.error('Erreur issueTokensForUser:', tokErr);
+      return res.status(403).json({ error: tokErr.message || 'Compte en attente d\'activation' });
+    }
 
     res.json({
       accessToken,
@@ -250,6 +266,10 @@ async function refreshToken(req, res) {
 
     if (!user || user.refreshToken !== token) {
       return res.status(401).json({ error: 'Refresh token invalide' });
+    }
+
+    if (user.validationStatus && String(user.validationStatus).toUpperCase() !== 'APPROVED') {
+      return res.status(403).json({ error: 'Compte en attente d\'activation par un administrateur' });
     }
 
     const newAccessToken = generateAccessToken(user);

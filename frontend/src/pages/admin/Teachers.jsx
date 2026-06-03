@@ -24,6 +24,9 @@ const emptyForm = {
 export default function AdminTeachers() {
   const [teachers, setTeachers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [teacherSearch, setTeacherSearch] = useState('');
+  const [teacherStatusFilter, setTeacherStatusFilter] = useState('');
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState(null);
@@ -36,6 +39,32 @@ export default function AdminTeachers() {
     () => [...teachers].sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`)),
     [teachers]
   );
+
+  const filteredTeachers = useMemo(() => {
+    const search = teacherSearch.trim().toLowerCase();
+    return sortedTeachers.filter((teacher) => {
+      const fullname = `${teacher.lastName} ${teacher.firstName}`.toLowerCase();
+      const email = (teacher.email || '').toLowerCase();
+      const specialties = (teacher.specialties || []).join(' ').toLowerCase();
+      const matchesSearch = !search || fullname.includes(search) || email.includes(search) || specialties.includes(search);
+      const matchesStatus = !teacherStatusFilter || teacher.status === teacherStatusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [sortedTeachers, teacherSearch, teacherStatusFilter]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredTeachers.length / 10));
+  const currentPage = Math.min(page, pageCount);
+  const visibleTeachers = filteredTeachers.slice((currentPage - 1) * 10, currentPage * 10);
+
+  useEffect(() => {
+    if (page > pageCount) {
+      setPage(pageCount);
+    }
+  }, [page, pageCount]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [teacherSearch, teacherStatusFilter]);
 
   const fetchTeachers = async () => {
     setLoading(true);
@@ -156,8 +185,34 @@ export default function AdminTeachers() {
         {loading ? (
           <p>Chargement...</p>
         ) : (
-          <div className="table-container">
-            <table>
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 16, alignItems: 'flex-end' }}>
+              <div style={{ flex: '1 1 220px', minWidth: 220, maxWidth: 320 }}>
+                <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Recherche</label>
+                <input
+                  className="form-control"
+                  type="search"
+                  placeholder="Nom, email ou spécialité"
+                  value={teacherSearch}
+                  onChange={(e) => setTeacherSearch(e.target.value)}
+                />
+              </div>
+              <div style={{ width: 150, minWidth: 150 }}>
+                <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Statut</label>
+                <select
+                  className="form-control"
+                  value={teacherStatusFilter}
+                  onChange={(e) => setTeacherStatusFilter(e.target.value)}
+                >
+                  <option value="">Tous</option>
+                  <option value="ACTIVE">Actif</option>
+                  <option value="INACTIVE">Inactif</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="table-container">
+              <table>
               <thead>
                 <tr>
                   <th>Nom</th>
@@ -172,7 +227,7 @@ export default function AdminTeachers() {
                 {sortedTeachers.length === 0 ? (
                   <tr><td colSpan="6" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun professeur</td></tr>
                 ) : (
-                  sortedTeachers.map((teacher) => (
+                  visibleTeachers.map((teacher) => (
                     <tr key={teacher.id}>
                       <td style={{ fontWeight: 700 }}>{teacher.civility}. {teacher.lastName} {teacher.firstName}</td>
                       <td>{teacher.email}</td>
@@ -198,6 +253,15 @@ export default function AdminTeachers() {
               </tbody>
             </table>
           </div>
+
+            {sortedTeachers.length > 0 && pageCount > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                <button className="btn btn-outline" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Précédent</button>
+                <span style={{ color: '#374151' }}>Page {currentPage} / {pageCount}</span>
+                <button className="btn btn-outline" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Suivant</button>
+              </div>
+            )}
+          </>
         )}
       </div>
 

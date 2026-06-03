@@ -6,14 +6,21 @@ import { FiCheck, FiX, FiFilter } from 'react-icons/fi';
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('PENDING');
+  const [filterStatus, setFilterStatus] = useState('PENDING');
+  const [filterRole, setFilterRole] = useState('');
+  const [searchName, setSearchName] = useState('');
+  const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0 });
 
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const params = filter ? { status: filter } : {};
+      const params = { page: pagination.page, limit: pagination.limit };
+      if (filterStatus) params.status = filterStatus;
+      if (filterRole) params.role = filterRole;
+      if (searchName && searchName.trim()) params.name = searchName.trim();
       const { data } = await api.get('/admin/users', { params });
-      setUsers(data.users);
+      setUsers(data.users || []);
+      setPagination((prev) => ({ ...prev, page: data.page || prev.page, limit: data.limit || prev.limit, total: data.total || 0 }));
     } catch (err) {
       console.error(err);
     } finally {
@@ -21,7 +28,7 @@ export default function AdminUsers() {
     }
   };
 
-  useEffect(() => { fetchUsers(); }, [filter]);
+  useEffect(() => { fetchUsers(); }, [filterStatus, filterRole, searchName, pagination.page, pagination.limit]);
 
   const handleApprove = async (id) => {
     try {
@@ -58,8 +65,16 @@ export default function AdminUsers() {
 
       <div className="card" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
         <FiFilter />
-        <select className="form-control" style={{ width: 200 }} value={filter} onChange={(e) => setFilter(e.target.value)}>
-          <option value="">Tous</option>
+        <input placeholder="Recherche nom / email" className="form-control" style={{ width: 240 }} value={searchName} onChange={(e) => setSearchName(e.target.value)} />
+        <select className="form-control" style={{ width: 180 }} value={filterRole} onChange={(e) => setFilterRole(e.target.value)}>
+          <option value="">Tous rôles</option>
+          <option value="FAMILLE">FAMILLE</option>
+          <option value="PROFESSEUR">PROFESSEUR</option>
+          <option value="ADMIN">ADMIN</option>
+          <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+        </select>
+        <select className="form-control" style={{ width: 200 }} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+          <option value="">Tous statuts</option>
           <option value="PENDING">En attente</option>
           <option value="APPROVED">Validés</option>
           <option value="REJECTED">Refusés</option>
@@ -108,6 +123,14 @@ export default function AdminUsers() {
                 ))}
               </tbody>
             </table>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+              <div style={{ color: '#6B7280' }}>Total: {pagination.total}</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-outline" disabled={pagination.page <= 1 || loading} onClick={() => setPagination((p) => ({ ...p, page: Math.max(1, p.page - 1) }))}>Préc</button>
+                <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center' }}>Page {pagination.page}</div>
+                <button className="btn btn-outline" disabled={(pagination.page * pagination.limit) >= pagination.total || loading} onClick={() => setPagination((p) => ({ ...p, page: p.page + 1 }))}>Suiv</button>
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -65,7 +65,7 @@ export default function AdminDashboard() {
         <div className="stat-card">
           <div className="stat-icon success"><FiCheckCircle /></div>
           <div className="stat-info">
-            <h4>{stats?.enrollmentsByStatus?.CONFIRMED ?? 0}</h4>
+            <h4>{stats?.validatedEnrollmentsCount ?? stats?.enrollmentsByStatus?.CONFIRMED ?? 0}</h4>
             <p>Inscrits validés</p>
           </div>
         </div>

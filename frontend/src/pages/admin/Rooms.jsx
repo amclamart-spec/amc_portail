@@ -16,11 +16,39 @@ const emptyForm = {
 export default function AdminRooms() {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [roomSearch, setRoomSearch] = useState('');
+  const [roomStatusFilter, setRoomStatusFilter] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
   const sortedRooms = useMemo(() => [...rooms].sort((a, b) => a.name.localeCompare(b.name)), [rooms]);
+  const filteredRooms = useMemo(() => {
+    const search = roomSearch.trim().toLowerCase();
+    return sortedRooms.filter((room) => {
+      const title = (room.name || '').toLowerCase();
+      const location = (room.location || '').toLowerCase();
+      const equipments = (room.equipments || []).join(' ').toLowerCase();
+      const matchesSearch = !search || title.includes(search) || location.includes(search) || equipments.includes(search);
+      const matchesStatus = !roomStatusFilter || room.status === roomStatusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [sortedRooms, roomSearch, roomStatusFilter]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredRooms.length / 10));
+  const currentPage = Math.min(page, pageCount);
+  const visibleRooms = filteredRooms.slice((currentPage - 1) * 10, currentPage * 10);
+
+  useEffect(() => {
+    if (page > pageCount) {
+      setPage(pageCount);
+    }
+  }, [page, pageCount]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [roomSearch, roomStatusFilter]);
 
   const fetchRooms = async () => {
     setLoading(true);
@@ -129,49 +157,84 @@ export default function AdminRooms() {
         {loading ? (
           <p>Chargement...</p>
         ) : (
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nom</th>
-                  <th>Capacité</th>
-                  <th>Équipements</th>
-                  <th>Localisation</th>
-                  <th>Statut</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRooms.length === 0 ? (
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 16, alignItems: 'flex-end' }}>
+              <div style={{ flex: '1 1 220px', minWidth: 220, maxWidth: 300 }}>
+                <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Recherche</label>
+                <input
+                  className="form-control"
+                  type="search"
+                  placeholder="Nom, localisation ou équipements"
+                  value={roomSearch}
+                  onChange={(e) => setRoomSearch(e.target.value)}
+                />
+              </div>
+              <div style={{ width: 150, minWidth: 150 }}>
+                <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Statut</label>
+                <select
+                  className="form-control"
+                  value={roomStatusFilter}
+                  onChange={(e) => setRoomStatusFilter(e.target.value)}
+                >
+                  <option value="">Tous</option>
+                  <option value="ACTIVE">Active</option>
+                  <option value="INACTIVE">Inactive</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="table-container">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan="6" style={{ textAlign: 'center', color: '#6B7280' }}>Aucune salle</td>
+                    <th>Nom</th>
+                    <th>Capacité</th>
+                    <th>Équipements</th>
+                    <th>Localisation</th>
+                    <th>Statut</th>
+                    <th>Actions</th>
                   </tr>
-                ) : (
-                  sortedRooms.map((room) => (
-                    <tr key={room.id}>
-                      <td style={{ fontWeight: 700 }}>{room.name}</td>
-                      <td>{room.capacity}</td>
-                      <td>{(room.equipments || []).length ? room.equipments.join(', ') : '-'}</td>
-                      <td>{room.location || '-'}</td>
-                      <td>
-                        <span className={`badge ${room.status === 'ACTIVE' ? 'badge-success' : 'badge-warning'}`}>
-                          {room.status === 'ACTIVE' ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td style={{ display: 'flex', gap: 8 }}>
-                        <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(room)}>
-                          <FiEdit2 size={16} />
-                        </button>
-                        <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => handleDelete(room)}>
-                          <FiTrash2 size={16} />
-                        </button>
-                      </td>
+                </thead>
+                <tbody>
+                  {sortedRooms.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center', color: '#6B7280' }}>Aucune salle</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ) : (
+                    visibleRooms.map((room) => (
+                      <tr key={room.id}>
+                        <td style={{ fontWeight: 700 }}>{room.name}</td>
+                        <td>{room.capacity}</td>
+                        <td>{(room.equipments || []).length ? room.equipments.join(', ') : '-'}</td>
+                        <td>{room.location || '-'}</td>
+                        <td>
+                          <span className={`badge ${room.status === 'ACTIVE' ? 'badge-success' : 'badge-warning'}`}>
+                            {room.status === 'ACTIVE' ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td style={{ display: 'flex', gap: 8 }}>
+                          <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(room)}>
+                            <FiEdit2 size={16} />
+                          </button>
+                          <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => handleDelete(room)}>
+                            <FiTrash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {sortedRooms.length > 0 && pageCount > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                <button className="btn btn-outline" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Précédent</button>
+                <span style={{ color: '#374151' }}>Page {currentPage} / {pageCount}</span>
+                <button className="btn btn-outline" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Suivant</button>
+              </div>
+            )}
+          </>
         )}
       </div>
 

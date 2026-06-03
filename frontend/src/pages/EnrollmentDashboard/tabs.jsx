@@ -25,7 +25,7 @@ export const OverviewTab = ({ chartRefs = {}, stats }) => {
     ? [
         {
           name: 'Validées',
-          value: stats.enrollmentsByStatus?.CONFIRMED ?? 0,
+          value: stats.validatedEnrollmentsCount ?? stats.enrollmentsByStatus?.CONFIRMED ?? 0,
           fill: '#22c55e',
         },
         {
