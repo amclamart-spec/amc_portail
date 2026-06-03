@@ -23,6 +23,29 @@ export default function AdminLevels() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [levelForm, setLevelForm] = useState(emptyLevelForm);
+  const [poleFilters, setPoleFilters] = useState({});
+
+  const getPolePagination = (poleId, levels) => {
+    const { query = '', page = 1 } = poleFilters[poleId] || {};
+    const normalizedQuery = String(query || '').trim().toLowerCase();
+    const filteredLevels = normalizedQuery
+      ? levels.filter((level) => String(level.name || '').toLowerCase().includes(normalizedQuery))
+      : levels;
+    const pageCount = Math.max(1, Math.ceil(filteredLevels.length / 10));
+    const currentPage = Math.min(Math.max(1, Number(page) || 1), pageCount);
+    const pageLevels = filteredLevels.slice((currentPage - 1) * 10, currentPage * 10);
+    return { filteredLevels, pageLevels, pageCount, currentPage };
+  };
+
+  const updatePoleFilter = (poleId, partial) => {
+    setPoleFilters((prev) => ({
+      ...prev,
+      [poleId]: {
+        ...(prev[poleId] || { page: 1, query: '' }),
+        ...partial,
+      },
+    }));
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -201,47 +224,92 @@ export default function AdminLevels() {
                   </div>
                 </div>
 
-                <div className="table-container" style={{ marginTop: 10 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Ordre</th>
-                        <th>Code</th>
-                        <th>Nom</th>
-                        <th>Description</th>
-                        <th>Âge Min</th>
-                        <th>Âge Max</th>
-                        <th>Classes</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pole.levels.length === 0 ? (
-                        <tr><td colSpan="8" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun niveau</td></tr>
-                      ) : (
-                        pole.levels.map((level) => (
-                          <tr key={level.id}>
-                            <td>{level.sortOrder}</td>
-                            <td>{level.code}</td>
-                            <td>{level.name}</td>
-                            <td>{level.description || '-'}</td>
-                            <td>{level.minAge || '-'}</td>
-                            <td>{level.maxAge || '-'}</td>
-                            <td>{level._count?.classes || 0}</td>
-                            <td style={{ display: 'flex', gap: 8 }}>
-                              <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditLevel(level)}>
-                                <FiEdit2 size={16} />
-                              </button>
-                              <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => deleteLevel(level)}>
-                                <FiTrash2 size={16} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))
+                {(() => {
+                  const { filteredLevels, pageLevels, pageCount, currentPage } = getPolePagination(pole.id, pole.levels);
+                  const queryValue = poleFilters[pole.id]?.query || '';
+
+                  return (
+                    <>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <div style={{ flex: '0 1 240px', minWidth: 180 }}>
+                          <input
+                            className="form-control"
+                            placeholder="Filtrer par nom de niveau"
+                            value={queryValue}
+                            onChange={(event) => updatePoleFilter(pole.id, { query: event.target.value, page: 1 })}
+                          />
+                        </div>
+                        <div style={{ minWidth: 140, textAlign: 'right', color: '#374151' }}>
+                          {filteredLevels.length} niveau{filteredLevels.length > 1 ? 's' : ''}
+                        </div>
+                      </div>
+
+                      <div className="table-container" style={{ marginTop: 0 }}>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Ordre</th>
+                              <th>Code</th>
+                              <th>Nom</th>
+                              <th>Description</th>
+                              <th>Âge Min</th>
+                              <th>Âge Max</th>
+                              <th>Classes</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pageLevels.length === 0 ? (
+                              <tr><td colSpan="8" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun niveau</td></tr>
+                            ) : (
+                              pageLevels.map((level) => (
+                                <tr key={level.id}>
+                                  <td>{level.sortOrder}</td>
+                                  <td>{level.code}</td>
+                                  <td>{level.name}</td>
+                                  <td>{level.description || '-'}</td>
+                                  <td>{level.minAge || '-'}</td>
+                                  <td>{level.maxAge || '-'}</td>
+                                  <td>{level._count?.classes || 0}</td>
+                                  <td style={{ display: 'flex', gap: 8 }}>
+                                    <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditLevel(level)}>
+                                      <FiEdit2 size={16} />
+                                    </button>
+                                    <button className="btn btn-icon btn-danger" title="Supprimer" onClick={() => deleteLevel(level)}>
+                                      <FiTrash2 size={16} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {pageCount > 1 && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            disabled={currentPage <= 1}
+                            onClick={() => updatePoleFilter(pole.id, { page: currentPage - 1 })}
+                          >
+                            Précédent
+                          </button>
+                          <span style={{ color: '#374151' }}>Page {currentPage} / {pageCount}</span>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            disabled={currentPage >= pageCount}
+                            onClick={() => updatePoleFilter(pole.id, { page: currentPage + 1 })}
+                          >
+                            Suivant
+                          </button>
+                        </div>
                       )}
-                    </tbody>
-                  </table>
-                </div>
+                    </>
+                  );
+                })()}
               </div>
             ))}
           </div>
