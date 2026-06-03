@@ -243,8 +243,11 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
     try {
       const downloadUrl = resolveUploadUrl(ribUrl);
       if (!downloadUrl) throw new Error('URL RIB invalide');
-      const response = await api.get(downloadUrl, { responseType: 'blob' });
-      const blob = new Blob([response.data], { type: response.data.type || 'application/pdf' });
+      const response = await fetch(downloadUrl, { method: 'GET' });
+      if (!response.ok) {
+        throw new Error(`Erreur HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
       const objectUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = objectUrl;
