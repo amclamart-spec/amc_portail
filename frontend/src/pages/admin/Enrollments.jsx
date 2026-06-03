@@ -316,7 +316,7 @@ export default function AdminEnrollments() {
   const visibleEnrollments = enrollments || [];
   const confirmedCount = visibleEnrollments.filter((e) => e.status === 'CONFIRMED').length;
   const pendingCount = visibleEnrollments.filter((e) => e.status === 'PENDING').length;
-  const validationPendingCount = visibleEnrollments.filter((e) => e.student?.family?.user?.validationStatus === 'PENDING').length;
+  const validationPendingCount = visibleEnrollments.filter((e) => e.status !== 'CANCELLED' && e.levelValidated !== true).length;
 
   const groupedEnrollments = useMemo(() => {
     const groups = visibleEnrollments.reduce((acc, enrollment) => {

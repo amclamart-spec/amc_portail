@@ -172,7 +172,7 @@ function selectTieredTariffRow(rows, count) {
 }
 
 function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = {}) {
-  const { skipRegistrationFee = false, existingArabicCount = 0 } = options;
+  const { skipRegistrationFee = false, existingArabicCount = 0, totalFamilyEnrollmentsByPole = {} } = options;
   const registrationFee = skipRegistrationFee ? 0 : toNumber(pricing.registrationFee, DEFAULT_PRICING.registrationFee);
   const fraisPrelevement = toNumber(pricing.fraisPrelevement, DEFAULT_PRICING.fraisPrelevement);
   let totalFee = 0;
@@ -212,32 +212,33 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = 
   const coranCount = enrollments.filter((e) => String(e.poleName || '').toLowerCase().includes('coran')).length;
   const sciencesCount = enrollments.filter((e) => String(e.poleName || '').toLowerCase().includes('sciences') || String(e.poleName || '').toLowerCase().includes('science')).length;
 
-  // If we have custom tariff rows, use the grid
+  // If we have custom tariff rows, use the grid with family total counts
   if (hasCustomTariffRows) {
     for (const [poleKey, group] of enrollmentsByPole.entries()) {
       const sampleEnrollment = group[0];
       const matchingRows = getMatchingTariffRows(sampleEnrollment, pricing);
 
-      // For groupings (multiple students in same pole), try tiered pricing first
-      if (group.length > 1) {
-        const tierRow = selectTieredTariffRow(matchingRows, group.length);
-        if (tierRow && Number(tierRow.price) > 0) {
-          const price = toNumber(tierRow.price, 0);
-          const poleName = String(tierRow.poleName || sampleEnrollment.poleName || '').toLowerCase();
-          if (poleName.includes('arabe')) {
-            arabicFee += price;
-          } else if (poleName.includes('coran')) {
-            coranFee += price;
-          } else if (poleName.includes('sciences') || poleName.includes('science')) {
-            sciencesFee += price;
-          } else {
-            totalFee += price;
-          }
-          continue;
+      // Get the TOTAL count for this pole (existing + new)
+      const totalCountForPole = (totalFamilyEnrollmentsByPole[poleKey] || 0) + group.length;
+
+      // Try tiered pricing based on TOTAL family count for this pole
+      const tierRow = selectTieredTariffRow(matchingRows, totalCountForPole);
+      if (tierRow && Number(tierRow.price) > 0) {
+        const price = toNumber(tierRow.price, 0);
+        const poleName = String(tierRow.poleName || sampleEnrollment.poleName || '').toLowerCase();
+        if (poleName.includes('arabe')) {
+          arabicFee += price;
+        } else if (poleName.includes('coran')) {
+          coranFee += price;
+        } else if (poleName.includes('sciences') || poleName.includes('science')) {
+          sciencesFee += price;
+        } else {
+          totalFee += price;
         }
+        continue;
       }
 
-      // Individual pricing from tariff rows
+      // Fallback: Individual pricing from tariff rows
       for (const enrollment of group) {
         const matchingRowsForEnrollment = getMatchingTariffRows(enrollment, pricing);
         const tariffRow = findBestTariffRowForEnrollment(enrollment, matchingRowsForEnrollment);

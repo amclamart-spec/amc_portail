@@ -4,6 +4,8 @@ const { computeDashboardAlerts } = require('./adminAdvancedController');
 
 const prisma = new PrismaClient();
 
+const ACTIVE_ENROLLMENT_STATUSES = ['PENDING', 'CONFIRMED'];
+
 function toNumber(value) {
   if (value === null || value === undefined) return 0;
   const parsed = Number(value);
@@ -45,14 +47,14 @@ function normalizeSchoolYear(year, stats = null) {
 async function computeSchoolYearStats(schoolYearId) {
   const [classesCount, enrollmentsCount, studentsDistinct, familiesDistinct, paymentAgg, yearPayments] = await Promise.all([
     prisma.class.count({ where: { schoolYearId } }),
-    prisma.enrollment.count({ where: { schoolYearId } }),
+    prisma.enrollment.count({ where: { schoolYearId, status: { in: ACTIVE_ENROLLMENT_STATUSES } } }),
     prisma.enrollment.findMany({
-      where: { schoolYearId },
+      where: { schoolYearId, status: { in: ACTIVE_ENROLLMENT_STATUSES } },
       select: { studentId: true, student: { select: { familyId: true } } },
       distinct: ['studentId'],
     }),
     prisma.enrollment.findMany({
-      where: { schoolYearId },
+      where: { schoolYearId, status: { in: ACTIVE_ENROLLMENT_STATUSES } },
       select: { student: { select: { familyId: true } } },
       distinct: ['studentId'],
     }),

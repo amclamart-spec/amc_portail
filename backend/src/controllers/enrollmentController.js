@@ -173,8 +173,10 @@ async function getEnrollmentSummary(req, res) {
       enrollmentId: e.id,
       studentName: `${e.student.lastName} ${e.student.firstName}`,
       poleName: e.class.level.pole.name,
+      poleId: e.class.level.pole.id,
       levelName: e.class.level.name,
       levelCode: e.class.level.code,
+      levelId: e.class.level.id,
       schedule: `${e.class.dayOfWeek} ${e.class.startTime}-${e.class.endTime}`,
       status: e.status,
       room: e.class.room || null,
@@ -202,7 +204,34 @@ async function getEnrollmentSummary(req, res) {
     });
 
     const pricingConfig = await resolvePricingConfig(prisma);
-    const pricing = calculateFamilyTotal(enrollmentData, pricingConfig);
+    
+    // Build totalFamilyEnrollmentsByPole from the enrollments
+    const totalFamilyEnrollmentsByPole = {};
+    for (const e of enrollments) {
+      const poleName = String(e.class.level.pole.name || '').toLowerCase();
+      const poleId = e.class.level.pole.id || '';
+      const poleKey = poleId || poleName;
+      if (poleKey) {
+        totalFamilyEnrollmentsByPole[poleKey] = (totalFamilyEnrollmentsByPole[poleKey] || 0) + 1;
+      }
+    }
+    
+    // Count existing Arabic enrollments
+    const existingArabicCount = enrollments.filter((e) =>
+      String(e.class.level.pole.name || '').toLowerCase().includes('arabe')
+    ).length;
+
+    const pricingForCalculation = enrollments.map((e) => ({
+      poleId: e.class.level.pole.id,
+      levelId: e.class.level.id,
+      poleName: e.class.level.pole.name,
+      levelCode: e.class.level.code,
+    }));
+
+    const pricing = calculateFamilyTotal(pricingForCalculation, pricingConfig, {
+      totalFamilyEnrollmentsByPole,
+      existingArabicCount,
+    });
 
     res.json({
       enrollments: enhanced,

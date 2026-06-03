@@ -24,6 +24,7 @@ export default function AdminClasses() {
   const [rooms, setRooms] = useState([]);
   const [teachers, setTeachers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   const [filters, setFilters] = useState({ schoolYearId: '', poleId: '', levelId: '' });
 
@@ -60,8 +61,19 @@ export default function AdminClasses() {
   };
 
   useEffect(() => {
+    setPage(1);
     fetchData();
   }, [filters.schoolYearId, filters.poleId, filters.levelId]);
+
+  const pageCount = Math.max(1, Math.ceil(classes.length / 10));
+  const currentPage = Math.min(page, pageCount);
+  const visibleClasses = classes.slice((currentPage - 1) * 10, currentPage * 10);
+
+  useEffect(() => {
+    if (page > pageCount) {
+      setPage(pageCount);
+    }
+  }, [page, pageCount]);
 
   const filteredLevelsForForm = useMemo(() => {
     if (!form.poleId) return levels;
@@ -242,7 +254,7 @@ export default function AdminClasses() {
                 {classes.length === 0 ? (
                   <tr><td colSpan="9" style={{ textAlign: 'center', color: '#6B7280' }}>Aucune classe</td></tr>
                 ) : (
-                  classes.map((cls) => (
+                  visibleClasses.map((cls) => (
                     <tr key={cls.id}>
                       <td>{cls.pole?.name || cls.level?.pole?.name || '-'}</td>
                       <td>{cls.level?.name || '-'}</td>
@@ -266,6 +278,14 @@ export default function AdminClasses() {
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {classes.length > 0 && pageCount > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+            <button className="btn btn-outline" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Précédent</button>
+            <span style={{ color: '#374151' }}>Page {currentPage} / {pageCount}</span>
+            <button className="btn btn-outline" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Suivant</button>
           </div>
         )}
       </div>

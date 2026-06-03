@@ -79,7 +79,7 @@ const EnrollmentDashboard = () => {
         {
           id: 'confirmed',
           label: 'Inscrits validés',
-          value: dashboardStats.enrollmentsByStatus?.CONFIRMED ?? 0,
+          value: dashboardStats.validatedEnrollmentsCount ?? dashboardStats.enrollmentsByStatus?.CONFIRMED ?? 0,
           trend: 0,
           color: 'success',
           icon: FiCheckCircle,
