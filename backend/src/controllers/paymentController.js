@@ -2094,23 +2094,44 @@ async function generatePaymentReceiptPDF(req, res) {
       console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
     }
 
-    const enrolledCourses = await prisma.enrollment.findMany({
-      where: {
-        schoolYearId: payment.schoolYearId,
-        status: { in: ['PENDING', 'CONFIRMED'] },
-        student: {
-          familyId: payment.familyId,
+    let enrolledCourses = [];
+    const paymentEnrollmentIds = Array.isArray(payment.metadata?.enrollmentIds) ? payment.metadata.enrollmentIds : [];
+
+    if (paymentEnrollmentIds.length > 0) {
+      enrolledCourses = await prisma.enrollment.findMany({
+        where: {
+          id: { in: paymentEnrollmentIds },
+          student: { familyId: payment.familyId },
+          schoolYearId: payment.schoolYearId,
         },
-      },
-      include: {
-        class: {
-          include: {
-            level: { include: { pole: true } },
-            schoolYear: true,
+        include: {
+          class: {
+            include: {
+              level: { include: { pole: true } },
+            },
           },
+          student: true,
         },
-      },
-    });
+      });
+    }
+
+    if (enrolledCourses.length === 0) {
+      enrolledCourses = await prisma.enrollment.findMany({
+        where: {
+          student: { familyId: payment.familyId },
+          schoolYearId: payment.schoolYearId,
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+        include: {
+          class: {
+            include: {
+              level: { include: { pole: true } },
+            },
+          },
+          student: true,
+        },
+      });
+    }
 
     const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrolledCourses);
     if (!invoiceResult) {
