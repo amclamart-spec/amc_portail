@@ -701,13 +701,104 @@ async function createPaymentIntent(req, res) {
 
 async function recordOfflinePayment(req, res) {
   try {
-    const { paymentId, amount, method, description, transactionRef, payerName } = req.body;
+    const {
+      paymentId,
+      amount,
+      method,
+      description,
+      transactionRef,
+      payerName,
+      chequeCount,
+      chequeFirstDepositDate,
+      chequeDepositDay,
+      bankDebitIban,
+      bankDebitSwift,
+      bankDebitDay,
+      firstPaymentDate,
+      numberOfInstallments,
+    } = req.body;
+
+    let resolvedPaymentId = paymentId;
+    if (!resolvedPaymentId) {
+      const payerNorm = String(payerName || '').trim().toLowerCase();
+      const openPayments = await prisma.payment.findMany({
+        where: {
+          OR: [
+            { status: 'PENDING' },
+            { status: 'PARTIAL' },
+            { status: 'OVERDUE' },
+          ],
+        },
+        include: {
+          family: { include: { user: true } },
+          transactions: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      });
+
+      const hasRemaining = (candidate) => {
+        const total = Number(candidate.totalAmount || 0);
+        const paid = Number(candidate.paidAmount || 0);
+        return paid < total;
+      };
+
+      const matchesPayer = (candidate) => {
+        if (!payerNorm) return true;
+        const values = [
+          getDefaultPayerName(candidate.family),
+          candidate.family?.familyName,
+          candidate.transactions?.[0]?.payerName,
+        ]
+          .filter(Boolean)
+          .map((v) => String(v).trim().toLowerCase());
+        return values.some((v) => v.includes(payerNorm) || payerNorm.includes(v));
+      };
+
+      const withRemainingAndPayer = openPayments.find((candidate) => hasRemaining(candidate) && matchesPayer(candidate));
+      resolvedPaymentId = withRemainingAndPayer?.id || openPayments.find(hasRemaining)?.id || null;
+    }
+
+    if (!resolvedPaymentId) return res.status(400).json({ error: 'Paiement introuvable' });
+    if (!['CHEQUE', 'ESPECES', 'VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(String(method))) {
+      return res.status(400).json({ error: 'Méthode de paiement invalide' });
+    }
 
     const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
+      where: { id: resolvedPaymentId },
       include: { family: { include: { user: true } }, paymentPlan: true },
     });
     if (!payment) return res.status(404).json({ error: 'Paiement introuvable' });
+
+    const txMetadata = {};
+    const paymentMetadata = { ...(payment.metadata || {}) };
+
+    if (String(method) === 'CHEQUE') {
+      txMetadata.chequeCount = chequeCount ? Number(chequeCount) : null;
+      txMetadata.chequeFirstDepositDate = chequeFirstDepositDate || null;
+      txMetadata.chequeDepositDay = chequeDepositDay ? Number(chequeDepositDay) : null;
+      paymentMetadata.chequeCount = chequeCount ? Number(chequeCount) : paymentMetadata.chequeCount;
+      paymentMetadata.chequeFirstDepositDate = chequeFirstDepositDate || paymentMetadata.chequeFirstDepositDate;
+      paymentMetadata.chequeDepositDay = chequeDepositDay ? Number(chequeDepositDay) : paymentMetadata.chequeDepositDay;
+    }
+
+    if (String(method) === 'VIREMENT' || String(method) === 'PRELEVEMENT_BANCAIRE') {
+      const ibanNorm = bankDebitIban ? String(bankDebitIban).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+      const swiftNorm = bankDebitSwift ? String(bankDebitSwift).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+      txMetadata.bankDebitIban = ibanNorm;
+      txMetadata.bankDebitSwift = swiftNorm;
+      txMetadata.bankDebitDay = bankDebitDay ? Number(bankDebitDay) : null;
+      txMetadata.firstPaymentDate = firstPaymentDate || null;
+      txMetadata.bankDebitInstallmentsCount = numberOfInstallments ? Number(numberOfInstallments) : null;
+      paymentMetadata.bankDebitIban = ibanNorm;
+      paymentMetadata.bankDebitSwift = swiftNorm;
+      paymentMetadata.bankDebitDay = bankDebitDay ? Number(bankDebitDay) : paymentMetadata.bankDebitDay;
+      paymentMetadata.firstPaymentDate = firstPaymentDate || paymentMetadata.firstPaymentDate;
+      paymentMetadata.bankDebitInstallmentsCount = numberOfInstallments ? Number(numberOfInstallments) : paymentMetadata.bankDebitInstallmentsCount;
+    }
 
     const newPaidAmount = new Prisma.Decimal(payment.paidAmount).plus(toDecimal(amount));
     const isCompleted = newPaidAmount.greaterThanOrEqualTo(payment.totalAmount);
@@ -715,17 +806,20 @@ async function recordOfflinePayment(req, res) {
     const defaultPayerName = getDefaultPayerName(payment.family);
     const [updatedPayment, transaction] = await prisma.$transaction([
       prisma.payment.update({
-        where: { id: paymentId },
+        where: { id: resolvedPaymentId },
         data: {
           paidAmount: newPaidAmount,
           paymentMethod: method,
           provider: 'OFFLINE',
           status: isCompleted ? 'COMPLETED' : 'PARTIAL',
+          metadata: paymentMetadata,
+          ...(numberOfInstallments ? { numberOfInstallments: Number(numberOfInstallments) } : {}),
+          ...(chequeCount ? { numberOfInstallments: Number(chequeCount) } : {}),
         },
       }),
       prisma.paymentTransaction.create({
         data: {
-          paymentId,
+          paymentId: resolvedPaymentId,
           provider: 'OFFLINE',
           method,
           amount: toDecimal(amount),
@@ -733,6 +827,7 @@ async function recordOfflinePayment(req, res) {
           externalRef: transactionRef || null,
           payerName: payerName?.trim() || defaultPayerName,
           description: description || 'Paiement hors ligne',
+          metadata: Object.keys(txMetadata).length ? txMetadata : undefined,
           recordedById: req.user.id,
           processedAt: new Date(),
         },
@@ -747,13 +842,13 @@ async function recordOfflinePayment(req, res) {
     }
 
     if (isCompleted) {
-      await handlePaymentCompletionForEnrollment(paymentId);
+      await handlePaymentCompletionForEnrollment(resolvedPaymentId);
     }
 
     await prisma.financialEntry.create({
       data: {
         categoryId: await getOrCreateSystemCategory('Paiements cotisations', 'INCOME'),
-        paymentId,
+        paymentId: resolvedPaymentId,
         entryType: 'INCOME',
         amount: toDecimal(amount),
         description: description || 'Paiement famille',
@@ -983,8 +1078,8 @@ async function updateTransactionStatus(req, res) {
       });
     }
 
-    if (String(transaction.status) !== 'INITIATED') {
-      return res.status(403).json({ error: 'Seuls les paiements au statut Initié peuvent être modifiés' });
+    if (newStatus === 'SUCCEEDED' && String(transaction.status) !== 'INITIATED') {
+      return res.status(403).json({ error: 'Seuls les paiements au statut Initié peuvent être validés' });
     }
 
     // New rule: cannot validate a payment if any related enrollment has levelValidated === false
@@ -1856,7 +1951,7 @@ async function handleStripeWebhook(req, res) {
                   });
                 }
 
-                await handlePaymentCompletionForEnrollment(paymentId);
+      await handlePaymentCompletionForEnrollment(resolvedPaymentId);
               }
 
               await upsertStripePaymentTransaction({
@@ -2335,14 +2430,16 @@ async function updatePaymentDetails(req, res) {
 
     const paymentMethod = payment.paymentMethod || 'CHEQUE';
     const isVirement = paymentMethod === 'VIREMENT';
-    const isCheque = paymentMethod === 'CHEQUE';
-
-    if (!isVirement && !isCheque) {
-      return res.status(400).json({ error: 'La modification n\'est pas disponible pour ce type de paiement' });
-    }
-
     const metadata = payment.metadata || {};
     const updateData = {};
+
+    if (updates.totalAmount !== undefined) {
+      const totalAmount = Number(updates.totalAmount);
+      if (Number.isNaN(totalAmount) || totalAmount <= 0) {
+        return res.status(400).json({ error: 'Le montant doit être supérieur à 0' });
+      }
+      updateData.totalAmount = toDecimal(totalAmount);
+    }
 
     // Update number of installments
     if (updates.numberOfInstallments !== undefined) {
@@ -2394,6 +2491,10 @@ async function updatePaymentDetails(req, res) {
       ...(payment.metadata || {}),
       ...metadata,
     };
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'Aucune modification à enregistrer' });
+    }
 
     // Update payment
     const updatedPayment = await prisma.payment.update({

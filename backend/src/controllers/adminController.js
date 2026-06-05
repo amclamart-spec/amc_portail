@@ -897,24 +897,31 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
       return res.status(404).json({ error: 'Paiement introuvable' });
     }
 
-    // Ensure family includes children list
     let familyWithChildren = payment.family;
+    let familyChildren = [];
     try {
-      const children = await prisma.student.findMany({ where: { familyId: payment.familyId }, select: { id: true, firstName: true, lastName: true, dateOfBirth: true }, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }] });
-      familyWithChildren = { ...payment.family, children };
+      familyChildren = await prisma.student.findMany({ where: { familyId: payment.familyId }, select: { id: true, firstName: true, lastName: true, dateOfBirth: true }, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }] });
+      familyWithChildren = { ...payment.family, children: familyChildren };
     } catch (err) {
       console.warn('Impossible de récupérer les enfants pour le reçu (adminController):', err?.message || err);
     }
 
-    // Fetch all enrollments linked to this payment or fallback to the family's current year enrollments
+    const familyStudentMap = new Map(
+      familyChildren
+        .map((student) => [normalizeId(student.id), student])
+        .filter(([studentId]) => Boolean(studentId)),
+    );
+
     let enrollmentRows = [];
-    const paymentEnrollmentIds = Array.isArray(payment.metadata?.enrollmentIds) ? payment.metadata.enrollmentIds : [];
+    const paymentEnrollmentIds = Array.isArray(payment.metadata?.enrollmentIds)
+      ? payment.metadata.enrollmentIds.map((id) => normalizeId(id)).filter(Boolean)
+      : [];
+
     if (paymentEnrollmentIds.length > 0) {
       enrollmentRows = await prisma.enrollment.findMany({
         where: {
           id: { in: paymentEnrollmentIds },
           student: { familyId: payment.familyId },
-          schoolYearId: payment.schoolYearId,
         },
         include: {
           class: { include: { level: { include: { pole: true } } } },
@@ -928,7 +935,6 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
         where: {
           student: { familyId: payment.familyId },
           schoolYearId: payment.schoolYearId,
-          status: { in: ['PENDING', 'CONFIRMED'] },
         },
         include: {
           class: { include: { level: { include: { pole: true } } } },
@@ -936,6 +942,51 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
         },
       });
     }
+
+    if (enrollmentRows.length === 0 && enrollmentId) {
+      const singleEnrollment = await prisma.enrollment.findUnique({
+        where: { id: normalizeId(enrollmentId) },
+        include: {
+          class: { include: { level: { include: { pole: true } } } },
+          student: true,
+        },
+      });
+      if (singleEnrollment && singleEnrollment.student?.familyId === payment.familyId) {
+        enrollmentRows = [singleEnrollment];
+      }
+    }
+
+    const missingStudentIds = [...new Set(
+      enrollmentRows
+        .filter((row) => !row.student || (!row.student.firstName && !row.student.lastName))
+        .map((row) => normalizeId(row.studentId))
+        .filter(Boolean),
+    )];
+
+    if (missingStudentIds.length > 0) {
+      const missingStudents = await prisma.student.findMany({ where: { id: { in: missingStudentIds } } });
+      missingStudents.forEach((student) => {
+        const studentId = normalizeId(student.id);
+        if (studentId) {
+          familyStudentMap.set(studentId, student);
+        }
+      });
+    }
+
+    enrollmentRows = enrollmentRows.map((row) => {
+      const studentId = normalizeId(row.studentId);
+      const fallbackStudent = familyStudentMap.get(studentId);
+      const firstName = normalizeId(row.student?.firstName) || normalizeId(fallbackStudent?.firstName);
+      const lastName = normalizeId(row.student?.lastName) || normalizeId(fallbackStudent?.lastName);
+      return {
+        ...row,
+        student: {
+          ...(row.student || fallbackStudent || {}),
+          firstName: firstName || '',
+          lastName: lastName || '',
+        },
+      };
+    });
 
     // Generate invoice-like PDF file using shared utility
     const invoiceResult = await generateInvoicePDF(
@@ -2155,6 +2206,68 @@ async function getClassDetails(req, res) {
   }
 }
 
+async function getClassWaitlist(req, res) {
+  try {
+    const { id } = req.params;
+    const cls = await prisma.class.findUnique({
+      where: { id },
+      select: { id: true, status: true, enrolledCount: true, capacity: true },
+    });
+
+    if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
+
+    const waitlistEnrollments = await prisma.enrollment.findMany({
+      where: {
+        classId: id,
+        status: 'PENDING',
+        OR: [
+          { class: { status: 'FULL' } },
+          { comment: { contains: 'liste d\'attente', mode: 'insensitive' } },
+        ],
+      },
+      include: {
+        student: {
+          include: {
+            family: {
+              include: {
+                user: { select: { email: true, phone: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const waitlist = waitlistEnrollments.map((enrollment, index) => ({
+      id: enrollment.id,
+      studentId: enrollment.studentId,
+      studentFirstName: enrollment.student.firstName,
+      studentLastName: enrollment.student.lastName,
+      dateOfBirth: enrollment.student.dateOfBirth,
+      enrolledAt: enrollment.enrolledAt,
+      createdAt: enrollment.createdAt,
+      familyEmail: enrollment.student.family?.user?.email || null,
+      familyPhone: enrollment.student.family?.user?.phone || null,
+      waitlistOrder: index + 1,
+    }));
+
+    return res.json({
+      class: {
+        id: cls.id,
+        status: cls.status,
+        enrolledCount: cls.enrolledCount,
+        capacity: cls.capacity,
+        isFull: cls.status === 'FULL' || cls.enrolledCount >= cls.capacity,
+      },
+      waitlist,
+    });
+  } catch (error) {
+    console.error('Erreur getClassWaitlist:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 async function createClass(req, res) {
   try {
     const {
@@ -2839,6 +2952,7 @@ module.exports = {
 
   getClasses,
   getClassDetails,
+  getClassWaitlist,
   createClass,
   updateClass,
   deleteClass,
