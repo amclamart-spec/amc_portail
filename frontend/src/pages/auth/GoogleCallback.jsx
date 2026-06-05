@@ -10,6 +10,8 @@ export default function GoogleCallback() {
   const accessToken = useMemo(() => searchParams.get('accessToken'), [searchParams]);
   const refreshToken = useMemo(() => searchParams.get('refreshToken'), [searchParams]);
   const error = useMemo(() => searchParams.get('error'), [searchParams]);
+  const code = useMemo(() => searchParams.get('code'), [searchParams]);
+  const state = useMemo(() => searchParams.get('state'), [searchParams]);
 
   useEffect(() => {
     if (error) {
@@ -17,15 +19,23 @@ export default function GoogleCallback() {
       return;
     }
 
-    if (!accessToken || !refreshToken) {
-      navigate('/login?oauth_error=Réponse OAuth invalide', { replace: true });
+    if (accessToken && refreshToken) {
+      completeOAuthLogin(accessToken, refreshToken).catch(() => {
+        navigate('/login?oauth_error=Impossible de finaliser la connexion Google', { replace: true });
+      });
       return;
     }
 
-    completeOAuthLogin(accessToken, refreshToken).catch(() => {
-      navigate('/login?oauth_error=Impossible de finaliser la connexion Google', { replace: true });
-    });
-  }, [accessToken, refreshToken, error, completeOAuthLogin, navigate]);
+    if (code && state) {
+      const apiBase = import.meta.env.VITE_API_URL || '/api';
+      const cleanBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase;
+      const callbackUrl = `${cleanBase}/auth/google/callback?${searchParams.toString()}`;
+      window.location.replace(callbackUrl);
+      return;
+    }
+
+    navigate('/login?oauth_error=Réponse OAuth invalide', { replace: true });
+  }, [accessToken, refreshToken, error, code, state, completeOAuthLogin, navigate, searchParams]);
 
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#F3F4F6' }}>
