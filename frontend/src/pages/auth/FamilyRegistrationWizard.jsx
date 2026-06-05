@@ -93,7 +93,7 @@ function getDefaultState(prefill = {}) {
       signedAt: new Date().toISOString().slice(0, 10),
     },
     payment: {
-      method: 'CARTE_BANCAIRE',
+      method: '',
       installmentsCount: 1,
       scheduleDay: 10,
       firstPaymentDate: new Date().toISOString().slice(0, 10),
@@ -189,6 +189,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [activeHealthMember, setActiveHealthMember] = useState(0);
   const [emailError, setEmailError] = useState('');
   const [sepaCheckout, setSepaCheckout] = useState(null);
+  const [familyStudents, setFamilyStudents] = useState([]);
   const stripePromise = useMemo(() => {
     const key = import.meta.env.VITE_STRIPE_PUBLIC_KEY || '';
     return key ? loadStripe(key) : null;
@@ -347,6 +348,13 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       .then(({ data }) => setAllClasses(data.classes || []))
       .catch(() => toast.error('Impossible de charger les créneaux'))
       .finally(() => setLoadingClasses(false));
+    if (existingFamily) {
+      api.get('/family/profile').then(({ data }) => {
+        setFamilyStudents(data.family?.students || []);
+      }).catch(() => {
+        // ignore
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -485,6 +493,32 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     }));
   };
 
+  const addExistingStudentToWizard = (student) => {
+    // avoid duplicates by matching id or name+dob
+    const exists = wizard.members.some((m) => (m.id && m.id === student.id) || (m.firstName === student.firstName && m.lastName === student.lastName && m.dateOfBirth === student.dateOfBirth));
+    if (exists) {
+      toast.error('Cet enfant est déjà ajouté');
+      return;
+    }
+
+    const member = {
+      id: student.id,
+      firstName: student.firstName || '',
+      lastName: student.lastName || '',
+      dateOfBirth: student.dateOfBirth ? student.dateOfBirth.split('T')[0] : '',
+      gender: student.gender || 'GARCON',
+      photoBase64: '',
+      photoUrl: student.photoUrl || '',
+      isOldStudent: true,
+    };
+
+    setWizard((prev) => ({
+      ...prev,
+      members: [...prev.members, member],
+    }));
+    toast.success('Enfant ajouté');
+  };
+
   const validateStep = async () => {
     if (!existingFamily && step === 0) {
       const a = wizard.address;
@@ -565,6 +599,10 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
     if ((existingFamily && step === 4) || (!existingFamily && step === 5)) {
       const p = wizard.payment;
+      if (!p.method) {
+        toast.error('Veuillez sélectionner un mode de paiement');
+        return false;
+      }
       if ((p.method === 'STRIPE_CARD' || p.method === 'STRIPE_SEPA') && p.installmentsCount > 1 && ![10, 20, 30].includes(Number(p.scheduleDay))) {
         toast.error('Jour de prélèvement invalide (10/20/30)');
         return false;
@@ -636,6 +674,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     if (step !== stepPaymentIndex) return true;
 
     const p = wizard.payment;
+
+    if (!p.method) return false;
 
     if ((p.method === 'STRIPE_CARD' || p.method === 'STRIPE_SEPA') && p.installmentsCount > 1) {
       if (![10, 20, 30].includes(Number(p.scheduleDay))) return false;
@@ -952,6 +992,25 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         {((step === 0 && existingFamily) || (step === 1 && !existingFamily)) && (
           <div>
             <h3>Membres de la famille</h3>
+            {existingFamily && familyStudents && familyStudents.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <h4 style={{ margin: '0 0 8px 0' }}>Enfants déjà enregistrés</h4>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {familyStudents.map((s) => (
+                    <div key={s.id} className="card" style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <strong>{s.firstName} {s.lastName}</strong>
+                        <div style={{ color: '#64748B', fontSize: 13 }}>{s.dateOfBirth ? s.dateOfBirth.split('T')[0] : ''}</div>
+                      </div>
+                      <div>
+                        <button className="btn btn-outline btn-sm" onClick={() => addExistingStudentToWizard(s)}>Ajouter</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'grid', gap: 10, padding: 12, border: '1px solid #E2E8F0', borderRadius: 12, background: '#ffffff' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1.7fr 1fr 0.9fr', gap: 10, alignItems: 'center' }} className="member-inline-row">
                 <div className="form-group member-inline">
@@ -1508,6 +1567,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                     const method = e.target.value;
                     updateWizard('payment', { method });
                   }}>
+                    <option value="" disabled>-- Sélectionner un mode de paiement --</option>
                     <option value="CARTE_BANCAIRE">Carte bancaire (au secrétariat)</option>
                     {/* <option value="STRIPE_CARD">Carte bancaire (en ligne)</option> */}
                     <option value="PRELEVEMENT_BANCAIRE">Prélèvement bancaire</option>

@@ -92,7 +92,7 @@ export default function FamilyDashboard() {
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <Link to="/famille/inscription/nouveau" className="btn btn-primary">
-                <FiPlus /> Inscrire un nouveau membre
+                <FiPlus /> Nouvelle inscription
               </Link>
               <Link to="/famille/suivi-pedagogique" className="btn btn-outline">
                 Voir le suivi pédagogique

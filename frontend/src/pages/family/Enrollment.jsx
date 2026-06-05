@@ -112,10 +112,10 @@ export default function FamilyEnrollment() {
             <p>Aucune inscription trouv�e pour votre famille.</p>
             <button
               className="btn btn-primary"
-              onClick={() => navigate('/famille/inscription/nouveau')}
-            >
-              Inscrire un nouveau membre
-            </button>
+                onClick={() => navigate('/famille/inscription/nouveau')}
+              >
+                Nouvelle inscription
+              </button>
           </div>
         )}
       </div>

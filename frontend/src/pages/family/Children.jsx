@@ -106,7 +106,7 @@ export default function FamilyChildren() {
       <div className="flex-between mb-2">
         <h2 style={{ color: 'var(--amc-primary)' }}>Mes enfants</h2>
         <button className="btn btn-outline" onClick={() => navigate('/famille/inscription/nouveau')}>
-          <FiPlus /> Inscrire un nouveau membre
+          <FiPlus /> Nouvelle inscription
         </button>
       </div>
 
@@ -115,7 +115,7 @@ export default function FamilyChildren() {
         <div className="card" style={{ textAlign: 'center', padding: 40 }}>
           <p style={{ fontSize: 16, color: '#6B7280', marginBottom: 16 }}>Aucun enfant enregistré</p>
           <button className="btn btn-primary" onClick={() => navigate('/famille/inscription/nouveau')}>
-            <FiPlus /> Inscrire un nouveau membre
+            <FiPlus /> Nouvelle inscription
           </button>
         </div>
       ) : (
