@@ -35,6 +35,22 @@ export default function AdminClassDetails() {
   }, [id]);
 
   const students = useMemo(() => classData?.enrollments || [], [classData]);
+  const STUDENTS_PER_PAGE = 15;
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const totalPages = Math.max(1, Math.ceil(students.length / STUDENTS_PER_PAGE));
+  const paginatedStudents = useMemo(() => {
+    const start = (currentPage - 1) * STUDENTS_PER_PAGE;
+    return students.slice(start, start + STUDENTS_PER_PAGE);
+  }, [students, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage((prev) => Math.min(prev, totalPages));
+  }, [totalPages]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [id]);
 
   const removeStudent = async (enrollmentId) => {
     const ok = window.confirm('Retirer cet élève de la classe ?');
@@ -117,6 +133,10 @@ export default function AdminClassDetails() {
   if (!classData) return <p>Classe introuvable.</p>;
 
   const teacherName = classData.teacher ? `${classData.teacher.firstName} ${classData.teacher.lastName}` : '-';
+  const classStatusLabel = {
+    OPEN: 'Ouverte',
+    CLOSED: 'Fermée',
+  }[classData.status] || classData.status || '-';
 
   return (
     <div>
@@ -136,7 +156,7 @@ export default function AdminClassDetails() {
           <InfoItem label="Créneau" value={`${classData.dayOfWeek} ${classData.startTime}-${classData.endTime}`} />
           <InfoItem label="Professeur" value={teacherName} />
           <InfoItem label="Effectif" value={`${classData.enrolledCount}/${classData.capacity} ${classData.fillIndicator?.label || ''}`} />
-          <InfoItem label="Statut" value={classData.status} />
+          <InfoItem label="Statut" value={classStatusLabel} />
         </div>
 
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -173,7 +193,7 @@ export default function AdminClassDetails() {
               {students.length === 0 ? (
                 <tr><td colSpan="5" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun élève inscrit</td></tr>
               ) : (
-                students.map((enrollment) => {
+                paginatedStudents.map((enrollment) => {
                   const student = enrollment.student;
                   const familyUser = student.family?.user;
                   const age = Math.floor((Date.now() - new Date(student.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
@@ -193,6 +213,33 @@ export default function AdminClassDetails() {
             </tbody>
           </table>
         </div>
+
+        {students.length > STUDENTS_PER_PAGE && (
+          <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ color: '#6B7280', fontSize: 14 }}>
+              Affichage {Math.min((currentPage - 1) * STUDENTS_PER_PAGE + 1, students.length)}-{Math.min(currentPage * STUDENTS_PER_PAGE, students.length)} / {students.length}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+              >
+                Précédent
+              </button>
+              <span style={{ fontSize: 14, color: '#374151' }}>
+                Page {currentPage} / {totalPages}
+              </span>
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Suivant
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="card">

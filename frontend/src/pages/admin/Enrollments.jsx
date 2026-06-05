@@ -2112,7 +2112,7 @@ export default function AdminEnrollments() {
                           </td>
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                              {canActionPayment(payment) ? (
+                              {canActionPayment(payment) && (
                                 <>
                                   <button
                                     type="button"
@@ -2135,10 +2135,6 @@ export default function AdminEnrollments() {
                                     <FiXCircle size={16} />
                                   </button>
                                 </>
-                              ) : (
-                                <span style={{ color: '#16a34a', fontWeight: 600, marginLeft: 8 }}>
-                                  Validé
-                                </span>
                               )}
                               <button
                                 type="button"
