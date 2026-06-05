@@ -37,6 +37,7 @@ const {
 
   getClasses,
   getClassDetails,
+  getClassWaitlist,
   createClass,
   updateClass,
   deleteClass,
@@ -171,6 +172,7 @@ router.get('/timeslots', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTim
 // Classes
 router.get('/classes', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getClasses);
 router.get('/classes/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getClassDetails);
+router.get('/classes/:id/waitlist', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getClassWaitlist);
 router.post('/classes', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createClass);
 router.put('/classes/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updateClass);
 router.delete('/classes/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), deleteClass);

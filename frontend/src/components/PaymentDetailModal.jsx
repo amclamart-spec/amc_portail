@@ -120,6 +120,8 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   const [refundCodeValidated, setRefundCodeValidated] = useState(false);
   const [refundCodeValidating, setRefundCodeValidating] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [localPayment, setLocalPayment] = useState(null);
+  const [editAmount, setEditAmount] = useState('');
   const [editNumberOfInstallments, setEditNumberOfInstallments] = useState('');
   const [editFirstPaymentDate, setEditFirstPaymentDate] = useState('');
   const [editBankDebitDay, setEditBankDebitDay] = useState('');
@@ -128,7 +130,7 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   const [editSubmitting, setEditSubmitting] = useState(false);
 
   const paymentId = transaction?.paymentId;
-  const payment = transaction?.payment || transaction || {};
+  const payment = localPayment || transaction?.payment || transaction || {};
   const bankDebitMetadata = payment.metadata || transaction?.metadata || {};
   const bankDebitIbanRaw = bankDebitMetadata.bankDebitIban || payment.bankDebitIban || transaction?.bankDebitIban;
   const bankDebitSwiftRaw = bankDebitMetadata.bankDebitSwift || payment.bankDebitSwift || transaction?.bankDebitSwift;
@@ -140,6 +142,7 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   useEffect(() => {
     if (!isOpen) {
       setRefunds([]);
+      setLocalPayment(null);
       setRefundAccessCode('');
       setRefundCodeValidated(false);
       setRefundCodeValidating(false);
@@ -148,6 +151,7 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
       setReason('');
       setError('');
       setEditMode(false);
+      setEditAmount('');
       setEditNumberOfInstallments('');
       setEditFirstPaymentDate('');
       setEditBankDebitDay('');
@@ -156,10 +160,12 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
       return;
     }
 
+    setLocalPayment(transaction?.payment || transaction || null);
+
     if (paymentId) {
       loadRefunds();
     }
-  }, [isOpen, paymentId]);
+  }, [isOpen, paymentId, transaction]);
 
   async function loadRefunds() {
     setLoading(true);
@@ -253,6 +259,8 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   };
 
   const startEditing = () => {
+    const currentAmount = payment.totalAmount ?? transaction?.amount;
+    setEditAmount(currentAmount !== undefined && currentAmount !== null ? String(Number(currentAmount)) : '');
     setEditNumberOfInstallments(String(bankDebitInstallmentsCount || ''));
     setEditFirstPaymentDate(bankDebitMetadata.firstPaymentDate ? bankDebitMetadata.firstPaymentDate.split('T')[0] : '');
     setEditBankDebitDay(String(bankDebitDay || ''));
@@ -263,6 +271,7 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
 
   const cancelEditing = () => {
     setEditMode(false);
+    setEditAmount('');
     setEditNumberOfInstallments('');
     setEditFirstPaymentDate('');
     setEditBankDebitDay('');
@@ -279,15 +288,19 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
     const paymentMethod = transaction?.method || payment.paymentMethod || 'CHEQUE';
     const isVirement = paymentMethod === 'VIREMENT' || paymentMethod === 'PRELEVEMENT_BANCAIRE';
     const isCheque = paymentMethod === 'CHEQUE';
-
-    if (!isVirement && !isCheque) {
-      toast.error('La modification n\'est pas disponible pour ce type de paiement');
-      return;
-    }
-
+    const canEditSchedule = isVirement || isCheque;
     const updates = {};
 
-    if (editNumberOfInstallments) {
+    if (editAmount !== '') {
+      const nextAmount = Number(editAmount);
+      if (Number.isNaN(nextAmount) || nextAmount <= 0) {
+        toast.error('Le montant doit être supérieur à 0');
+        return;
+      }
+      updates.totalAmount = nextAmount;
+    }
+
+    if (canEditSchedule && editNumberOfInstallments) {
       const installments = Number(editNumberOfInstallments);
       if (Number.isNaN(installments) || installments < 1 || installments > 12) {
         toast.error('Le nombre d\'échéances doit être entre 1 et 12');
@@ -296,11 +309,11 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
       updates.numberOfInstallments = installments;
     }
 
-    if (editFirstPaymentDate) {
+    if (canEditSchedule && editFirstPaymentDate) {
       updates.firstPaymentDate = editFirstPaymentDate;
     }
 
-    if (editBankDebitDay) {
+    if (canEditSchedule && editBankDebitDay) {
       const day = Number(editBankDebitDay);
       if (Number.isNaN(day) || ![10, 20, 30].includes(day)) {
         toast.error('Le jour de prélèvement doit être 10, 20 ou 30');
@@ -336,7 +349,8 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
 
     setEditSubmitting(true);
     try {
-      await api.patch(`/payments/${paymentId}`, updates);
+      const { data } = await api.patch(`/payments/${paymentId}`, updates);
+      setLocalPayment(data?.payment || localPayment);
       toast.success('Paiement modifié avec succès');
       setEditMode(false);
       if (typeof onRefundCreated === 'function') {
@@ -540,6 +554,18 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
             </>
           ) : (
             <div style={{ display: 'grid', gap: 12 }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Montant total</label>
+                <input
+                  type="number"
+                  className="form-control"
+                  step="0.01"
+                  min="0.01"
+                  value={editAmount}
+                  onChange={(e) => setEditAmount(e.target.value)}
+                />
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Nombre d&apos;échéances</label>

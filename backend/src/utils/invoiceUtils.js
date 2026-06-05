@@ -106,15 +106,19 @@ function getPaymentDetails(paymentData) {
     }
   }
 
-  if (methodKey === 'CHEQUE' || metadata.chequeDepositDay !== undefined || metadata.chequeFirstPaymentDate) {
+  if (methodKey === 'CHEQUE' || metadata.chequeDepositDay !== undefined || metadata.chequeFirstPaymentDate || metadata.bankDebitDay !== undefined || metadata.firstPaymentDate) {
     if (installments > 0) {
       details.push({ label: 'Nombre de chèques', value: String(installments) });
     }
-    if (metadata.chequeFirstPaymentDate) {
-      details.push({ label: 'Date dépôt chèque', value: formatDateValue(metadata.chequeFirstPaymentDate) || metadata.chequeFirstPaymentDate });
+    const chequeDepositDate = metadata.chequeFirstPaymentDate || metadata.firstPaymentDate;
+    if (chequeDepositDate) {
+      details.push({ label: 'Date dépôt chèque', value: formatDateValue(chequeDepositDate) || chequeDepositDate });
     }
-    if (metadata.chequeDepositDay !== undefined && metadata.chequeDepositDay !== null) {
-      details.push({ label: 'Jour de dépôt', value: String(metadata.chequeDepositDay) });
+    const chequeDepositDay = metadata.chequeDepositDay !== undefined && metadata.chequeDepositDay !== null
+      ? metadata.chequeDepositDay
+      : metadata.bankDebitDay;
+    if (chequeDepositDay !== undefined && chequeDepositDay !== null) {
+      details.push({ label: 'Jour de dépôt', value: String(chequeDepositDay) });
     }
   }
 

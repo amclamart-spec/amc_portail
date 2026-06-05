@@ -28,6 +28,13 @@ export default function AdminClasses() {
 
   const [filters, setFilters] = useState({ schoolYearId: '', poleId: '', levelId: '' });
 
+  const [waitlistModalOpen, setWaitlistModalOpen] = useState(false);
+  const [waitlistLoading, setWaitlistLoading] = useState(false);
+  const [waitlistClass, setWaitlistClass] = useState(null);
+  const [waitlistStudents, setWaitlistStudents] = useState([]);
+  const [waitlistPage, setWaitlistPage] = useState(1);
+  const WAITLIST_PER_PAGE = 10;
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -182,7 +189,31 @@ export default function AdminClasses() {
     }
   };
 
+  const openWaitlistModal = async (cls) => {
+    setWaitlistModalOpen(true);
+    setWaitlistLoading(true);
+    setWaitlistClass(cls);
+    setWaitlistStudents([]);
+    setWaitlistPage(1);
+
+    try {
+      const { data } = await api.get(`/admin/classes/${cls.id}/waitlist`);
+      const sorted = (data.waitlist || []).slice().sort((a, b) => (a.waitlistOrder || 0) - (b.waitlistOrder || 0));
+      setWaitlistStudents(sorted);
+    } catch (error) {
+      console.error(error);
+      toast.error(error?.response?.data?.error || 'Impossible de charger la liste d\'attente');
+      setWaitlistModalOpen(false);
+      setWaitlistClass(null);
+    } finally {
+      setWaitlistLoading(false);
+    }
+  };
+
   const indicator = (cls) => cls.fillIndicator?.label || '🟢';
+  const waitlistPageCount = Math.max(1, Math.ceil(waitlistStudents.length / WAITLIST_PER_PAGE));
+  const currentWaitlistPage = Math.min(waitlistPage, waitlistPageCount);
+  const visibleWaitlistStudents = waitlistStudents.slice((currentWaitlistPage - 1) * WAITLIST_PER_PAGE, currentWaitlistPage * WAITLIST_PER_PAGE);
   const statusLabel = (status) => {
     const labels = {
       OPEN: 'Ouverte',
@@ -266,6 +297,9 @@ export default function AdminClasses() {
                       <td><span className={`badge ${cls.status === 'OPEN' ? 'badge-success' : 'badge-warning'}`}>{statusLabel(cls.status)}</span></td>
                       <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <Link className="btn btn-outline btn-sm" to={`/admin/classes/${cls.id}`}>Détail</Link>
+                        {(cls.status === 'FULL' || cls.enrolledCount >= cls.capacity) && (
+                          <button className="btn btn-outline btn-sm" onClick={() => openWaitlistModal(cls)}>Liste d'attente</button>
+                        )}
                         <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(cls)}>
                           <FiEdit2 size={16} />
                         </button>
@@ -289,6 +323,90 @@ export default function AdminClasses() {
           </div>
         )}
       </div>
+
+      {waitlistModalOpen && (
+        <div style={overlayStyle}>
+          <div className="card" style={{ width: 900, maxWidth: '95vw', height: 620, display: 'flex', flexDirection: 'column' }}>
+            <h3 style={{ marginBottom: 12 }}>
+              Liste d'attente — {waitlistClass?.level?.pole?.name || waitlistClass?.pole?.name || '-'} / {waitlistClass?.level?.name || '-'}
+            </h3>
+
+            {waitlistLoading ? (
+              <p>Chargement...</p>
+            ) : (
+              <>
+                <div style={{ marginBottom: 10, color: '#374151', fontWeight: 600 }}>
+                  Nombre de personnes en liste d'attente : {waitlistStudents.length}
+                </div>
+
+                {waitlistStudents.length === 0 ? (
+                  <p style={{ color: '#6B7280' }}>Aucun élève en liste d'attente</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                    <div className="table-container" style={{ flex: 1, overflow: 'auto' }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Ordre liste d'attente</th>
+                            <th>Nom</th>
+                            <th>Date de demande</th>
+                            <th>Coordonnées famille</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visibleWaitlistStudents.map((student) => (
+                            <tr key={student.id}>
+                              <td>{student.waitlistOrder}</td>
+                              <td>{student.studentLastName} {student.studentFirstName}</td>
+                              <td>{new Date(student.createdAt).toLocaleDateString('fr-FR')}</td>
+                              <td>{student.familyEmail || '-'} / {student.familyPhone || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {waitlistStudents.length > WAITLIST_PER_PAGE && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                        <button
+                          className="btn btn-outline"
+                          disabled={currentWaitlistPage <= 1}
+                          onClick={() => setWaitlistPage((prev) => Math.max(1, prev - 1))}
+                        >
+                          Précédent
+                        </button>
+                        <span style={{ color: '#374151' }}>Page {currentWaitlistPage} / {waitlistPageCount}</span>
+                        <button
+                          className="btn btn-outline"
+                          disabled={currentWaitlistPage >= waitlistPageCount}
+                          onClick={() => setWaitlistPage((prev) => Math.min(waitlistPageCount, prev + 1))}
+                        >
+                          Suivant
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  setWaitlistModalOpen(false);
+                  setWaitlistClass(null);
+                  setWaitlistStudents([]);
+                  setWaitlistPage(1);
+                }}
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalOpen && (
         <div style={overlayStyle}>

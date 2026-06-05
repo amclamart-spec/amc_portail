@@ -85,7 +85,9 @@ function App() {
       <Route path="/admin/teachers" element={<Navigate to="/admin/professeurs" replace />} />
 
       <Route path="/tresorier" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierDashboard /></Layout></PrivateRoute>} />
-      <Route path="/tresorier/payments" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments /></Layout></PrivateRoute>} />
+      <Route path="/tresorier/payments" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments scope="all" /></Layout></PrivateRoute>} />
+      <Route path="/tresorier/echeanciers" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments scope="plans" /></Layout></PrivateRoute>} />
+      <Route path="/tresorier/prelevements" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments scope="debits" /></Layout></PrivateRoute>} />
 
       <Route path="/professeur" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurDashboard /></Layout></PrivateRoute>} />
       <Route path="/suivi-pedagogique" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><SuiviPedagogique /></Layout></PrivateRoute>} />
