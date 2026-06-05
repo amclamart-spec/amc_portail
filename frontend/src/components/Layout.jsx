@@ -172,8 +172,10 @@ const navSectionsByRole = {
     {
       title: 'Finance',
       items: [
-        { path: '/tresorier', icon: FiBarChart2, label: 'KPI financiers' },
+        { path: '/tresorier', icon: FiBarChart2, label: 'Tableau de bord' },
         { path: '/tresorier/payments', icon: FiCreditCard, label: 'Paiements' },
+        { path: '/tresorier/echeanciers', icon: FiCreditCard, label: 'Échéanciers' },
+        { path: '/tresorier/prelevements', icon: FiCreditCard, label: 'Prélèvements' },
       ],
     },
   ],
