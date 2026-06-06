@@ -145,9 +145,9 @@ export default function AdminEnrollments() {
   const isEnrollmentWaitlist = (enrollment) => {
     if (enrollment.status !== 'PENDING') return false;
     if (enrollment.isWaitlist === true) return true;
+    if (enrollment.isWaitlist === false) return false;
     if (typeof enrollment.waitlistOrder === 'number' && enrollment.waitlistOrder > 0) return true;
-    const hasWaitlistComment = String(enrollment.comment || '').toLowerCase().includes('liste d\'attente');
-    return hasWaitlistComment;
+    return false;
   };
 
   const decodeText = (value) => {
@@ -572,6 +572,8 @@ export default function AdminEnrollments() {
         await api.patch(`/admin/enrollments/${activeEnrollment.id}/payments/${editingPaymentId}`, requestBody);
         toast.success('Paiement modifié');
       } else {
+        const applyToAllActiveEnrollments = window.confirm("Voulez-vous associer ce paiement à l'ensemble des inscriptions actives de la famille ? Cliquez sur OK pour toutes les inscriptions actives, ou Annuler pour l'inscription en cours uniquement.");
+        requestBody.applyToAllActiveEnrollments = applyToAllActiveEnrollments;
         await api.post(`/admin/enrollments/${activeEnrollment.id}/payments`, requestBody);
         toast.success('Paiement enregistré');
       }

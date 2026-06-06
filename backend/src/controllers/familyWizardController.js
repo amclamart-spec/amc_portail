@@ -1225,7 +1225,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
                 enrolledCount: { increment: 1 },
 
-                status: activeEnrollmentCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+                status: activeEnrollmentCount + 1 > cls.capacity ? 'FULL' : 'OPEN',
 
               },
 
