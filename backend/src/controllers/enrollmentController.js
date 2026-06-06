@@ -56,11 +56,29 @@ async function getAvailableClasses(req, res) {
         level: { include: { pole: true } },
         pole: true,
         schoolYear: true,
+        _count: {
+          select: {
+            enrollments: {
+              where: {
+                status: { in: ['PENDING', 'CONFIRMED'] },
+              },
+            },
+          },
+        },
       },
       orderBy: { dayOfWeek: 'asc' },
     });
 
-    res.json({ classes });
+    const formatted = classes.map((cls) => {
+      const enrolledCount = cls._count?.enrollments || 0;
+      return {
+        ...cls,
+        enrolledCount,
+        status: cls.status === 'CLOSED' ? 'CLOSED' : (enrolledCount >= cls.capacity ? 'FULL' : 'OPEN'),
+      };
+    });
+
+    res.json({ classes: formatted });
   } catch (error) {
     res.status(500).json({ error: 'Erreur serveur' });
   }
