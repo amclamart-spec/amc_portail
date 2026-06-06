@@ -198,7 +198,10 @@ export default function AdminClasses() {
 
     try {
       const { data } = await api.get(`/admin/classes/${cls.id}/waitlist`);
-      const sorted = (data.waitlist || []).slice().sort((a, b) => (a.waitlistOrder || 0) - (b.waitlistOrder || 0));
+      const sorted = (data.waitlist || [])
+        .filter((student) => student.waitlistOrder !== null && student.waitlistOrder !== undefined)
+        .slice()
+        .sort((a, b) => a.waitlistOrder - b.waitlistOrder);
       setWaitlistStudents(sorted);
     } catch (error) {
       console.error(error);
