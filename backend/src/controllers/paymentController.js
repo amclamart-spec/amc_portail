@@ -167,8 +167,22 @@ async function generateInvoiceForPayment(paymentId) {
 
     const familyWithChildren = { ...payment.family, children: uniqueStudents };
 
+    const familyPayments = await prisma.payment.findMany({
+      where: {
+        familyId: payment.familyId,
+        schoolYearId: payment.schoolYearId,
+        status: { not: 'CANCELLED' },
+      },
+      include: {
+        transactions: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    const familyTransactionsForReceipt = familyPayments
+      .flatMap((familyPayment) => familyPayment.transactions || []);
+
     // Generate PDF invoice
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, payment.transactions || []);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, familyTransactionsForReceipt);
     console.log(`✅ Facture générée: ${invoiceResult.filename}`);
 
     return invoiceResult;
