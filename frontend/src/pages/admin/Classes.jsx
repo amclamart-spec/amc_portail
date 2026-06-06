@@ -300,7 +300,7 @@ export default function AdminClasses() {
                       <td><span className={`badge ${cls.status === 'OPEN' ? 'badge-success' : 'badge-warning'}`}>{statusLabel(cls.status)}</span></td>
                       <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <Link className="btn btn-outline btn-sm" to={`/admin/classes/${cls.id}`}>Détail</Link>
-                        {(cls.status === 'FULL' || cls.enrolledCount >= cls.capacity) && (
+                        {cls.status === 'FULL' && (
                           <button className="btn btn-outline btn-sm" onClick={() => openWaitlistModal(cls)}>Liste d'attente</button>
                         )}
                         <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(cls)}>
