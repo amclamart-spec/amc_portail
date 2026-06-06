@@ -1,17 +1,6 @@
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
-const { PrismaClient } = require('@prisma/client');
-const {
-  resolvePricingConfig,
-  getMatchingTariffRows,
-  findBestTariffRowForEnrollment,
-  selectTieredTariffRow,
-  getIndividualCoursePrice,
-  calculateArabicFee,
-} = require('../services/pricingService');
-
-const prisma = new PrismaClient();
 const uploadsDir = path.join(__dirname, '../../uploads/invoices');
 
 function getEnrollmentCourseDetails(enrollment) {
@@ -125,79 +114,7 @@ function getPaymentDetails(paymentData) {
   return details;
 }
 
-function computeEnrollmentAmounts(enrollments, pricing, paymentTotal) {
-  const rows = enrollments.map((enrollment) => {
-    const details = getEnrollmentCourseDetails(enrollment);
-    return {
-      enrollment,
-      childName: normalizeText(`${enrollment.student?.firstName || ''} ${enrollment.student?.lastName || ''}`),
-      courseLabel: details.courseLabel,
-      levelLabel: details.levelLabel,
-      poleName: normalizeText(details.poleName).toLowerCase(),
-      levelCode: normalizeText(details.levelCode).toUpperCase(),
-      poleId: enrollment.class?.level?.pole?.id || '',
-      levelId: enrollment.class?.level?.id || '',
-      amount: null,
-    };
-  });
-
-  const arabicRows = rows.filter((row) => row.poleName.includes('arabe'));
-  const hasCustomTariffRows = Array.isArray(pricing.tariffRows) && pricing.tariffRows.some((row) => Number(row.price) > 0);
-
-  const grouped = new Map();
-  rows.forEach((row) => {
-    const key = row.poleId || row.poleName || 'other';
-    const bucket = grouped.get(key) || [];
-    bucket.push(row);
-    grouped.set(key, bucket);
-  });
-
-  for (const group of grouped.values()) {
-    if (hasCustomTariffRows && group.length > 1) {
-      const sample = group[0];
-      const matchingRows = getMatchingTariffRows(sample, pricing);
-      const tieredRow = selectTieredTariffRow(matchingRows, group.length);
-      if (tieredRow && Number(tieredRow.price) > 0) {
-        const shared = Number(tieredRow.price) / group.length;
-        group.forEach((row) => { row.amount = shared; });
-        continue;
-      }
-    }
-
-    for (const row of group) {
-      if (hasCustomTariffRows) {
-        const matchingRows = getMatchingTariffRows(row, pricing);
-        const tariffRow = findBestTariffRowForEnrollment(row, matchingRows);
-        if (tariffRow && Number(tariffRow.price) > 0) {
-          row.amount = Number(tariffRow.price);
-          continue;
-        }
-      }
-
-      if (row.poleName.includes('arabe')) {
-        row.amount = null;
-      } else {
-        row.amount = getIndividualCoursePrice(row.levelCode, pricing);
-      }
-    }
-  }
-
-  if (!hasCustomTariffRows && arabicRows.length > 0) {
-    const totalArabic = calculateArabicFee(arabicRows.length, pricing);
-    const share = totalArabic / arabicRows.length;
-    arabicRows.forEach((row) => { row.amount = share; });
-  }
-
-  const unmatchedRows = rows.filter((row) => row.amount === null || Number.isNaN(row.amount));
-  if (unmatchedRows.length > 0 && paymentTotal && rows.length > 0) {
-    const fallbackAmount = Number(paymentTotal) / rows.length;
-    unmatchedRows.forEach((row) => { row.amount = fallbackAmount; });
-  }
-
-  return rows;
-}
-
-async function buildEnrollmentTableRows(enrollmentData, paymentData) {
+function buildEnrollmentTableRows(enrollmentData) {
   if (!Array.isArray(enrollmentData) || enrollmentData.length === 0) {
     return [];
   }
@@ -207,8 +124,14 @@ async function buildEnrollmentTableRows(enrollmentData, paymentData) {
     return [];
   }
 
-  const pricing = await resolvePricingConfig(prisma);
-  return computeEnrollmentAmounts(filteredEnrollments, pricing, Number(paymentData.totalAmount || 0));
+  return filteredEnrollments.map((enrollment) => {
+    const details = getEnrollmentCourseDetails(enrollment);
+    return {
+      childName: normalizeText(`${enrollment.student?.firstName || ''} ${enrollment.student?.lastName || ''}`),
+      courseLabel: details.courseLabel,
+      levelLabel: details.levelLabel,
+    };
+  });
 }
 
 // Ensure invoices directory exists
@@ -223,8 +146,8 @@ if (!fs.existsSync(uploadsDir)) {
  * @param {Array} enrollmentData - Enrollment records with course details
  * @returns {Promise<{filePath: string, filename: string}>}
  */
-async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
-  const enrollmentRows = await buildEnrollmentTableRows(enrollmentData, paymentData);
+async function generateInvoicePDF(paymentData, familyData, enrollmentData, paymentTransactions = []) {
+  const enrollmentRows = buildEnrollmentTableRows(enrollmentData);
 
   return new Promise((resolve, reject) => {
     try {
@@ -336,14 +259,12 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
       const tableWidth = 530;
       const cellHeight = 20;
       const col1Width = 220; // Child
-      const col2Width = 220; // Course
-      const col3Width = 90; // Tariff
+      const col2Width = 310; // Course
 
       // Table header
       doc.rect(tableX, tableY, tableWidth, cellHeight).stroke();
       doc.fontSize(9).font('Helvetica-Bold').text('Élève', tableX + 5, tableY + 4, { width: col1Width - 10 });
       doc.text('Cours', tableX + col1Width + 5, tableY + 4, { width: col2Width - 10 });
-      doc.text('Tarif', tableX + col1Width + col2Width + 5, tableY + 4, { width: col3Width - 10, align: 'right' });
 
       let currentY = tableY + cellHeight;
 
@@ -356,11 +277,10 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
         doc.rect(tableX, currentY, tableWidth, cellHeight).stroke();
         doc.fontSize(8).font('Helvetica').text(row.childName || '-', tableX + 5, currentY + 4, { width: col1Width - 10 });
         doc.text(`${row.courseLabel} (${row.levelLabel})`, tableX + col1Width + 5, currentY + 4, { width: col2Width - 10 });
-        doc.text(`${Number(row.amount || 0).toFixed(2)}€`, tableX + col1Width + col2Width + 5, currentY + 4, { width: col3Width - 10, align: 'right' });
         currentY += cellHeight;
       });
 
-      const transactionSource = Array.isArray(paymentData.transactions) ? paymentData.transactions : [];
+      const transactionSource = Array.isArray(paymentTransactions) ? paymentTransactions : [];
       const eligibleStatuses = new Set(['INITIATED', 'SUCCEEDED', 'COMPLETED', 'PAID']);
       const paymentTransactionsTotal = transactionSource
         .filter((tx) => {
@@ -398,22 +318,18 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
             currentY = 40;
           }
 
-          // Transaction table header
           const txTableX = 40;
-          const txTableWidth = 515;
           const txCellH = 18;
-          const colDateW = 110;
-          const colRefW = 120;
-          const colMethodW = 90;
-          const colAmountW = 95;
-          const colStatusW = 100;
+          const colDateW = 120;
+          const colMethodW = 150;
+          const colAmountW = 110;
+          const colStatusW = 135;
 
           doc.fontSize(9).font('Helvetica-Bold');
           doc.text('Date', txTableX + 5, currentY + 4, { width: colDateW - 10 });
-          doc.text('Référence', txTableX + colDateW + 5, currentY + 4, { width: colRefW - 10 });
-          doc.text('Méthode', txTableX + colDateW + colRefW + 5, currentY + 4, { width: colMethodW - 10 });
-          doc.text('Montant', txTableX + colDateW + colRefW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
-          doc.text('Statut', txTableX + colDateW + colRefW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
+          doc.text('Méthode', txTableX + colDateW + 5, currentY + 4, { width: colMethodW - 10 });
+          doc.text('Montant', txTableX + colDateW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
+          doc.text('Statut', txTableX + colDateW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
           currentY += txCellH;
 
           doc.fontSize(9).font('Helvetica');
@@ -424,11 +340,10 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData) {
             }
             const dateStr = new Date(tx.processedAt || tx.createdAt).toLocaleDateString('fr-FR');
             doc.text(dateStr, txTableX + 5, currentY + 4, { width: colDateW - 10 });
-            doc.text(tx.id || (tx.reference || '-'), txTableX + colDateW + 5, currentY + 4, { width: colRefW - 10 });
-            doc.text(formatPaymentMethod(tx.method || tx.paymentMethod, tx.metadata), txTableX + colDateW + colRefW + 5, currentY + 4, { width: colMethodW - 10 });
-            doc.text(`${Number(tx.amount || tx.total || 0).toFixed(2)}€`, txTableX + colDateW + colRefW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
+            doc.text(formatPaymentMethod(tx.method || tx.paymentMethod, tx.metadata), txTableX + colDateW + 5, currentY + 4, { width: colMethodW - 10 });
+            doc.text(`${Number(tx.amount || tx.total || 0).toFixed(2)}€`, txTableX + colDateW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
             const statusLabel = formatPaymentStatus(tx.status);
-            doc.text(statusLabel, txTableX + colDateW + colRefW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
+            doc.text(statusLabel, txTableX + colDateW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
             currentY += txCellH;
           });
           currentY += 8;
