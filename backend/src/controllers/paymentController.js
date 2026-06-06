@@ -168,7 +168,7 @@ async function generateInvoiceForPayment(paymentId) {
     const familyWithChildren = { ...payment.family, children: uniqueStudents };
 
     // Generate PDF invoice
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, payment.transactions || []);
     console.log(`✅ Facture générée: ${invoiceResult.filename}`);
 
     return invoiceResult;
@@ -2229,7 +2229,16 @@ async function generatePaymentReceiptPDF(req, res) {
 
     const aggregateTransactions = relatedPayments
       .flatMap((currentPayment) => Array.isArray(currentPayment.transactions) ? currentPayment.transactions : [])
+      .filter((transaction) => String(transaction.status || '').toUpperCase() !== 'CANCELLED')
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    const totalAmount = aggregateTransactions.reduce((sum, transaction) => {
+      const transactionStatus = String(transaction.status || '').toUpperCase();
+      if (transactionStatus === 'INITIATED' || transactionStatus === 'SUCCEEDED') {
+        return sum + Number(transaction.amount || transaction.total || 0);
+      }
+      return sum;
+    }, 0);
 
     const aggregatePayment = {
       id: `famille-${payment.familyId}-${payment.schoolYearId}`,
@@ -2240,7 +2249,7 @@ async function generatePaymentReceiptPDF(req, res) {
         payerName: payment.metadata?.payerName || `${payment.family.user?.firstName || ''} ${payment.family.user?.lastName || ''}`.trim(),
       },
       numberOfInstallments: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.numberOfInstallments || 0), 0),
-      totalAmount: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.totalAmount || 0), 0),
+      totalAmount,
       paidAmount: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.paidAmount || 0), 0),
       registrationFee: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.registrationFee || 0), 0),
       arabicFee: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.arabicFee || 0), 0),
@@ -2248,7 +2257,7 @@ async function generatePaymentReceiptPDF(req, res) {
       transactions: aggregateTransactions,
     };
 
-    const invoiceResult = await generateInvoicePDF(aggregatePayment, familyWithChildren, activeEnrollments);
+    const invoiceResult = await generateInvoicePDF(aggregatePayment, familyWithChildren, activeEnrollments, aggregateTransactions);
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
