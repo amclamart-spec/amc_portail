@@ -2219,8 +2219,6 @@ async function generatePaymentReceiptPDF(req, res) {
       },
     });
 
-    const activeEnrollmentIds = new Set(activeEnrollments.map((enrollment) => enrollment.id));
-
     const familyPayments = await prisma.payment.findMany({
       where: {
         familyId: payment.familyId,
@@ -2233,25 +2231,13 @@ async function generatePaymentReceiptPDF(req, res) {
       orderBy: { createdAt: 'asc' },
     });
 
-    const relatedPayments = familyPayments.filter((currentPayment) => {
-      const enrollmentIds = Array.isArray(currentPayment.metadata?.enrollmentIds)
-        ? currentPayment.metadata.enrollmentIds
-        : [];
-      if (enrollmentIds.length === 0) return true;
-      return enrollmentIds.some((enrollmentId) => activeEnrollmentIds.has(enrollmentId));
-    });
-
-    const aggregateTransactions = relatedPayments
+    const aggregateTransactions = familyPayments
       .flatMap((currentPayment) => Array.isArray(currentPayment.transactions) ? currentPayment.transactions : [])
       .filter((transaction) => String(transaction.status || '').toUpperCase() !== 'CANCELLED')
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     const totalAmount = aggregateTransactions.reduce((sum, transaction) => {
-      const transactionStatus = String(transaction.status || '').toUpperCase();
-      if (transactionStatus === 'INITIATED' || transactionStatus === 'SUCCEEDED') {
-        return sum + Number(transaction.amount || transaction.total || 0);
-      }
-      return sum;
+      return sum + Number(transaction.amount || transaction.total || 0);
     }, 0);
 
     const aggregatePayment = {
@@ -2262,12 +2248,12 @@ async function generatePaymentReceiptPDF(req, res) {
         ...(payment.metadata || {}),
         payerName: payment.metadata?.payerName || `${payment.family.user?.firstName || ''} ${payment.family.user?.lastName || ''}`.trim(),
       },
-      numberOfInstallments: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.numberOfInstallments || 0), 0),
+      numberOfInstallments: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.numberOfInstallments || 0), 0),
       totalAmount,
-      paidAmount: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.paidAmount || 0), 0),
-      registrationFee: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.registrationFee || 0), 0),
-      arabicFee: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.arabicFee || 0), 0),
-      coranScienceFee: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.coranScienceFee || 0), 0),
+      paidAmount: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.paidAmount || 0), 0),
+      registrationFee: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.registrationFee || 0), 0),
+      arabicFee: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.arabicFee || 0), 0),
+      coranScienceFee: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.coranScienceFee || 0), 0),
       transactions: aggregateTransactions,
     };
 
