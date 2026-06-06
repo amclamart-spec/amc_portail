@@ -1530,7 +1530,7 @@ async function updateEnrollment(req, res) {
             where: { id: newClass.id },
             data: {
               enrolledCount: { increment: 1 },
-              status: newClass.enrolledCount + 1 >= newClass.capacity ? 'FULL' : 'OPEN',
+              status: destinationActiveEnrollmentCount + 1 >= newClass.capacity ? 'FULL' : 'OPEN',
             },
           });
         }
@@ -1541,14 +1541,21 @@ async function updateEnrollment(req, res) {
     } else {
       if (currentStatus !== 'CONFIRMED' && targetStatus === 'CONFIRMED') {
         const targetClass = enrollment.class;
-        if (targetClass.enrolledCount >= targetClass.capacity) {
+        const activeEnrollmentCount = await prisma.enrollment.count({
+          where: {
+            classId: enrollment.classId,
+            status: { in: activeEnrollmentStatuses },
+            id: { not: id },
+          },
+        });
+        if (activeEnrollmentCount >= targetClass.capacity) {
           return res.status(400).json({ error: 'Impossible de confirmer l’inscription : la classe est complète' });
         }
         classTransactions.push({
           where: { id: enrollment.classId },
           data: {
             enrolledCount: { increment: 1 },
-            status: targetClass.enrolledCount + 1 >= targetClass.capacity ? 'FULL' : 'OPEN',
+            status: activeEnrollmentCount + 1 >= targetClass.capacity ? 'FULL' : 'OPEN',
           },
         });
       } else if (currentStatus === 'CONFIRMED' && targetStatus !== 'CONFIRMED') {
