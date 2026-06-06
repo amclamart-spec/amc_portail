@@ -495,7 +495,7 @@ async function getEnrollments(req, res) {
     }
     const enhanced = enrollments.map((e) => {
       const isProvisional = isProvisionalClass(e.class);
-      const isWaitlist = e.status === 'PENDING' && (e.isWaitlist === true || String(e.comment || '').toLowerCase().includes('liste d\'attente'));
+      const isWaitlist = e.status === 'PENDING' && e.isWaitlist === true;
       const paymentStatus = paymentsByEnrollment[e.id] || null;
       return { ...e, isProvisional, isWaitlist, waitlistOrder: e.waitlistOrder || null, paymentStatus };
     });
@@ -506,10 +506,7 @@ async function getEnrollments(req, res) {
         where: {
           status: 'PENDING',
           classId: { in: waitlistWithoutOrderClassIds },
-          OR: [
-            { isWaitlist: true },
-            { comment: { contains: 'liste d\'attente', mode: 'insensitive' } },
-          ],
+          isWaitlist: true,
         },
         orderBy: { createdAt: 'asc' },
         select: { id: true, classId: true },
@@ -754,23 +751,17 @@ async function updateEnrollmentPayment(req, res) {
       }
       updateData.status = status === 'validé' ? 'SUCCEEDED' : status === 'annulé' ? 'CANCELLED' : 'INITIATED';
 
-      // Block validation if any linked enrollment level hasn't been validated
       if (updateData.status === 'SUCCEEDED') {
-        // gather enrollment IDs from the payment metadata if available
-        const paymentFull = await prisma.payment.findUnique({ where: { id: transaction.paymentId } });
-        let enrollmentIds = Array.isArray(paymentFull?.metadata?.enrollmentIds) ? paymentFull.metadata.enrollmentIds : [];
-        if (enrollmentIds.length === 0) {
-          // fallback to the current enrollment (the one we fetched via findEnrollmentTransaction)
-          if (enrollment && enrollment.id) enrollmentIds = [enrollment.id];
-        }
-
-        if (enrollmentIds.length > 0) {
-          const unvalidatedCount = await prisma.enrollment.count({
-            where: { id: { in: enrollmentIds }, levelValidated: false },
-          });
-          if (unvalidatedCount > 0) {
-            return res.status(400).json({ error: "Au moins une inscription liée n'a pas le niveau validé — impossible de valider le paiement." });
-          }
+        const unvalidatedActiveCount = await prisma.enrollment.count({
+          where: {
+            student: { familyId: enrollment.student.familyId },
+            schoolYearId: enrollment.schoolYearId,
+            status: { in: ['PENDING', 'CONFIRMED'] },
+            levelValidated: false,
+          },
+        });
+        if (unvalidatedActiveCount > 0) {
+          return res.status(400).json({ error: "Au moins une inscription active de la famille n'a pas le niveau validé — impossible de valider le paiement." });
         }
       }
     }
@@ -1008,7 +999,7 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
 
 async function createEnrollmentPayment(req, res) {
   try {
-    const { payerName, date, method, status, comment, amount, bankDebitIban, bankDebitSwift, numberOfInstallments, firstPaymentDate, scheduleDay, ribDocument } = req.body;
+    const { payerName, date, method, status, comment, amount, bankDebitIban, bankDebitSwift, numberOfInstallments, firstPaymentDate, scheduleDay, ribDocument, applyToAllActiveEnrollments } = req.body;
     const parsedAmount = amount ? new Prisma.Decimal(amount) : null;
     if (!parsedAmount || parsedAmount.lte(0)) {
       return res.status(400).json({ error: 'Montant de paiement invalide' });
@@ -1029,6 +1020,24 @@ async function createEnrollmentPayment(req, res) {
     const { enrollment, payment } = await findEnrollmentAndPayment(req.params.id);
     let targetPayment = payment;
     const transactionStatus = status === 'validé' ? 'SUCCEEDED' : status === 'annulé' ? 'CANCELLED' : 'INITIATED';
+    const shouldApplyToAllActiveEnrollments = applyToAllActiveEnrollments === true;
+
+    const activeEnrollmentStatuses = ['PENDING', 'CONFIRMED'];
+    let enrollmentIdsToAssociate = [enrollment.id];
+    if (shouldApplyToAllActiveEnrollments) {
+      const activeFamilyEnrollments = await prisma.enrollment.findMany({
+        where: {
+          student: { familyId: enrollment.student.familyId },
+          schoolYearId: enrollment.schoolYearId,
+          status: { in: activeEnrollmentStatuses },
+        },
+        select: { id: true },
+      });
+      enrollmentIdsToAssociate = activeFamilyEnrollments.map((item) => item.id);
+      if (!enrollmentIdsToAssociate.includes(enrollment.id)) {
+        enrollmentIdsToAssociate.push(enrollment.id);
+      }
+    }
     const defaultPayer = [enrollment.student.family.user?.firstName, enrollment.student.family.user?.lastName]
       .filter(Boolean)
       .join(' ') || enrollment.student.family.familyName;
@@ -1069,30 +1078,28 @@ async function createEnrollmentPayment(req, res) {
           provider: 'OFFLINE',
           numberOfInstallments: ['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(method) ? (Number(numberOfInstallments) || 1) : 1,
           status: transactionStatus === 'SUCCEEDED' ? 'COMPLETED' : 'PENDING',
-          metadata: { enrollmentIds: [enrollment.id], ...paymentMetadata },
+          metadata: { enrollmentIds: enrollmentIdsToAssociate, ...paymentMetadata },
         },
       });
     } else {
       const enrollmentIds = Array.isArray(targetPayment.metadata?.enrollmentIds)
-        ? [...new Set([...targetPayment.metadata.enrollmentIds, enrollment.id])]
-        : [enrollment.id];
+        ? [...new Set([...targetPayment.metadata.enrollmentIds, ...enrollmentIdsToAssociate])]
+        : enrollmentIdsToAssociate;
       const updateData = {
         ...paymentData,
         metadata: { ...targetPayment.metadata, enrollmentIds, ...paymentMetadata },
       };
       if (transactionStatus === 'SUCCEEDED') {
-        // Ensure all enrollments linked to the target payment have their level validated
-        const enrollmentIds = Array.isArray(targetPayment.metadata?.enrollmentIds) ? targetPayment.metadata.enrollmentIds : [];
-        if (enrollmentIds.length > 0) {
-          const unvalidatedCount = await prisma.enrollment.count({ where: { id: { in: enrollmentIds }, levelValidated: false } });
-          if (unvalidatedCount > 0) {
-            return res.status(400).json({ error: "Au moins une inscription liée n'a pas le niveau validé — impossible de marquer ce paiement comme validé." });
-          }
-        } else {
-          // fallback: check current enrollment
-          if (enrollment && enrollment.levelValidated !== true) {
-            return res.status(400).json({ error: "Le niveau de l'inscription n'est pas validé — impossible de valider le paiement." });
-          }
+        const unvalidatedActiveCount = await prisma.enrollment.count({
+          where: {
+            student: { familyId: enrollment.student.familyId },
+            schoolYearId: enrollment.schoolYearId,
+            status: { in: ['PENDING', 'CONFIRMED'] },
+            levelValidated: false,
+          },
+        });
+        if (unvalidatedActiveCount > 0) {
+          return res.status(400).json({ error: "Au moins une inscription active de la famille n'a pas le niveau validé — impossible de marquer ce paiement comme validé." });
         }
 
         const newPaidAmount = new Prisma.Decimal(targetPayment.paidAmount).plus(parsedAmount);
@@ -1199,7 +1206,7 @@ async function exportEnrollments(req, res) {
       const pole = enrollment.class?.level?.pole?.name || '';
       const level = enrollment.class?.level?.name || '';
       const schedule = enrollment.class ? `${enrollment.class.dayOfWeek} ${enrollment.class.startTime}-${enrollment.class.endTime}` : '';
-      const isWaitlist = enrollment.status === 'PENDING' && (enrollment.class?.status === 'FULL' || String(enrollment.comment || '').toLowerCase().includes('liste d\'attente'));
+      const isWaitlist = enrollment.status === 'PENDING' && enrollment.isWaitlist === true;
       return {
         registrationCode: enrollment.registrationCode || '',
         studentName,
@@ -2201,7 +2208,7 @@ async function getClasses(req, res) {
       const enrolledCount = cls._count?.enrollments || 0;
       const computedStatus = cls.status === 'CLOSED'
         ? 'CLOSED'
-        : (enrolledCount > cls.capacity ? 'FULL' : 'OPEN');
+        : (enrolledCount >= cls.capacity ? 'FULL' : 'OPEN');
       return {
         ...cls,
         enrolledCount,

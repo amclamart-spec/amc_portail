@@ -202,8 +202,13 @@ async function buildEnrollmentTableRows(enrollmentData, paymentData) {
     return [];
   }
 
+  const filteredEnrollments = enrollmentData.filter((enrollment) => String(enrollment?.status || '').toUpperCase() !== 'CANCELLED');
+  if (filteredEnrollments.length === 0) {
+    return [];
+  }
+
   const pricing = await resolvePricingConfig(prisma);
-  return computeEnrollmentAmounts(enrollmentData, pricing, Number(paymentData.totalAmount || 0));
+  return computeEnrollmentAmounts(filteredEnrollments, pricing, Number(paymentData.totalAmount || 0));
 }
 
 // Ensure invoices directory exists

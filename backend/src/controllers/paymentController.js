@@ -2161,7 +2161,6 @@ async function generatePaymentReceiptPDF(req, res) {
       include: {
         family: { include: { user: true } },
         schoolYear: true,
-        transactions: { orderBy: { createdAt: 'desc' } },
       },
     });
 
@@ -2169,66 +2168,87 @@ async function generatePaymentReceiptPDF(req, res) {
       return res.status(404).json({ error: 'Paiement introuvable' });
     }
 
-    // Vérifier les permissions
     const isOwnPayment = payment.family.userId === req.user.id;
     const userRole = req.user && req.user.role ? req.user.role : null;
-    const isAdminOrTresorier = hasPermission(userRole, PERMISSIONS.PAYMENTS_MANAGE) || 
-                   hasPermission(userRole, PERMISSIONS.FINANCE_VIEW);
-    
+    const isAdminOrTresorier = hasPermission(userRole, PERMISSIONS.PAYMENTS_MANAGE) ||
+      hasPermission(userRole, PERMISSIONS.FINANCE_VIEW);
+
     if (!isOwnPayment && !isAdminOrTresorier) {
       return res.status(403).json({ error: 'Accès non autorisé' });
     }
 
-    // Use shared invoice generator to ensure consistent layout (with logos, transactions, reminder)
-    // Ensure family includes children list
     let familyWithChildren = payment.family;
     try {
-      const children = await prisma.student.findMany({ where: { familyId: payment.familyId }, select: { id: true, firstName: true, lastName: true, dateOfBirth: true }, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }] });
+      const children = await prisma.student.findMany({
+        where: { familyId: payment.familyId },
+        select: { id: true, firstName: true, lastName: true, dateOfBirth: true },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      });
       familyWithChildren = { ...payment.family, children };
     } catch (err) {
       console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
     }
 
-    let enrolledCourses = [];
-    const paymentEnrollmentIds = Array.isArray(payment.metadata?.enrollmentIds) ? payment.metadata.enrollmentIds : [];
-
-    if (paymentEnrollmentIds.length > 0) {
-      enrolledCourses = await prisma.enrollment.findMany({
-        where: {
-          id: { in: paymentEnrollmentIds },
-          student: { familyId: payment.familyId },
-          schoolYearId: payment.schoolYearId,
-        },
-        include: {
-          class: {
-            include: {
-              level: { include: { pole: true } },
-            },
+    const activeEnrollments = await prisma.enrollment.findMany({
+      where: {
+        student: { familyId: payment.familyId },
+        schoolYearId: payment.schoolYearId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      },
+      include: {
+        class: {
+          include: {
+            level: { include: { pole: true } },
           },
-          student: true,
         },
-      });
-    }
+        student: true,
+      },
+    });
 
-    if (enrolledCourses.length === 0) {
-      enrolledCourses = await prisma.enrollment.findMany({
-        where: {
-          student: { familyId: payment.familyId },
-          schoolYearId: payment.schoolYearId,
-          status: { in: ['PENDING', 'CONFIRMED'] },
-        },
-        include: {
-          class: {
-            include: {
-              level: { include: { pole: true } },
-            },
-          },
-          student: true,
-        },
-      });
-    }
+    const activeEnrollmentIds = new Set(activeEnrollments.map((enrollment) => enrollment.id));
 
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrolledCourses);
+    const familyPayments = await prisma.payment.findMany({
+      where: {
+        familyId: payment.familyId,
+        schoolYearId: payment.schoolYearId,
+        status: { not: 'CANCELLED' },
+      },
+      include: {
+        transactions: { orderBy: { createdAt: 'desc' } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const relatedPayments = familyPayments.filter((currentPayment) => {
+      const enrollmentIds = Array.isArray(currentPayment.metadata?.enrollmentIds)
+        ? currentPayment.metadata.enrollmentIds
+        : [];
+      if (enrollmentIds.length === 0) return true;
+      return enrollmentIds.some((enrollmentId) => activeEnrollmentIds.has(enrollmentId));
+    });
+
+    const aggregateTransactions = relatedPayments
+      .flatMap((currentPayment) => Array.isArray(currentPayment.transactions) ? currentPayment.transactions : [])
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    const aggregatePayment = {
+      id: `famille-${payment.familyId}-${payment.schoolYearId}`,
+      createdAt: payment.createdAt,
+      paymentMethod: payment.paymentMethod,
+      metadata: {
+        ...(payment.metadata || {}),
+        payerName: payment.metadata?.payerName || `${payment.family.user?.firstName || ''} ${payment.family.user?.lastName || ''}`.trim(),
+      },
+      numberOfInstallments: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.numberOfInstallments || 0), 0),
+      totalAmount: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.totalAmount || 0), 0),
+      paidAmount: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.paidAmount || 0), 0),
+      registrationFee: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.registrationFee || 0), 0),
+      arabicFee: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.arabicFee || 0), 0),
+      coranScienceFee: relatedPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.coranScienceFee || 0), 0),
+      transactions: aggregateTransactions,
+    };
+
+    const invoiceResult = await generateInvoicePDF(aggregatePayment, familyWithChildren, activeEnrollments);
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });

@@ -159,7 +159,7 @@ async function createEnrollment(req, res) {
           where: { id: classId },
           data: {
             enrolledCount: { increment: 1 },
-            status: activeEnrollmentCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+            status: activeEnrollmentCount + 1 > cls.capacity ? 'FULL' : 'OPEN',
           },
         });
       }
