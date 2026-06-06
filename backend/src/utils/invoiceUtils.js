@@ -281,11 +281,10 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
       });
 
       const transactionSource = Array.isArray(paymentTransactions) ? paymentTransactions : [];
-      const eligibleStatuses = new Set(['INITIATED', 'SUCCEEDED', 'COMPLETED', 'PAID']);
       const paymentTransactionsTotal = transactionSource
         .filter((tx) => {
-          const status = String(tx.status);
-          return status !== 'CANCELLED' && status !== 'FAILED' && eligibleStatuses.has(status);
+          const status = String(tx.status || '').trim().toUpperCase();
+          return status !== 'CANCELLED' && status !== 'ANNULÉ' && status !== 'ANNULE';
         })
         .reduce((sum, tx) => sum + Number(tx.amount || tx.total || 0), 0);
 
@@ -350,52 +349,22 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
         }
       }
 
-      // Summary section
       currentY += 10;
       if (currentY > doc.page.height - 120) {
         doc.addPage();
         currentY = 40;
       }
 
-      doc.fontSize(10).font('Helvetica-Bold').text('RÉSUMÉ', 40, currentY);
-      currentY += 20;
+      const totalX = 40;
+      const totalWidth = 200;
+      const totalLabelX = totalX;
+      const totalAmountX = totalX + 130;
+      const finalTotal = paymentTransactionsTotal;
 
-      // Summary table
-      const summaryX = 40;
-      const summaryWidth = 200;
-      const summaryLabelX = summaryX;
-      const summaryAmountX = summaryX + 130;
+      doc.rect(totalLabelX - 5, currentY - 5, totalWidth + 10, 25).stroke();
+      doc.fontSize(10).font('Helvetica-Bold').text('TOTAL:', totalLabelX, currentY);
+      doc.text(`${finalTotal.toFixed(2)}€`, totalAmountX, currentY, { align: 'right' });
 
-      // Registration fee
-      if (Number(paymentData.registrationFee) > 0) {
-        doc.fontSize(9).font('Helvetica').text('Frais d\'inscription:', summaryLabelX, currentY);
-        doc.text(`${Number(paymentData.registrationFee).toFixed(2)}€`, summaryAmountX, currentY, { align: 'right' });
-        currentY += 18;
-      }
-
-      // Arabic course fee
-      if (Number(paymentData.arabicFee) > 0) {
-        doc.text('Cours Arabe:', summaryLabelX, currentY);
-        doc.text(`${Number(paymentData.arabicFee).toFixed(2)}€`, summaryAmountX, currentY, { align: 'right' });
-        currentY += 18;
-      }
-
-      // Quran/Science fee
-      if (Number(paymentData.coranScienceFee) > 0) {
-        doc.text('Coran & Sciences:', summaryLabelX, currentY);
-        doc.text(`${Number(paymentData.coranScienceFee).toFixed(2)}€`, summaryAmountX, currentY, { align: 'right' });
-        currentY += 18;
-      }
-
-
-      // Total
-      currentY += 5;
-      const finalTotal = transactionSource.length > 0 ? paymentTransactionsTotal : Number(paymentData.totalAmount);
-      doc.rect(summaryLabelX - 5, currentY - 5, summaryWidth + 10, 25).stroke();
-      doc.fontSize(10).font('Helvetica-Bold').text('TOTAL:', summaryLabelX, currentY);
-      doc.text(`${finalTotal.toFixed(2)}€`, summaryAmountX, currentY, { align: 'right' });
-
-      // Rappel administratif juste après le résumé
       currentY += 32;
       const reminderText = `Rappel : Aucun remboursement ne pourra être exigé un mois après le début des cours. Toute interruption de cours ou retard dans l'inscription ne diminue en rien les frais d'inscription (sauf exception). Sans le dépot d'un moyen de paiement ou d'une cauion, votre inscription ne pourra pas être validé par notre association.`;
       doc.fontSize(8).font('Helvetica').text(reminderText, 40, currentY, { align: 'center', width: 515 });

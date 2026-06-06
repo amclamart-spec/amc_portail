@@ -977,11 +977,26 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
       };
     });
 
+    const familyPayments = await prisma.payment.findMany({
+      where: {
+        familyId: payment.familyId,
+        schoolYearId: payment.schoolYearId,
+        status: { not: 'CANCELLED' },
+      },
+      include: {
+        transactions: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    const familyTransactionsForReceipt = familyPayments
+      .flatMap((familyPayment) => familyPayment.transactions || []);
+
     // Generate invoice-like PDF file using shared utility
     const invoiceResult = await generateInvoicePDF(
       payment,
       familyWithChildren,
       enrollmentRows,
+      familyTransactionsForReceipt,
     );
     if (!invoiceResult) {
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
