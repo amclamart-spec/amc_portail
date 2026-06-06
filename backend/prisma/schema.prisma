@@ -402,6 +402,8 @@ model Enrollment {
   classId          String           @map("class_id")
   status           EnrollmentStatus @default(PENDING)
   comment          String?
+  isWaitlist       Boolean          @default(false) @map("is_waitlist")
+  waitlistOrder    Int?             @map("waitlist_order")
   levelValidated   Boolean          @default(false) @map("level_validated")
   enrolledAt       DateTime         @default(now()) @map("enrolled_at")
   confirmedAt      DateTime?        @map("confirmed_at")

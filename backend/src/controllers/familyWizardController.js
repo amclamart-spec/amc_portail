@@ -1187,7 +1187,15 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-          const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
+          const activeEnrollmentCount = await tx.enrollment.count({
+            where: {
+              classId: cls.id,
+              status: { in: ['PENDING', 'CONFIRMED'] },
+            },
+          });
+
+          const waitlistOrder = (activeEnrollmentCount + 1) - cls.capacity;
+          const isWaitlist = waitlistOrder > 0;
 
           const enrollment = await createEnrollmentWithUniqueRegistrationCode(tx, {
 
@@ -1198,14 +1206,16 @@ async function completeExistingFamilyRegistration(req, res) {
             schoolYearId: currentYear.id,
 
             status: 'PENDING',
+            isWaitlist,
+            waitlistOrder: isWaitlist ? waitlistOrder : null,
 
-            ...(isFull ? { comment: 'Liste d\'attente' } : {}),
+            ...(isWaitlist ? { comment: 'Liste d\'attente' } : {}),
 
           }, currentYear.id, registrationYearCode, usedRegistrationCodes);
 
 
 
-          if (!isFull) {
+          if (!isWaitlist) {
 
             await tx.class.update({
 
@@ -1215,7 +1225,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
                 enrolledCount: { increment: 1 },
 
-                status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+                status: activeEnrollmentCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
 
               },
 
@@ -3043,7 +3053,15 @@ async function completeFamilyRegistration(req, res) {
 
 
 
-        const isFull = cls.enrolledCount >= cls.capacity || cls.status === 'FULL';
+        const activeEnrollmentCount = await tx.enrollment.count({
+          where: {
+            classId: cls.id,
+            status: { in: ['PENDING', 'CONFIRMED'] },
+          },
+        });
+
+        const waitlistOrder = (activeEnrollmentCount + 1) - cls.capacity;
+        const isWaitlist = waitlistOrder > 0;
 
         const enrollment = await createEnrollmentWithUniqueRegistrationCode(tx, {
 
@@ -3054,14 +3072,16 @@ async function completeFamilyRegistration(req, res) {
           schoolYearId: currentYear.id,
 
           status: 'PENDING',
+          isWaitlist,
+          waitlistOrder: isWaitlist ? waitlistOrder : null,
 
-          ...(isFull ? { comment: 'Liste d\'attente' } : {}),
+          ...(isWaitlist ? { comment: 'Liste d\'attente' } : {}),
 
         }, currentYear.id, registrationYearCode, usedRegistrationCodes);
 
 
 
-        if (!isFull) {
+        if (!isWaitlist) {
 
           await tx.class.update({
 
@@ -3071,7 +3091,7 @@ async function completeFamilyRegistration(req, res) {
 
               enrolledCount: { increment: 1 },
 
-              status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+              status: activeEnrollmentCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
 
             },
 

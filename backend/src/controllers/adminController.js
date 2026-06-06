@@ -415,6 +415,7 @@ async function getEnrollments(req, res) {
     if (schoolYearId) where.schoolYearId = schoolYearId;
     if (waitlist) {
       where.status = 'PENDING';
+      where.isWaitlist = true;
     } else if (status) {
       where.status = status;
     }
@@ -434,9 +435,6 @@ async function getEnrollments(req, res) {
     const classWhere = {};
     if (classId) classWhere.id = classId;
     if (poleId) classWhere.level = { poleId };
-    if (waitlist) {
-      classWhere.status = 'FULL';
-    }
     if (req.query.provisional === 'true') {
       classWhere.OR = getProvisionalClassFilter().OR;
     }
@@ -497,19 +495,19 @@ async function getEnrollments(req, res) {
     }
     const enhanced = enrollments.map((e) => {
       const isProvisional = isProvisionalClass(e.class);
-      const isWaitlist = e.status === 'PENDING' && (e.class?.status === 'FULL' || String(e.comment || '').toLowerCase().includes('liste d\'attente'));
+      const isWaitlist = e.status === 'PENDING' && (e.isWaitlist === true || String(e.comment || '').toLowerCase().includes('liste d\'attente'));
       const paymentStatus = paymentsByEnrollment[e.id] || null;
-      return { ...e, isProvisional, isWaitlist, waitlistOrder: null, paymentStatus };
+      return { ...e, isProvisional, isWaitlist, waitlistOrder: e.waitlistOrder || null, paymentStatus };
     });
 
-    const waitlistClassIds = [...new Set(enhanced.filter((e) => e.isWaitlist && e.classId).map((e) => e.classId))];
-    if (waitlistClassIds.length > 0) {
+    const waitlistWithoutOrderClassIds = [...new Set(enhanced.filter((e) => e.isWaitlist && !e.waitlistOrder && e.classId).map((e) => e.classId))];
+    if (waitlistWithoutOrderClassIds.length > 0) {
       const waitlistEnrollments = await prisma.enrollment.findMany({
         where: {
           status: 'PENDING',
-          classId: { in: waitlistClassIds },
+          classId: { in: waitlistWithoutOrderClassIds },
           OR: [
-            { class: { status: 'FULL' } },
+            { isWaitlist: true },
             { comment: { contains: 'liste d\'attente', mode: 'insensitive' } },
           ],
         },
@@ -1137,6 +1135,7 @@ async function exportEnrollments(req, res) {
     if (schoolYearId) where.schoolYearId = schoolYearId;
     if (waitlist) {
       where.status = 'PENDING';
+      where.isWaitlist = true;
     } else if (status) {
       where.status = status;
     }
@@ -1350,7 +1349,7 @@ async function getStudentAcademicRecord(req, res) {
 async function updateEnrollment(req, res) {
   try {
     const { id } = req.params;
-    const { status, classId, schoolYearId, student, family, healthForm, comment, levelValidated } = req.body;
+    const { status, classId, schoolYearId, student, family, healthForm, comment, levelValidated, waitlistOrder, isWaitlist } = req.body;
     const allowedStatuses = ['PENDING', 'CONFIRMED', 'CANCELLED', 'ARCHIVED'];
 
     if (status && !allowedStatuses.includes(status)) {
@@ -1424,6 +1423,28 @@ async function updateEnrollment(req, res) {
     if (comment !== undefined) {
       enrollmentUpdates.comment = comment;
     }
+    if (isWaitlist !== undefined) {
+      if (typeof isWaitlist !== 'boolean') {
+        return res.status(400).json({ error: 'isWaitlist doit être un booléen' });
+      }
+      enrollmentUpdates.isWaitlist = isWaitlist;
+      if (!isWaitlist && waitlistOrder === undefined) {
+        enrollmentUpdates.waitlistOrder = null;
+      }
+    }
+    if (waitlistOrder !== undefined) {
+      if (waitlistOrder === null || waitlistOrder === '') {
+        enrollmentUpdates.waitlistOrder = null;
+        enrollmentUpdates.isWaitlist = false;
+      } else {
+        const parsedWaitlistOrder = Number(waitlistOrder);
+        if (!Number.isInteger(parsedWaitlistOrder) || parsedWaitlistOrder < 1) {
+          return res.status(400).json({ error: 'waitlistOrder doit être un entier positif' });
+        }
+        enrollmentUpdates.waitlistOrder = parsedWaitlistOrder;
+        enrollmentUpdates.isWaitlist = true;
+      }
+    }
     if (levelValidated !== undefined) {
       if (typeof levelValidated !== 'boolean') {
         return res.status(400).json({ error: 'levelValidated doit être un booléen' });
@@ -1467,22 +1488,12 @@ async function updateEnrollment(req, res) {
     }
 
     const classTransactions = [];
-    // If the class changed, move the enrollment counts from old class to new class immediately
+    const activeEnrollmentStatuses = ['PENDING', 'CONFIRMED'];
     if (classChanged) {
-      // ensure new class has capacity
-      if (newClass.enrolledCount >= newClass.capacity) {
-        return res.status(400).json({ error: 'Impossible d’affecter : la classe cible est complète' });
-      }
-      // increment new class
-      classTransactions.push({
-        where: { id: newClass.id },
-        data: {
-          enrolledCount: { increment: 1 },
-          status: newClass.enrolledCount + 1 >= newClass.capacity ? 'FULL' : 'OPEN',
-        },
-      });
-      // decrement old class if exists
-      if (enrollment.classId) {
+      const enrollmentWillBeActive = activeEnrollmentStatuses.includes(targetStatus);
+      const oldEnrollmentWasCounted = activeEnrollmentStatuses.includes(currentStatus) && enrollment.isWaitlist !== true;
+
+      if (oldEnrollmentWasCounted && enrollment.classId) {
         classTransactions.push({
           where: { id: enrollment.classId },
           data: {
@@ -1491,8 +1502,36 @@ async function updateEnrollment(req, res) {
           },
         });
       }
+
+      if (enrollmentWillBeActive) {
+        const destinationActiveEnrollmentCount = await prisma.enrollment.count({
+          where: {
+            classId: newClass.id,
+            status: { in: activeEnrollmentStatuses },
+            id: { not: id },
+          },
+        });
+
+        const computedWaitlistOrder = (destinationActiveEnrollmentCount + 1) - newClass.capacity;
+        const computedIsWaitlist = computedWaitlistOrder > 0;
+
+        enrollmentUpdates.isWaitlist = computedIsWaitlist;
+        enrollmentUpdates.waitlistOrder = computedIsWaitlist ? computedWaitlistOrder : null;
+
+        if (!computedIsWaitlist) {
+          classTransactions.push({
+            where: { id: newClass.id },
+            data: {
+              enrolledCount: { increment: 1 },
+              status: newClass.enrolledCount + 1 >= newClass.capacity ? 'FULL' : 'OPEN',
+            },
+          });
+        }
+      } else {
+        enrollmentUpdates.isWaitlist = false;
+        enrollmentUpdates.waitlistOrder = null;
+      }
     } else {
-      // No class change: handle status transitions that affect counts
       if (currentStatus !== 'CONFIRMED' && targetStatus === 'CONFIRMED') {
         const targetClass = enrollment.class;
         if (targetClass.enrolledCount >= targetClass.capacity) {
@@ -2145,15 +2184,31 @@ async function getClasses(req, res) {
         timeSlot: true,
         roomRef: true,
         teacher: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } },
-        _count: { select: { enrollments: true } },
+        _count: {
+          select: {
+            enrollments: {
+              where: {
+                status: { in: ['PENDING', 'CONFIRMED'] },
+              },
+            },
+          },
+        },
       },
       orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
     });
 
-    const formatted = classes.map((cls) => ({
-      ...cls,
-      fillIndicator: classFillIndicator(cls.enrolledCount, cls.capacity),
-    }));
+    const formatted = classes.map((cls) => {
+      const enrolledCount = cls._count?.enrollments || 0;
+      const computedStatus = cls.status === 'CLOSED'
+        ? 'CLOSED'
+        : (enrolledCount > cls.capacity ? 'FULL' : 'OPEN');
+      return {
+        ...cls,
+        enrolledCount,
+        status: computedStatus,
+        fillIndicator: classFillIndicator(enrolledCount, cls.capacity),
+      };
+    });
 
     res.json({ classes: formatted });
   } catch (error) {
@@ -2197,7 +2252,12 @@ async function getClassDetails(req, res) {
     res.json({
       class: {
         ...cls,
-        fillIndicator: classFillIndicator(cls.enrolledCount, cls.capacity),
+        enrolledCount: cls.enrollments.length,
+        status:
+          cls.status === 'CLOSED'
+            ? 'CLOSED'
+            : (cls.enrollments.length > cls.capacity ? 'FULL' : 'OPEN'),
+        fillIndicator: classFillIndicator(cls.enrollments.length, cls.capacity),
       },
     });
   } catch (error) {
@@ -2219,9 +2279,10 @@ async function getClassWaitlist(req, res) {
     const waitlistEnrollments = await prisma.enrollment.findMany({
       where: {
         classId: id,
-        status: 'PENDING',
+        status: { in: ['PENDING', 'CONFIRMED'] },
         OR: [
-          { class: { status: 'FULL' } },
+          { isWaitlist: true },
+          { waitlistOrder: { not: null } },
           { comment: { contains: 'liste d\'attente', mode: 'insensitive' } },
         ],
       },
@@ -2236,21 +2297,44 @@ async function getClassWaitlist(req, res) {
           },
         },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [
+        { waitlistOrder: 'asc' },
+        { createdAt: 'asc' },
+      ],
     });
 
-    const waitlist = waitlistEnrollments.map((enrollment, index) => ({
-      id: enrollment.id,
-      studentId: enrollment.studentId,
-      studentFirstName: enrollment.student.firstName,
-      studentLastName: enrollment.student.lastName,
-      dateOfBirth: enrollment.student.dateOfBirth,
-      enrolledAt: enrollment.enrolledAt,
-      createdAt: enrollment.createdAt,
-      familyEmail: enrollment.student.family?.user?.email || null,
-      familyPhone: enrollment.student.family?.user?.phone || null,
-      waitlistOrder: index + 1,
-    }));
+    const sortedWaitlist = waitlistEnrollments.slice().sort((a, b) => {
+      const aHasOrder = a.waitlistOrder !== null && a.waitlistOrder !== undefined;
+      const bHasOrder = b.waitlistOrder !== null && b.waitlistOrder !== undefined;
+      if (aHasOrder && bHasOrder) return a.waitlistOrder - b.waitlistOrder;
+      if (aHasOrder && !bHasOrder) return -1;
+      if (!aHasOrder && bHasOrder) return 1;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+
+    const maxDefinedOrder = sortedWaitlist.reduce((max, enrollment) => {
+      if (enrollment.waitlistOrder === null || enrollment.waitlistOrder === undefined) return max;
+      return Math.max(max, enrollment.waitlistOrder);
+    }, 0);
+
+    let nextComputedOrder = maxDefinedOrder + 1;
+    const waitlist = sortedWaitlist.map((enrollment) => {
+      const waitlistOrder = enrollment.waitlistOrder !== null && enrollment.waitlistOrder !== undefined
+        ? enrollment.waitlistOrder
+        : nextComputedOrder++;
+      return {
+        id: enrollment.id,
+        studentId: enrollment.studentId,
+        studentFirstName: enrollment.student.firstName,
+        studentLastName: enrollment.student.lastName,
+        dateOfBirth: enrollment.student.dateOfBirth,
+        enrolledAt: enrollment.enrolledAt,
+        createdAt: enrollment.createdAt,
+        familyEmail: enrollment.student.family?.user?.email || null,
+        familyPhone: enrollment.student.family?.user?.phone || null,
+        waitlistOrder,
+      };
+    });
 
     return res.json({
       class: {

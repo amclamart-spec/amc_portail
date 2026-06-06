@@ -1342,7 +1342,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
                                 {group.classes.map((cls) => {
                                   const selected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.classId === cls.id);
-                                  const isWaitlist = cls.status === 'FULL' || cls.enrolledCount >= cls.capacity;
+                                  const isWaitlist = cls.status === 'FULL';
                                   return (
                                     <label
                                       key={cls.id}

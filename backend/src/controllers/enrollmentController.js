@@ -56,11 +56,29 @@ async function getAvailableClasses(req, res) {
         level: { include: { pole: true } },
         pole: true,
         schoolYear: true,
+        _count: {
+          select: {
+            enrollments: {
+              where: {
+                status: { in: ['PENDING', 'CONFIRMED'] },
+              },
+            },
+          },
+        },
       },
       orderBy: { dayOfWeek: 'asc' },
     });
 
-    res.json({ classes });
+    const formatted = classes.map((cls) => {
+      const enrolledCount = cls._count?.enrollments || 0;
+      return {
+        ...cls,
+        enrolledCount,
+        status: cls.status === 'CLOSED' ? 'CLOSED' : (enrolledCount >= cls.capacity ? 'FULL' : 'OPEN'),
+      };
+    });
+
+    res.json({ classes: formatted });
   } catch (error) {
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -111,24 +129,43 @@ async function createEnrollment(req, res) {
 
     // Générer un identifiant d'inscription et créer l'inscription
     const registrationCode = await getNextEnrollmentRegistrationCode(prisma, cls.schoolYearId);
-    const [enrollment] = await prisma.$transaction([
-      prisma.enrollment.create({
+
+    const enrollment = await prisma.$transaction(async (tx) => {
+      const activeEnrollmentCount = await tx.enrollment.count({
+        where: {
+          classId,
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+      });
+
+      const waitlistOrder = (activeEnrollmentCount + 1) - cls.capacity;
+      const isWaitlist = waitlistOrder > 0;
+
+      const created = await tx.enrollment.create({
         data: {
           studentId,
           classId,
           schoolYearId: cls.schoolYearId,
           status: 'PENDING',
           registrationCode,
+          isWaitlist,
+          waitlistOrder: isWaitlist ? waitlistOrder : null,
+          ...(isWaitlist ? { comment: 'Liste d\'attente' } : {}),
         },
-      }),
-      prisma.class.update({
-        where: { id: classId },
-        data: {
-          enrolledCount: { increment: 1 },
-          status: cls.enrolledCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
-        },
-      }),
-    ]);
+      });
+
+      if (!isWaitlist) {
+        await tx.class.update({
+          where: { id: classId },
+          data: {
+            enrolledCount: { increment: 1 },
+            status: activeEnrollmentCount + 1 >= cls.capacity ? 'FULL' : 'OPEN',
+          },
+        });
+      }
+
+      return created;
+    });
 
     const user = await prisma.user.findUnique({ where: { id: req.user.id } });
     if (user) {
