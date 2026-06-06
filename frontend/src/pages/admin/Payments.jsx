@@ -31,7 +31,8 @@ export default function AdminPayments() {
     try {
       const params = { ...buildQueryParams(queryFilters), page, limit };
       const txRes = await api.get('/payments/transactions', { params });
-      const uniqueTransactions = [...new Map((txRes.data.transactions || []).map((tx) => [tx.id, tx])).values()];
+      const uniqueTransactions = [...new Map((txRes.data.transactions || []).map((tx) => [tx.id, tx])).values()]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       setTransactions(uniqueTransactions);
       setPagination((prev) => ({
         ...prev,
