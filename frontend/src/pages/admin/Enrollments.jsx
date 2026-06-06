@@ -143,8 +143,11 @@ export default function AdminEnrollments() {
   };
 
   const isEnrollmentWaitlist = (enrollment) => {
+    if (enrollment.status !== 'PENDING') return false;
+    if (enrollment.isWaitlist === true) return true;
+    if (typeof enrollment.waitlistOrder === 'number' && enrollment.waitlistOrder > 0) return true;
     const hasWaitlistComment = String(enrollment.comment || '').toLowerCase().includes('liste d\'attente');
-    return enrollment.status === 'PENDING' && (enrollment.class?.status === 'FULL' || hasWaitlistComment);
+    return hasWaitlistComment;
   };
 
   const decodeText = (value) => {
@@ -403,7 +406,8 @@ export default function AdminEnrollments() {
     setEditingEnrollment(enrollment);
     setEditForm({
       status: enrollment.status,
-        waitlistOrder: enrollment.waitlistOrder || '',
+      isWaitlist: isEnrollmentWaitlist(enrollment),
+      waitlistOrder: enrollment.waitlistOrder || '',
       classId: enrollment.classId,
       schoolYearId: enrollment.schoolYearId,
       comment: enrollment.comment || '',
@@ -811,6 +815,33 @@ export default function AdminEnrollments() {
     }));
   };
 
+  const handleEditClassChange = (nextClassId) => {
+    setEditForm((prev) => {
+      if (!prev) return prev;
+      const selectedClass = classes.find((cls) => cls.id === nextClassId);
+      if (!selectedClass) {
+        return {
+          ...prev,
+          classId: nextClassId,
+        };
+      }
+
+      const capacity = Number(selectedClass.capacity);
+      const enrolledCount = Number(selectedClass.enrolledCount || 0);
+      const computedWaitlistOrder = Number.isFinite(capacity) && capacity > 0
+        ? (enrolledCount + 1) - capacity
+        : null;
+      const computedIsWaitlist = Number.isInteger(computedWaitlistOrder) && computedWaitlistOrder > 0;
+
+      return {
+        ...prev,
+        classId: nextClassId,
+        isWaitlist: computedIsWaitlist,
+        waitlistOrder: computedIsWaitlist ? computedWaitlistOrder : '',
+      };
+    });
+  };
+
   const handlePhotoChange = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -926,8 +957,15 @@ export default function AdminEnrollments() {
         schoolYearId: editForm.schoolYearId,
         comment: editForm.comment,
         levelValidated: editForm.levelValidated,
-        // include waitlist order when provided
-        ...(editForm.waitlistOrder !== undefined && editForm.waitlistOrder !== '' ? { waitlistOrder: Number(editForm.waitlistOrder) } : {}),
+        isWaitlist: Boolean(editForm.isWaitlist),
+        ...(editForm.isWaitlist
+          ? {
+            waitlistOrder:
+              editForm.waitlistOrder !== undefined && editForm.waitlistOrder !== ''
+                ? Number(editForm.waitlistOrder)
+                : 1,
+          }
+          : { waitlistOrder: null }),
         student: studentPayload,
         family: editForm.family,
       };
@@ -1317,7 +1355,7 @@ export default function AdminEnrollments() {
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Classe</label>
-                  <select className="form-control" value={editForm.classId} onChange={(event) => updateEditForm(null, 'classId', event.target.value)}>
+                  <select className="form-control" value={editForm.classId} onChange={(event) => handleEditClassChange(event.target.value)}>
                     {classes.map((cls) => (
                       <option key={cls.id} value={cls.id}>{`${cls.level?.pole?.name || ''} • ${cls.level?.name || ''} • ${cls.dayOfWeek || ''}`}</option>
                     ))}
@@ -1343,12 +1381,29 @@ export default function AdminEnrollments() {
                   />
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(editForm.isWaitlist)}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        updateEditForm(null, 'isWaitlist', checked);
+                        if (!checked) {
+                          updateEditForm(null, 'waitlistOrder', '');
+                        }
+                      }}
+                    />
+                    Liste d'attente
+                  </label>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
                   <label>Ordre liste d'attente</label>
                   <input
                     type="number"
                     className="form-control"
                     value={editForm.waitlistOrder || ''}
                     onChange={(event) => updateEditForm(null, 'waitlistOrder', event.target.value)}
+                    disabled={!editForm.isWaitlist}
                   />
                 </div>
                 <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}>
