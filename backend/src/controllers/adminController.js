@@ -2199,9 +2199,13 @@ async function getClasses(req, res) {
 
     const formatted = classes.map((cls) => {
       const enrolledCount = cls._count?.enrollments || 0;
+      const computedStatus = cls.status === 'CLOSED'
+        ? 'CLOSED'
+        : (enrolledCount > cls.capacity ? 'FULL' : 'OPEN');
       return {
         ...cls,
         enrolledCount,
+        status: computedStatus,
         fillIndicator: classFillIndicator(enrolledCount, cls.capacity),
       };
     });
@@ -2248,7 +2252,12 @@ async function getClassDetails(req, res) {
     res.json({
       class: {
         ...cls,
-        fillIndicator: classFillIndicator(cls.enrolledCount, cls.capacity),
+        enrolledCount: cls.enrollments.length,
+        status:
+          cls.status === 'CLOSED'
+            ? 'CLOSED'
+            : (cls.enrollments.length > cls.capacity ? 'FULL' : 'OPEN'),
+        fillIndicator: classFillIndicator(cls.enrollments.length, cls.capacity),
       },
     });
   } catch (error) {

@@ -136,6 +136,7 @@ export default function AdminClassDetails() {
   const classStatusLabel = {
     OPEN: 'Ouverte',
     CLOSED: 'Fermée',
+    FULL: 'Pleine',
   }[classData.status] || classData.status || '-';
 
   return (
