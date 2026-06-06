@@ -18,6 +18,7 @@ function getEnrollmentCourseDetails(enrollment) {
           levelLabel: parts[1] || '-',
           poleName: parts[0] || '',
           levelCode: parts[1] || '',
+          scheduleLabel: [cls.dayOfWeek, cls.startTime && cls.endTime ? `${cls.startTime}-${cls.endTime}` : cls.startTime || cls.endTime || ''].filter(Boolean).join(' ') || '-',
         };
       }
       return {
@@ -25,6 +26,7 @@ function getEnrollmentCourseDetails(enrollment) {
         levelLabel: '-',
         poleName: rawLabel,
         levelCode: '-',
+        scheduleLabel: [cls.dayOfWeek, cls.startTime && cls.endTime ? `${cls.startTime}-${cls.endTime}` : cls.startTime || cls.endTime || ''].filter(Boolean).join(' ') || '-',
       };
     }
   }
@@ -34,7 +36,7 @@ function getEnrollmentCourseDetails(enrollment) {
   const courseLabel = [poleName, levelName].filter(Boolean).join(' - ') || cls.room || cls.teacherName || 'Cours';
   const levelLabel = cls.level?.code || levelName || '-';
 
-  return { courseLabel, levelLabel, poleName, levelCode: cls.level?.code || levelName || '' };
+  return { courseLabel, levelLabel, poleName, levelCode: cls.level?.code || levelName || '', scheduleLabel: [cls.dayOfWeek, cls.startTime && cls.endTime ? `${cls.startTime}-${cls.endTime}` : cls.startTime || cls.endTime || ''].filter(Boolean).join(' ') || '-' };
 }
 
 function normalizeText(value) {
@@ -130,6 +132,7 @@ function buildEnrollmentTableRows(enrollmentData) {
       childName: normalizeText(`${enrollment.student?.firstName || ''} ${enrollment.student?.lastName || ''}`),
       courseLabel: details.courseLabel,
       levelLabel: details.levelLabel,
+      scheduleLabel: details.scheduleLabel || '-',
     };
   });
 }
@@ -258,13 +261,15 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
       const tableX = 40;
       const tableWidth = 530;
       const cellHeight = 20;
-      const col1Width = 220; // Child
-      const col2Width = 310; // Course
+      const col1Width = 170;
+      const col2Width = 240;
+      const col3Width = 120;
 
       // Table header
       doc.rect(tableX, tableY, tableWidth, cellHeight).stroke();
       doc.fontSize(9).font('Helvetica-Bold').text('Élève', tableX + 5, tableY + 4, { width: col1Width - 10 });
       doc.text('Cours', tableX + col1Width + 5, tableY + 4, { width: col2Width - 10 });
+      doc.text('Horaire', tableX + col1Width + col2Width + 5, tableY + 4, { width: col3Width - 10 });
 
       let currentY = tableY + cellHeight;
 
@@ -277,6 +282,7 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
         doc.rect(tableX, currentY, tableWidth, cellHeight).stroke();
         doc.fontSize(8).font('Helvetica').text(row.childName || '-', tableX + 5, currentY + 4, { width: col1Width - 10 });
         doc.text(`${row.courseLabel} (${row.levelLabel})`, tableX + col1Width + 5, currentY + 4, { width: col2Width - 10 });
+        doc.text(row.scheduleLabel || '-', tableX + col1Width + col2Width + 5, currentY + 4, { width: col3Width - 10 });
         currentY += cellHeight;
       });
 
@@ -319,16 +325,18 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
 
           const txTableX = 40;
           const txCellH = 18;
-          const colDateW = 120;
-          const colMethodW = 150;
-          const colAmountW = 110;
-          const colStatusW = 135;
+          const colDateW = 95;
+          const colMethodW = 95;
+          const colAmountW = 90;
+          const colStatusW = 90;
+          const colCommentW = 160;
 
           doc.fontSize(9).font('Helvetica-Bold');
           doc.text('Date', txTableX + 5, currentY + 4, { width: colDateW - 10 });
           doc.text('Méthode', txTableX + colDateW + 5, currentY + 4, { width: colMethodW - 10 });
           doc.text('Montant', txTableX + colDateW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
           doc.text('Statut', txTableX + colDateW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
+          doc.text('Commentaire', txTableX + colDateW + colMethodW + colAmountW + colStatusW + 5, currentY + 4, { width: colCommentW - 10 });
           currentY += txCellH;
 
           doc.fontSize(9).font('Helvetica');
@@ -343,6 +351,7 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
             doc.text(`${Number(tx.amount || tx.total || 0).toFixed(2)}€`, txTableX + colDateW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
             const statusLabel = formatPaymentStatus(tx.status);
             doc.text(statusLabel, txTableX + colDateW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
+            doc.text(String(tx.description || tx.metadata?.comment || '-'), txTableX + colDateW + colMethodW + colAmountW + colStatusW + 5, currentY + 4, { width: colCommentW - 10 });
             currentY += txCellH;
           });
           currentY += 8;
