@@ -555,6 +555,7 @@ export default function AdminEnrollments() {
         country: enrollment.student?.family?.country || 'France',
         phonePrimary: enrollment.student?.family?.phonePrimary || '',
         phoneSecondary: enrollment.student?.family?.phoneSecondary || '',
+        email: enrollment.student?.family?.user?.email || enrollment.student?.family?.email || '',
       },
       healthForm: {
         hasChronicDisease: Boolean(healthForm.hasChronicDisease),
@@ -1220,6 +1221,16 @@ export default function AdminEnrollments() {
 
         <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', alignItems: 'end' }}>
           <div>
+            <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Recherche famille</label>
+            <input
+              type="text"
+              value={familySearch}
+              onChange={(e) => setFamilySearch(e.target.value)}
+              className="form-control"
+              placeholder="Nom de famille"
+            />
+          </div>
+          <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Recherche élève</label>
             <input
               type="text"
@@ -1269,16 +1280,6 @@ export default function AdminEnrollments() {
               <option value="CANCELLED">Annulée</option>
               <option value="ARCHIVED">Archivée</option>
             </select>
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Recherche famille</label>
-            <input
-              type="text"
-              value={familySearch}
-              onChange={(e) => setFamilySearch(e.target.value)}
-              className="form-control"
-              placeholder="Nom de famille"
-            />
           </div>
           <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Statut paiement</label>
@@ -1657,6 +1658,15 @@ export default function AdminEnrollments() {
                     className="form-control"
                     value={editForm.family.familyName}
                     onChange={(event) => updateEditForm('family', 'familyName', event.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Email de la famille</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={editForm.family.email || ''}
+                    readOnly
                   />
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>

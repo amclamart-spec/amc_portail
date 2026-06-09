@@ -43,6 +43,20 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function ensureMetadataObject(maybe) {
+  if (!maybe) return {};
+  if (typeof maybe === 'object') return maybe;
+  if (typeof maybe === 'string') {
+    try {
+      const parsed = JSON.parse(maybe);
+      return typeof parsed === 'object' && parsed ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+  return {};
+}
+
 function formatDateValue(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -83,7 +97,7 @@ function formatPaymentMethod(method, metadata = {}) {
 }
 
 function getPaymentDetails(paymentData) {
-  const metadata = paymentData.metadata || {};
+  const metadata = ensureMetadataObject(paymentData.metadata);
   const methodKey = paymentData.paymentMethod || paymentData.method || metadata.paymentPlanType || metadata.method || metadata.paymentMethod;
   const paymentMethodLabel = formatPaymentMethod(methodKey, metadata);
   const details = [
@@ -129,8 +143,8 @@ function getPaymentDetails(paymentData) {
 }
 
 function getTransactionScheduleRecord(transaction = {}) {
-  const paymentMetadata = transaction.paymentMetadata || {};
-  const metadata = transaction.metadata || {};
+  const paymentMetadata = ensureMetadataObject(transaction.paymentMetadata);
+  const metadata = ensureMetadataObject(transaction.metadata);
   const mergedMetadata = { ...paymentMetadata, ...metadata };
   const methodKey = String(
     transaction.method
@@ -316,6 +330,20 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
       if (familyData.postalCode || familyData.city) { doc.text(`${familyData.postalCode || ''} ${familyData.city || ''}`.trim(), leftX, yLeft); yLeft += 12; }
       if (familyData.phonePrimary) { doc.text(`Téléphone: ${familyData.phonePrimary}`, leftX, yLeft); yLeft += 14; }
 
+      // Payer name (if available) just below family info
+      const payerName = normalizeText(
+        paymentData.payerName
+        || paymentData.payer
+        || paymentData.payerFullName
+        || (Array.isArray(paymentTransactions) && paymentTransactions[0] && (paymentTransactions[0].payerName || paymentTransactions[0].payer))
+        || ''
+      );
+      if (payerName) {
+        doc.fontSize(9).font('Helvetica-Bold').text(`Nom Payeur: ${payerName}`, leftX, yLeft);
+        doc.font('Helvetica');
+        yLeft += 16;
+      }
+
       // Move cursor below the left column content
       const afterColumnsY = yLeft + 6;
       doc.y = afterColumnsY;
@@ -385,6 +413,9 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
 
       const detailTransactions = transactionSource.filter((tx) => !isChequeOrDirectDebitTransaction(tx));
       const shouldShowTransactionTable = detailTransactions.length > 0;
+      const scheduleRows = transactionSource
+        .map((tx) => ({ tx, record: getTransactionScheduleRecord(tx) }))
+        .filter((item) => item.record);
 
       if (shouldShowTransactionTable) {
         if (currentY > doc.page.height - 180) {
@@ -443,10 +474,6 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
           });
           currentY += 16;
 
-          const scheduleRows = transactionSource
-            .map((tx) => ({ tx, record: getTransactionScheduleRecord(tx) }))
-            .filter((item) => item.record);
-
           if (scheduleRows.length > 0) {
             if (currentY > doc.page.height - 180) {
               doc.addPage();
@@ -457,20 +484,25 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
             currentY += 18;
 
             const scTableX = 40;
-            const scCellH = 18;
-            const scTypeW = 90;
-            const scDateW = 125;
-            const scDayW = 120;
-            const scCountW = 100;
-            const scBankW = 95;
+            const scHeaderH = 36;
+            const scRowH = 18;
+            // Adjusted widths: make IBAN/SWIFT wider, reduce other columns
+            const scTypeW = 70;
+            const scDateW = 100;
+            const scDayW = 80;
+            const scCountW = 80;
+            const scBankW = 200;
+            const scTableW = scTypeW + scDateW + scDayW + scCountW + scBankW;
 
+            // Header with border
             doc.fontSize(9).font('Helvetica-Bold');
+            doc.rect(scTableX, currentY, scTableW, scHeaderH).stroke();
             doc.text('Type', scTableX + 5, currentY + 4, { width: scTypeW - 10 });
             doc.text('Date dépôt/prélèvement', scTableX + scTypeW + 5, currentY + 4, { width: scDateW - 10 });
             doc.text('Jour dépôt/prélèvement', scTableX + scTypeW + scDateW + 5, currentY + 4, { width: scDayW - 10 });
             doc.text('Nombre chèque/échéances', scTableX + scTypeW + scDateW + scDayW + 5, currentY + 4, { width: scCountW - 10 });
             doc.text('IBAN/SWIFT', scTableX + scTypeW + scDateW + scDayW + scCountW + 5, currentY + 4, { width: scBankW - 10 });
-            currentY += scCellH;
+            currentY += scHeaderH;
 
             doc.fontSize(8.5).font('Helvetica');
             scheduleRows.forEach(({ record }) => {
@@ -480,7 +512,10 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
               }
 
               const bankInfoHeight = doc.heightOfString(record.bankInfo || '—', { width: scBankW - 10 });
-              const rowHeight = Math.max(scCellH, Math.ceil(bankInfoHeight + 8));
+              const rowHeight = Math.max(scRowH, Math.ceil(bankInfoHeight + 8));
+
+              // Row border
+              doc.rect(scTableX, currentY, scTableW, rowHeight).stroke();
 
               doc.text(record.type, scTableX + 5, currentY + 4, { width: scTypeW - 10 });
               doc.text(record.scheduleDate, scTableX + scTypeW + 5, currentY + 4, { width: scDateW - 10 });
@@ -492,6 +527,59 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
             currentY += 8;
           }
         }
+      }
+
+      if (scheduleRows.length > 0 && !shouldShowTransactionTable) {
+        if (currentY > doc.page.height - 180) {
+          doc.addPage();
+          currentY = 40;
+        }
+
+        currentY += 10;
+        doc.fontSize(10).font('Helvetica-Bold').text('ÉCHÉANCES PRÉLÈVEMENT / CHÈQUE', 40, currentY);
+        currentY += 18;
+
+        const scTableX = 40;
+        const scHeaderH = 36;
+        const scRowH = 18;
+        const scTypeW = 70;
+        const scDateW = 100;
+        const scDayW = 80;
+        const scCountW = 80;
+        const scBankW = 200;
+        const scTableW = scTypeW + scDateW + scDayW + scCountW + scBankW;
+
+        // Header with border
+        doc.fontSize(9).font('Helvetica-Bold');
+        doc.rect(scTableX, currentY, scTableW, scHeaderH).stroke();
+        doc.text('Type', scTableX + 5, currentY + 4, { width: scTypeW - 10 });
+        doc.text('Date dépôt/prélèvement', scTableX + scTypeW + 5, currentY + 4, { width: scDateW - 10 });
+        doc.text('Jour dépôt/prélèvement', scTableX + scTypeW + scDateW + 5, currentY + 4, { width: scDayW - 10 });
+        doc.text('Nombre chèque/échéances', scTableX + scTypeW + scDateW + scDayW + 5, currentY + 4, { width: scCountW - 10 });
+        doc.text('IBAN/SWIFT', scTableX + scTypeW + scDateW + scDayW + scCountW + 5, currentY + 4, { width: scBankW - 10 });
+        currentY += scHeaderH;
+
+        doc.fontSize(8.5).font('Helvetica');
+        scheduleRows.forEach(({ record }) => {
+          if (currentY > doc.page.height - 120) {
+            doc.addPage();
+            currentY = 40;
+          }
+
+          const bankInfoHeight = doc.heightOfString(record.bankInfo || '—', { width: scBankW - 10 });
+          const rowHeight = Math.max(scRowH, Math.ceil(bankInfoHeight + 8));
+
+          // Row border
+          doc.rect(scTableX, currentY, scTableW, rowHeight).stroke();
+
+          doc.text(record.type, scTableX + 5, currentY + 4, { width: scTypeW - 10 });
+          doc.text(record.scheduleDate, scTableX + scTypeW + 5, currentY + 4, { width: scDateW - 10 });
+          doc.text(record.scheduleDay, scTableX + scTypeW + scDateW + 5, currentY + 4, { width: scDayW - 10 });
+          doc.text(record.count, scTableX + scTypeW + scDateW + scDayW + 5, currentY + 4, { width: scCountW - 10 });
+          doc.text(record.bankInfo || '—', scTableX + scTypeW + scDateW + scDayW + scCountW + 5, currentY + 4, { width: scBankW - 10 });
+          currentY += rowHeight;
+        });
+        currentY += 8;
       }
 
       currentY += 10;
