@@ -409,7 +409,7 @@ async function updateRegistrationBlockStatus(req, res) {
  */
 async function getEnrollments(req, res) {
   try {
-    const { schoolYearId, status, studentName, poleId, classId, page = 1, limit = 50, testRequired } = req.query;
+    const { schoolYearId, status, studentName, familyName, paymentStatus, poleId, classId, page = 1, limit = 50, testRequired } = req.query;
     const waitlist = req.query.waitlist === 'true';
     const where = {};
     if (schoolYearId) where.schoolYearId = schoolYearId;
@@ -419,13 +419,21 @@ async function getEnrollments(req, res) {
     } else if (status) {
       where.status = status;
     }
+
+    const studentWhere = {};
     if (studentName) {
-      where.student = {
-        OR: [
-          { firstName: { contains: studentName, mode: 'insensitive' } },
-          { lastName: { contains: studentName, mode: 'insensitive' } },
-        ],
+      studentWhere.OR = [
+        { firstName: { contains: studentName, mode: 'insensitive' } },
+        { lastName: { contains: studentName, mode: 'insensitive' } },
+      ];
+    }
+    if (familyName) {
+      studentWhere.family = {
+        familyName: { contains: familyName, mode: 'insensitive' },
       };
+    }
+    if (Object.keys(studentWhere).length > 0) {
+      where.student = studentWhere;
     }
 
     if (testRequired === 'true') {
@@ -450,30 +458,25 @@ async function getEnrollments(req, res) {
       ? { where: { schoolYearId, consentType: 'SANITARY_FORM' } }
       : { where: { consentType: 'SANITARY_FORM' } };
 
-    const [enrollments, total] = await Promise.all([
-      prisma.enrollment.findMany({
-        where,
-        include: {
-          student: {
-            include: {
-              family: { include: { user: true } },
-              healthForms: studentHealthFormsInclude,
-              enrollmentConsents: studentConsentsInclude,
-            },
+    const enrollments = await prisma.enrollment.findMany({
+      where,
+      include: {
+        student: {
+          include: {
+            family: { include: { user: true } },
+            healthForms: studentHealthFormsInclude,
+            enrollmentConsents: studentConsentsInclude,
           },
-          class: {
-            include: {
-              level: { include: { pole: true } },
-            },
-          },
-          schoolYear: true,
         },
-        orderBy: { createdAt: 'desc' },
-        skip: (parseInt(page, 10) - 1) * parseInt(limit, 10),
-        take: parseInt(limit, 10),
-      }),
-      prisma.enrollment.count({ where }),
-    ]);
+        class: {
+          include: {
+            level: { include: { pole: true } },
+          },
+        },
+        schoolYear: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
     // add provisional flag when enrollment.class indicates provisional assignment
     // Ajout du statut de paiement principal pour chaque inscription
@@ -530,12 +533,22 @@ async function getEnrollments(req, res) {
       });
     }
 
+    const normalizedPaymentStatus = String(paymentStatus || '').trim().toUpperCase();
+    const filteredEnhanced = normalizedPaymentStatus
+      ? enhanced.filter((enrollment) => String(enrollment.paymentStatus || '').toUpperCase() === normalizedPaymentStatus)
+      : enhanced;
+
+    const totalFiltered = filteredEnhanced.length;
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.max(parseInt(limit, 10) || 50, 1);
+    const paginatedEnhanced = filteredEnhanced.slice((safePage - 1) * safeLimit, safePage * safeLimit);
+
     res.json({
-      enrollments: enhanced,
-      total,
-      page: parseInt(page, 10),
-      limit: parseInt(limit, 10),
-      totalPages: Math.max(Math.ceil(total / parseInt(limit, 10)), 1),
+      enrollments: paginatedEnhanced,
+      total: totalFiltered,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.max(Math.ceil(totalFiltered / safeLimit), 1),
     });
   } catch (error) {
     console.error('Erreur getEnrollments:', error);
@@ -1501,12 +1514,22 @@ async function updateEnrollment(req, res) {
       if (family.phoneSecondary !== undefined) familyUpdates.phoneSecondary = family.phoneSecondary;
     }
 
+    const targetSchoolYearId = schoolYearId || enrollment.schoolYearId;
+
     let newClass = null;
     if (classChanged) {
       newClass = await prisma.class.findUnique({ where: { id: classId } });
       if (!newClass) {
         return res.status(404).json({ error: 'Classe introuvable' });
       }
+      if (newClass.status === 'CLOSED') {
+        return res.status(400).json({ error: 'Impossible d’affecter une inscription à une classe fermée' });
+      }
+      if (newClass.schoolYearId !== targetSchoolYearId) {
+        return res.status(400).json({ error: 'La classe sélectionnée ne correspond pas à l’année scolaire choisie' });
+      }
+    } else if (schoolYearId && enrollment.class?.schoolYearId !== schoolYearId) {
+      return res.status(400).json({ error: 'La classe actuelle ne correspond pas à l’année scolaire choisie' });
     }
 
     const classTransactions = [];
@@ -1584,7 +1607,6 @@ async function updateEnrollment(req, res) {
       }
     }
 
-    const targetSchoolYearId = schoolYearId || enrollment.schoolYearId;
     const healthFormData = healthForm || null;
     let healthFormAction = null;
     let healthFormId = null;
@@ -2217,7 +2239,7 @@ async function getClasses(req, res) {
           select: {
             enrollments: {
               where: {
-                status: { in: ['PENDING', 'CONFIRMED'] },
+                status: { not: 'CANCELLED' },
               },
             },
           },
@@ -2308,12 +2330,8 @@ async function getClassWaitlist(req, res) {
     const waitlistEnrollments = await prisma.enrollment.findMany({
       where: {
         classId: id,
-        status: { in: ['PENDING', 'CONFIRMED'] },
-        OR: [
-          { isWaitlist: true },
-          { waitlistOrder: { not: null } },
-          { comment: { contains: 'liste d\'attente', mode: 'insensitive' } },
-        ],
+        status: { not: 'CANCELLED' },
+        isWaitlist: true,
       },
       include: {
         student: {
@@ -2332,38 +2350,18 @@ async function getClassWaitlist(req, res) {
       ],
     });
 
-    const sortedWaitlist = waitlistEnrollments.slice().sort((a, b) => {
-      const aHasOrder = a.waitlistOrder !== null && a.waitlistOrder !== undefined;
-      const bHasOrder = b.waitlistOrder !== null && b.waitlistOrder !== undefined;
-      if (aHasOrder && bHasOrder) return a.waitlistOrder - b.waitlistOrder;
-      if (aHasOrder && !bHasOrder) return -1;
-      if (!aHasOrder && bHasOrder) return 1;
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    });
-
-    const maxDefinedOrder = sortedWaitlist.reduce((max, enrollment) => {
-      if (enrollment.waitlistOrder === null || enrollment.waitlistOrder === undefined) return max;
-      return Math.max(max, enrollment.waitlistOrder);
-    }, 0);
-
-    let nextComputedOrder = maxDefinedOrder + 1;
-    const waitlist = sortedWaitlist.map((enrollment) => {
-      const waitlistOrder = enrollment.waitlistOrder !== null && enrollment.waitlistOrder !== undefined
-        ? enrollment.waitlistOrder
-        : nextComputedOrder++;
-      return {
-        id: enrollment.id,
-        studentId: enrollment.studentId,
-        studentFirstName: enrollment.student.firstName,
-        studentLastName: enrollment.student.lastName,
-        dateOfBirth: enrollment.student.dateOfBirth,
-        enrolledAt: enrollment.enrolledAt,
-        createdAt: enrollment.createdAt,
-        familyEmail: enrollment.student.family?.user?.email || null,
-        familyPhone: enrollment.student.family?.user?.phone || null,
-        waitlistOrder,
-      };
-    });
+    const waitlist = waitlistEnrollments.map((enrollment) => ({
+      id: enrollment.id,
+      studentId: enrollment.studentId,
+      studentFirstName: enrollment.student.firstName,
+      studentLastName: enrollment.student.lastName,
+      dateOfBirth: enrollment.student.dateOfBirth,
+      enrolledAt: enrollment.enrolledAt,
+      createdAt: enrollment.createdAt,
+      familyEmail: enrollment.student.family?.user?.email || null,
+      familyPhone: enrollment.student.family?.user?.phone || null,
+      waitlistOrder: enrollment.waitlistOrder,
+    }));
 
     return res.json({
       class: {

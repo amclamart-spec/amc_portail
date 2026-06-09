@@ -47,7 +47,21 @@ function formatDateValue(value) {
   if (!value) return null;
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return String(value).trim();
-  return date.toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric' });
+  return date.toLocaleDateString('fr-FR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function normalizeBankValue(value) {
+  if (!value) return '';
+  return String(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function formatBankIbanForDisplay(value) {
+  const cleaned = normalizeBankValue(value);
+  return cleaned.replace(/(.{4})/g, '$1 ').trim();
+}
+
+function formatBankSwiftForDisplay(value) {
+  return normalizeBankValue(value);
 }
 
 function formatPaymentMethod(method, metadata = {}) {
@@ -114,6 +128,64 @@ function getPaymentDetails(paymentData) {
   }
 
   return details;
+}
+
+function getTransactionScheduleRecord(transaction = {}) {
+  const paymentMetadata = transaction.paymentMetadata || {};
+  const metadata = transaction.metadata || {};
+  const mergedMetadata = { ...paymentMetadata, ...metadata };
+  const methodKey = String(
+    transaction.method
+    || transaction.paymentMethod
+    || mergedMetadata.paymentMethod
+    || mergedMetadata.checkoutMethod
+    || mergedMetadata.method
+    || mergedMetadata.paymentPlanType
+    || ''
+  ).toUpperCase();
+
+  const isDirectDebit = methodKey === 'PRELEVEMENT_BANCAIRE'
+    || methodKey === 'VIREMENT'
+    || methodKey === 'STRIPE_SEPA'
+    || methodKey === 'GO_CARDLESS_SEPA'
+    || methodKey === 'SEPA';
+  const isCheque = methodKey === 'CHEQUE';
+
+  if (!isDirectDebit && !isCheque) {
+    return null;
+  }
+
+  const installmentsCount = transaction.paymentInstallmentsCount
+    || mergedMetadata.bankDebitInstallmentsCount
+    || mergedMetadata.chequeInstallmentsCount
+    || mergedMetadata.chequeCount
+    || mergedMetadata.numberOfInstallments
+    || mergedMetadata.installmentsCount
+    || transaction.numberOfInstallments
+    || transaction.installmentsCount;
+
+  const bankDebitDay = mergedMetadata.bankDebitDay || transaction.scheduleDay || transaction.bankDebitDay;
+  const bankDebitFirstPaymentDate = mergedMetadata.firstPaymentDate || transaction.firstPaymentDate;
+  const chequeDepositDay = mergedMetadata.chequeDepositDay || transaction.scheduleDay || mergedMetadata.bankDebitDay;
+  const chequeFirstPaymentDate = mergedMetadata.chequeFirstPaymentDate || mergedMetadata.firstPaymentDate || transaction.firstPaymentDate;
+
+  if (isCheque) {
+    return {
+      type: 'Chèque',
+      scheduleDate: formatDateValue(chequeFirstPaymentDate) || '—',
+      scheduleDay: chequeDepositDay !== undefined && chequeDepositDay !== null ? String(chequeDepositDay) : '—',
+      count: installmentsCount !== undefined && installmentsCount !== null ? String(installmentsCount) : '—',
+      bankInfo: '—',
+    };
+  }
+
+  return {
+    type: 'Prélèvement',
+    scheduleDate: formatDateValue(bankDebitFirstPaymentDate) || '—',
+    scheduleDay: bankDebitDay !== undefined && bankDebitDay !== null ? String(bankDebitDay) : '—',
+    count: installmentsCount !== undefined && installmentsCount !== null ? String(installmentsCount) : '—',
+    bankInfo: `IBAN: ${formatBankIbanForDisplay(mergedMetadata.bankDebitIban || transaction.bankDebitIban) || '—'} / SWIFT: ${formatBankSwiftForDisplay(mergedMetadata.bankDebitSwift || transaction.bankDebitSwift) || '—'}`,
+  };
 }
 
 function buildEnrollmentTableRows(enrollmentData) {
@@ -226,8 +298,6 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
       doc.text(`Date: ${invoiceDate.toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric' })}`);
       doc.moveDown(0.3);
 
-      const paymentDetails = getPaymentDetails(paymentData);
-
       // Two-column layout: Family info (left) and Payment info (right)
       const leftX = 40;
       const rightX = 290;
@@ -287,6 +357,27 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
       });
 
       const transactionSource = Array.isArray(paymentTransactions) ? paymentTransactions : [];
+      const isChequeOrDirectDebitTransaction = (tx = {}) => {
+        const paymentMetadata = tx.paymentMetadata || {};
+        const metadata = tx.metadata || {};
+        const mergedMetadata = { ...paymentMetadata, ...metadata };
+        const methodKey = String(
+          tx.method
+          || tx.paymentMethod
+          || mergedMetadata.paymentMethod
+          || mergedMetadata.checkoutMethod
+          || mergedMetadata.method
+          || mergedMetadata.paymentPlanType
+          || ''
+        ).toUpperCase();
+
+        return methodKey === 'CHEQUE'
+          || methodKey === 'PRELEVEMENT_BANCAIRE'
+          || methodKey === 'VIREMENT'
+          || methodKey === 'STRIPE_SEPA'
+          || methodKey === 'GO_CARDLESS_SEPA'
+          || methodKey === 'SEPA';
+      };
       const paymentTransactionsTotal = transactionSource
         .filter((tx) => {
           const status = String(tx.status || '').trim().toUpperCase();
@@ -294,11 +385,10 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
         })
         .reduce((sum, tx) => sum + Number(tx.amount || tx.total || 0), 0);
 
-      const paymentDetailsToShow = Array.isArray(paymentDetails) ? paymentDetails.filter((detail) => detail.value) : [];
-      const shouldShowPaymentDetails = paymentDetailsToShow.length > 0;
-      const shouldShowTransactionTable = transactionSource.length > 0;
+      const detailTransactions = transactionSource.filter((tx) => !isChequeOrDirectDebitTransaction(tx));
+      const shouldShowTransactionTable = detailTransactions.length > 0;
 
-      if (shouldShowPaymentDetails || shouldShowTransactionTable) {
+      if (shouldShowTransactionTable) {
         if (currentY > doc.page.height - 180) {
           doc.addPage();
           currentY = 40;
@@ -307,15 +397,6 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
         currentY += 10;
         doc.fontSize(10).font('Helvetica-Bold').text('DÉTAILS DES PAIEMENTS', 40, currentY);
         currentY += 18;
-
-        if (shouldShowPaymentDetails) {
-          doc.fontSize(9).font('Helvetica');
-          paymentDetailsToShow.forEach((detail) => {
-            doc.text(`${detail.label}: ${detail.value}`, 40, currentY);
-            currentY += 14;
-          });
-          currentY += 6;
-        }
 
         if (shouldShowTransactionTable) {
           if (currentY > doc.page.height - 180) {
@@ -329,32 +410,89 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
           const colMethodW = 95;
           const colAmountW = 90;
           const colStatusW = 90;
-          const colCommentW = 160;
+          const colDescriptionW = 160;
 
           doc.fontSize(9).font('Helvetica-Bold');
           doc.text('Date', txTableX + 5, currentY + 4, { width: colDateW - 10 });
           doc.text('Méthode', txTableX + colDateW + 5, currentY + 4, { width: colMethodW - 10 });
           doc.text('Montant', txTableX + colDateW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
           doc.text('Statut', txTableX + colDateW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
-          doc.text('Commentaire', txTableX + colDateW + colMethodW + colAmountW + colStatusW + 5, currentY + 4, { width: colCommentW - 10 });
+          doc.text('Description', txTableX + colDateW + colMethodW + colAmountW + colStatusW + 5, currentY + 4, { width: colDescriptionW - 10 });
           currentY += txCellH;
 
           doc.fontSize(9).font('Helvetica');
-          transactionSource.forEach((tx) => {
+          detailTransactions.forEach((tx) => {
             if (currentY > doc.page.height - 120) {
               doc.addPage();
               currentY = 40;
             }
             const dateStr = new Date(tx.processedAt || tx.createdAt).toLocaleDateString('fr-FR');
+            const rawDescription = String(tx.description || tx.metadata?.comment || '').trim();
+            const normalizedDescription = rawDescription.toLowerCase();
+            const hasGenericAdminDescription = normalizedDescription === 'paiement ajouté par admin'
+              || normalizedDescription === 'paiement ajoute par admin';
+            const descriptionText = !hasGenericAdminDescription && rawDescription ? rawDescription : '-';
+            const descriptionHeight = doc.heightOfString(descriptionText, { width: colDescriptionW - 10 });
+            const rowHeight = Math.max(txCellH, Math.ceil(descriptionHeight + 8));
+
             doc.text(dateStr, txTableX + 5, currentY + 4, { width: colDateW - 10 });
-            doc.text(formatPaymentMethod(tx.method || tx.paymentMethod, tx.metadata), txTableX + colDateW + 5, currentY + 4, { width: colMethodW - 10 });
+            doc.text(formatPaymentMethod(tx.method || tx.paymentMethod, tx.paymentMetadata || tx.metadata), txTableX + colDateW + 5, currentY + 4, { width: colMethodW - 10 });
             doc.text(`${Number(tx.amount || tx.total || 0).toFixed(2)}€`, txTableX + colDateW + colMethodW + 5, currentY + 4, { width: colAmountW - 10, align: 'right' });
             const statusLabel = formatPaymentStatus(tx.status);
             doc.text(statusLabel, txTableX + colDateW + colMethodW + colAmountW + 5, currentY + 4, { width: colStatusW - 10 });
-            doc.text(String(tx.description || tx.metadata?.comment || '-'), txTableX + colDateW + colMethodW + colAmountW + colStatusW + 5, currentY + 4, { width: colCommentW - 10 });
-            currentY += txCellH;
+            doc.text(descriptionText, txTableX + colDateW + colMethodW + colAmountW + colStatusW + 5, currentY + 4, { width: colDescriptionW - 10 });
+            currentY += rowHeight;
           });
-          currentY += 8;
+          currentY += 16;
+
+          const scheduleRows = transactionSource
+            .map((tx) => ({ tx, record: getTransactionScheduleRecord(tx) }))
+            .filter((item) => item.record);
+
+          if (scheduleRows.length > 0) {
+            if (currentY > doc.page.height - 180) {
+              doc.addPage();
+              currentY = 40;
+            }
+
+            doc.fontSize(10).font('Helvetica-Bold').text('ÉCHÉANCES PRÉLÈVEMENT / CHÈQUE', 40, currentY);
+            currentY += 18;
+
+            const scTableX = 40;
+            const scCellH = 18;
+            const scTypeW = 90;
+            const scDateW = 125;
+            const scDayW = 120;
+            const scCountW = 100;
+            const scBankW = 95;
+
+            doc.fontSize(9).font('Helvetica-Bold');
+            doc.text('Type', scTableX + 5, currentY + 4, { width: scTypeW - 10 });
+            doc.text('Date dépôt/prélèvement', scTableX + scTypeW + 5, currentY + 4, { width: scDateW - 10 });
+            doc.text('Jour dépôt/prélèvement', scTableX + scTypeW + scDateW + 5, currentY + 4, { width: scDayW - 10 });
+            doc.text('Nombre chèque/échéances', scTableX + scTypeW + scDateW + scDayW + 5, currentY + 4, { width: scCountW - 10 });
+            doc.text('IBAN/SWIFT', scTableX + scTypeW + scDateW + scDayW + scCountW + 5, currentY + 4, { width: scBankW - 10 });
+            currentY += scCellH;
+
+            doc.fontSize(8.5).font('Helvetica');
+            scheduleRows.forEach(({ record }) => {
+              if (currentY > doc.page.height - 120) {
+                doc.addPage();
+                currentY = 40;
+              }
+
+              const bankInfoHeight = doc.heightOfString(record.bankInfo || '—', { width: scBankW - 10 });
+              const rowHeight = Math.max(scCellH, Math.ceil(bankInfoHeight + 8));
+
+              doc.text(record.type, scTableX + 5, currentY + 4, { width: scTypeW - 10 });
+              doc.text(record.scheduleDate, scTableX + scTypeW + 5, currentY + 4, { width: scDateW - 10 });
+              doc.text(record.scheduleDay, scTableX + scTypeW + scDateW + 5, currentY + 4, { width: scDayW - 10 });
+              doc.text(record.count, scTableX + scTypeW + scDateW + scDayW + 5, currentY + 4, { width: scCountW - 10 });
+              doc.text(record.bankInfo || '—', scTableX + scTypeW + scDateW + scDayW + scCountW + 5, currentY + 4, { width: scBankW - 10 });
+              currentY += rowHeight;
+            });
+            currentY += 8;
+          }
         }
       }
 

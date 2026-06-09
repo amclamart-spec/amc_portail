@@ -29,6 +29,44 @@ function formatCurrency(value) {
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(toNumber(value));
 }
 
+function formatExportPaymentMethod(method, metadata = {}) {
+  if (method === 'VIREMENT' || method === 'PRELEVEMENT_BANCAIRE') return 'Prélèvement';
+  if (method === 'SEPA' || method === 'STRIPE_SEPA' || method === 'GO_CARDLESS_SEPA') return 'Prélèvement SEPA';
+  return method || '-';
+}
+
+function getBankDebitExportFields(metadata = {}) {
+  const installmentsCount = metadata?.bankDebitInstallmentsCount ?? metadata?.numberOfInstallments ?? '-';
+  const firstPaymentDate = metadata?.firstPaymentDate ? new Date(metadata.firstPaymentDate).toLocaleDateString('fr-FR') : '-';
+  const scheduleDay = metadata?.bankDebitDay ?? metadata?.scheduleDay ?? '-';
+  const iban = metadata?.bankDebitIban || '-';
+  const swift = metadata?.bankDebitSwift || '-';
+  return { installmentsCount, firstPaymentDate, scheduleDay, iban, swift };
+}
+
+function getChequeExportFields(metadata = {}) {
+  const installmentsCount = metadata?.chequeInstallmentsCount ?? metadata?.numberOfInstallments ?? metadata?.installmentsCount ?? '-';
+  const depositDate = metadata?.chequeFirstPaymentDate ? new Date(metadata.chequeFirstPaymentDate).toLocaleDateString('fr-FR') : '-';
+  const depositDay = metadata?.chequeDepositDay ?? '-';
+  return { installmentsCount, depositDate, depositDay };
+}
+
+function formatExportPaymentStatus(status) {
+  const labels = {
+    PENDING: 'En attente',
+    PARTIAL: 'Partiel',
+    PAID: 'Payé',
+    OVERDUE: 'En retard',
+    CANCELLED: 'Annulé',
+    FAILED: 'Échoué',
+    SUCCEEDED: 'Réussi',
+    REFUNDED: 'Remboursé',
+    REQUIRES_ACTION: 'Action requise',
+    PROCESSING: 'En cours',
+  };
+  return labels[status] || status || '-';
+}
+
 function parseFormat(value, allowed = ['excel', 'pdf', 'csv']) {
   const format = String(value || 'excel').toLowerCase();
   if (!allowed.includes(format)) {
@@ -835,17 +873,30 @@ async function getAccountingDataset(kind, schoolYearId) {
 
     return {
       title: 'Synthèse des paiements',
-      headers: ['Date', 'Année', 'Famille', 'Montant total', 'Montant payé', 'Reste', 'Statut', 'Méthode'],
-      rows: payments.map((p) => [
-        new Date(p.createdAt).toLocaleDateString('fr-FR'),
-        p.schoolYear?.label || '-',
-        p.family?.familyName || '-',
-        formatCurrency(p.totalAmount),
-        formatCurrency(p.paidAmount),
-        formatCurrency(Math.max(toNumber(p.totalAmount) - toNumber(p.paidAmount), 0)),
-        p.status,
-        p.paymentMethod || '-',
-      ]),
+      headers: ['Date', 'Année', 'Famille', 'Montant total', 'Montant payé', 'Reste', 'Statut', 'Méthode', 'Nombre échéances prélèvement', 'Date début prélèvement', 'Jour prélèvement', 'IBAN', 'SWIFT', 'Nombre de chèques', 'Date dépôt chèque', 'Jour dépôt chèque'],
+      rows: payments.map((p) => {
+        const metadata = p.metadata || {};
+        const bankDebit = getBankDebitExportFields(metadata);
+        const cheque = getChequeExportFields(metadata);
+        return [
+          new Date(p.createdAt).toLocaleDateString('fr-FR'),
+          p.schoolYear?.label || '-',
+          p.family?.familyName || '-',
+          formatCurrency(p.totalAmount),
+          formatCurrency(p.paidAmount),
+          formatCurrency(Math.max(toNumber(p.totalAmount) - toNumber(p.paidAmount), 0)),
+          formatExportPaymentStatus(p.status),
+          formatExportPaymentMethod(p.paymentMethod, metadata),
+          bankDebit.installmentsCount,
+          bankDebit.firstPaymentDate,
+          bankDebit.scheduleDay,
+          bankDebit.iban,
+          bankDebit.swift,
+          cheque.installmentsCount,
+          cheque.depositDate,
+          cheque.depositDay,
+        ];
+      }),
     };
   }
 
@@ -868,7 +919,7 @@ async function getAccountingDataset(kind, schoolYearId) {
         formatCurrency(p.totalAmount),
         formatCurrency(p.paidAmount),
         formatCurrency(Math.max(toNumber(p.totalAmount) - toNumber(p.paidAmount), 0)),
-        p.status,
+        formatExportPaymentStatus(p.status),
         new Date(p.updatedAt).toLocaleDateString('fr-FR'),
       ]),
     };
@@ -890,18 +941,31 @@ async function getAccountingDataset(kind, schoolYearId) {
 
     return {
       title: 'Historique des transactions',
-      headers: ['Date', 'Famille', 'Année', 'Type', 'Provider', 'Méthode', 'Montant', 'Statut', 'Référence'],
-      rows: transactions.map((t) => [
-        new Date(t.createdAt).toLocaleString('fr-FR'),
-        t.payment?.family?.familyName || '-',
-        t.payment?.schoolYear?.label || '-',
-        t.type,
-        t.provider,
-        t.method,
-        formatCurrency(t.amount),
-        t.status,
-        t.externalRef || '-',
-      ]),
+      headers: ['Date', 'Famille', 'Année', 'Type', 'Provider', 'Méthode', 'Montant', 'Statut', 'Référence', 'Nombre échéances prélèvement', 'Date début prélèvement', 'Jour prélèvement', 'IBAN', 'SWIFT', 'Nombre de chèques', 'Date dépôt chèque', 'Jour dépôt chèque'],
+      rows: transactions.map((t) => {
+        const paymentMetadata = t.payment?.metadata || {};
+        const bankDebit = getBankDebitExportFields(paymentMetadata);
+        const cheque = getChequeExportFields(paymentMetadata);
+        return [
+          new Date(t.createdAt).toLocaleString('fr-FR'),
+          t.payment?.family?.familyName || '-',
+          t.payment?.schoolYear?.label || '-',
+          t.type,
+          t.provider,
+          formatExportPaymentMethod(t.method, paymentMetadata),
+          formatCurrency(t.amount),
+          formatExportPaymentStatus(t.status),
+          t.externalRef || '-',
+          bankDebit.installmentsCount,
+          bankDebit.firstPaymentDate,
+          bankDebit.scheduleDay,
+          bankDebit.iban,
+          bankDebit.swift,
+          cheque.installmentsCount,
+          cheque.depositDate,
+          cheque.depositDay,
+        ];
+      }),
     };
   }
 
