@@ -998,15 +998,31 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
       },
       include: {
         transactions: { orderBy: { createdAt: 'desc' } },
+        paymentPlan: true,
+        installments: { orderBy: { dueDate: 'asc' } },
       },
     });
 
-    // Enrich transactions with parent payment metadata for receipt generation
     const familyTransactionsForReceipt = familyPayments
-      .flatMap((familyPayment) => (familyPayment.transactions || []).map((tx) => ({
-        ...tx,
-        paymentMetadata: familyPayment.metadata || {},
-      })));
+      .flatMap((familyPayment) => (familyPayment.transactions || []).map((tx) => {
+        const paymentMetadata = {
+          ...((familyPayment.paymentPlan?.metadata && typeof familyPayment.paymentPlan.metadata === 'object') ? familyPayment.paymentPlan.metadata : {}),
+          ...((familyPayment.metadata && typeof familyPayment.metadata === 'object') ? familyPayment.metadata : {}),
+        };
+        const installments = Array.isArray(familyPayment.installments) ? familyPayment.installments : [];
+        const firstInstallment = installments.length > 0 ? installments[0] : null;
+        const paymentMethod = familyPayment.paymentMethod || paymentMetadata.paymentMethod || paymentMetadata.checkoutMethod || paymentMetadata.paymentPlanType || familyPayment.paymentPlan?.type || null;
+        const paymentInstallmentsCount = familyPayment.numberOfInstallments || familyPayment.paymentPlan?.installmentsCount || paymentMetadata.numberOfInstallments || paymentMetadata.bankDebitInstallmentsCount || paymentMetadata.chequeInstallmentsCount || installments.length || null;
+
+        return {
+          ...tx,
+          paymentMetadata,
+          paymentMethod,
+          paymentInstallmentsCount,
+          scheduleDay: familyPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
+          firstPaymentDate: paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
+        };
+      }));
 
     // Generate invoice-like PDF file using shared utility
     const invoiceResult = await generateInvoicePDF(
