@@ -345,7 +345,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     api.get('/enrollments/poles').then(({ data }) => setPoles(data.poles || [])).catch(() => {});
     setLoadingClasses(true);
     api.get('/enrollments/classes')
-      .then(({ data }) => setAllClasses(data.classes || []))
+      .then(({ data }) => setAllClasses((data.classes || []).filter((cls) => cls.status !== 'CLOSED')))
       .catch(() => toast.error('Impossible de charger les créneaux'))
       .finally(() => setLoadingClasses(false));
     if (existingFamily) {

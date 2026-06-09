@@ -554,6 +554,11 @@ function buildBankDebitMetadata(payment) {
     if (payment.firstPaymentDate) {
       metadata.chequeFirstPaymentDate = String(payment.firstPaymentDate).trim();
     }
+    if (payment.installmentsCount !== undefined && payment.installmentsCount !== null) {
+      metadata.chequeInstallmentsCount = Number(payment.installmentsCount);
+    } else if (payment.numberOfInstallments !== undefined && payment.numberOfInstallments !== null) {
+      metadata.chequeInstallmentsCount = Number(payment.numberOfInstallments);
+    }
   }
 
   return metadata;

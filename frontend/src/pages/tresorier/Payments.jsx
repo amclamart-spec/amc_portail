@@ -39,7 +39,7 @@ export default function TresorierPayments({ scope = 'all' }) {
     firstPaymentDate: '',
     numberOfInstallments: '1',
   });
-  const [filters, setFilters] = useState({ payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
+  const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [selectedChequePlan, setSelectedChequePlan] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -191,7 +191,7 @@ export default function TresorierPayments({ scope = 'all' }) {
     load(filters);
   };
   const resetFilters = () => {
-    const reset = { payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
+    const reset = { familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
     setFilters(reset);
     setCurrentPage(1);
     load(reset);
@@ -381,7 +381,13 @@ export default function TresorierPayments({ scope = 'all' }) {
       <div className="card" style={{ marginTop: scope === 'plans' ? 0 : undefined }}>
         <h3>{scope === 'plans' ? 'Paiements chèque' : 'Historique transactions'}</h3>
         <form onSubmit={(e) => { e.preventDefault(); applyFilters(); }} style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 12 }}>
+            <input
+              className="form-control"
+              placeholder="Famille"
+              value={filters.familyName}
+              onChange={(e) => setFilters((prev) => ({ ...prev, familyName: e.target.value }))}
+            />
             <input
               className="form-control"
               placeholder="Payeur"
@@ -441,6 +447,7 @@ export default function TresorierPayments({ scope = 'all' }) {
             <thead>
               <tr>
                 <th>Date</th>
+                <th>Famille</th>
                 <th>Payeur</th>
                 <th>Méthode</th>
                 <th>Montant</th>
@@ -453,6 +460,7 @@ export default function TresorierPayments({ scope = 'all' }) {
               {paginatedTransactions.map((t) => (
                 <tr key={t.id}>
                   <td>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
+                  <td>{t.familyName || t.payment?.family?.familyName || '-'}</td>
                   <td>{t.payerName || '-'}</td>
                   <td>{formatPaymentMethodLabel(t)}</td>
                   <td>{Number(t.amount).toFixed(2)} €</td>
