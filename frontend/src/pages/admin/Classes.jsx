@@ -199,9 +199,12 @@ export default function AdminClasses() {
     try {
       const { data } = await api.get(`/admin/classes/${cls.id}/waitlist`);
       const sorted = (data.waitlist || [])
-        .filter((student) => student.waitlistOrder !== null && student.waitlistOrder !== undefined)
         .slice()
-        .sort((a, b) => a.waitlistOrder - b.waitlistOrder);
+        .sort((a, b) => {
+          const aOrder = a.waitlistOrder === null || a.waitlistOrder === undefined ? Number.MAX_SAFE_INTEGER : Number(a.waitlistOrder);
+          const bOrder = b.waitlistOrder === null || b.waitlistOrder === undefined ? Number.MAX_SAFE_INTEGER : Number(b.waitlistOrder);
+          return aOrder - bOrder;
+        });
       setWaitlistStudents(sorted);
     } catch (error) {
       console.error(error);
@@ -300,7 +303,7 @@ export default function AdminClasses() {
                       <td><span className={`badge ${cls.status === 'OPEN' ? 'badge-success' : 'badge-warning'}`}>{statusLabel(cls.status)}</span></td>
                       <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <Link className="btn btn-outline btn-sm" to={`/admin/classes/${cls.id}`}>Détail</Link>
-                        {cls.status === 'FULL' && (
+                        {Number(cls.enrolledCount || 0) > Number(cls.capacity || 0) && (
                           <button className="btn btn-outline btn-sm" onClick={() => openWaitlistModal(cls)}>Liste d'attente</button>
                         )}
                         <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(cls)}>
