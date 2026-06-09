@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm *)",
+      "Bash(git *)",
+      "Bash(powershell *)",
+      "Bash(node *)",
+      "Bash(cd *)",
+      "Bash(npx prisma migrate *)",
+      "Bash(npx *)",
+      "Bash(backendnode_modules\\.binprisma.cmd *)",
+      "Bash(cd)",
+      "KillShell",
+      "Bash(taskkill *)"
+    ]
+  }
+}
