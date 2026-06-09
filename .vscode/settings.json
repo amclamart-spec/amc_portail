@@ -1,5 +1,9 @@
 {
     "chat.tools.terminal.autoApprove": {
-        "Get-CimInstance": true
+        "Get-CimInstance": true,
+        "/^node -e \"require\\('\\./src/utils/invoiceUtils'\\); require\\('\\./src/services/pricingService'\\); console\\.log\\('OK'\\);\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }
