@@ -41,7 +41,9 @@ async function getPolesAndLevels(req, res) {
 async function getAvailableClasses(req, res) {
   try {
     const { levelId, schoolYearId } = req.query;
-    const where = {};
+    const where = {
+      status: { not: 'CLOSED' },
+    };
     if (levelId) where.levelId = levelId;
     if (schoolYearId) {
       where.schoolYearId = schoolYearId;

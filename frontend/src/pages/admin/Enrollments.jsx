@@ -47,6 +47,8 @@ export default function AdminEnrollments() {
   const [selectedPole, setSelectedPole] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('');
+  const [familySearch, setFamilySearch] = useState('');
+  const [selectedPaymentStatus, setSelectedPaymentStatus] = useState('');
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 1 });
   const [expandedFamilies, setExpandedFamilies] = useState({});
   const [registrationsBlocked, setRegistrationsBlocked] = useState(false);
@@ -55,7 +57,7 @@ export default function AdminEnrollments() {
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, page: 1 }));
-  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter]);
+  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, selectedPaymentStatus]);
 
   useEffect(() => {
     setLoading(true);
@@ -69,6 +71,8 @@ export default function AdminEnrollments() {
     } else if (selectedStatusFilter) {
       params.set('status', selectedStatusFilter);
     }
+    if (familySearch.trim()) params.set('familyName', familySearch.trim());
+    if (selectedPaymentStatus) params.set('paymentStatus', selectedPaymentStatus);
     params.set('page', pagination.page);
     params.set('limit', pagination.limit);
     const enrollmentsCall = api.get(`/admin/enrollments?${params.toString()}`);
@@ -105,7 +109,7 @@ export default function AdminEnrollments() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, pagination.page, pagination.limit]);
+  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, selectedPaymentStatus, pagination.page, pagination.limit]);
 
   useEffect(() => {
     let isMounted = true;
@@ -179,8 +183,10 @@ export default function AdminEnrollments() {
   };
 
   const formatPaymentMethodLabel = (payment = {}) => {
-    const method = payment.method || payment.paymentMethod;
-    const metadata = payment.paymentMetadata || {};
+    const rowMetadata = payment.metadata || {};
+    const parentMetadata = payment.paymentMetadata || {};
+    const metadata = { ...parentMetadata, ...rowMetadata };
+    const method = payment.method || payment.paymentMethod || metadata.paymentMethod || metadata.paymentPlanType;
     const bankDebitIban = metadata.bankDebitIban || payment.bankDebitIban;
 
     if (method === 'PRELEVEMENT_BANCAIRE') return 'Prélèvement';
@@ -279,15 +285,20 @@ export default function AdminEnrollments() {
   };
 
   const BACKEND_ORIGIN = import.meta.env.VITE_API_URL
-    ? import.meta.env.VITE_API_URL.replace(/\/api$/, '')
+    ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
     : (import.meta.env.DEV ? 'http://localhost:4000' : '');
 
   const getPhotoSource = (photoUrl) => {
     if (!photoUrl) return null;
-    if (photoUrl.startsWith('http')) return photoUrl;
-    const normalizedPhotoUrl = photoUrl.startsWith('/uploads') ? photoUrl : `/uploads/${photoUrl}`;
+    const rawPhotoUrl = String(photoUrl).trim();
+    if (!rawPhotoUrl) return null;
+    if (rawPhotoUrl.startsWith('http') || rawPhotoUrl.startsWith('data:') || rawPhotoUrl.startsWith('blob:')) return rawPhotoUrl;
+    const normalizedPhotoUrl = rawPhotoUrl.startsWith('/uploads') ? rawPhotoUrl : `/uploads/${rawPhotoUrl.replace(/^\/+/, '')}`;
+    if (!BACKEND_ORIGIN) return normalizedPhotoUrl;
     return `${BACKEND_ORIGIN}${normalizedPhotoUrl}`;
   };
+
+  const DEFAULT_AVATAR_DATA_URI = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23F1F5F9'/%3E%3Ccircle cx='32' cy='24' r='12' fill='%23CBD5E1'/%3E%3Cpath d='M14 54c2-10 10-16 18-16s16 6 18 16' fill='%23CBD5E1'/%3E%3C/svg%3E";
 
   const formatDate = (dateString) => {
     if (!dateString) return '—';
@@ -315,6 +326,81 @@ export default function AdminEnrollments() {
   const getClassOptions = () => classes
     .filter((cls) => cls.level && cls.level.name)
     .sort((a, b) => (a.level?.name || '').localeCompare(b.level?.name || ''));
+
+  const getEligibleEditClasses = (formState) => {
+    if (!formState) return [];
+    return classes
+      .filter((cls) => {
+        if (cls.status === 'CLOSED') return false;
+        if (formState.schoolYearId && cls.schoolYearId !== formState.schoolYearId) return false;
+        const classPoleId = cls.level?.pole?.id || cls.poleId || '';
+        if (formState.poleId && classPoleId !== formState.poleId) return false;
+        if (formState.courseDay && cls.dayOfWeek !== formState.courseDay) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const byLevel = (a.level?.name || '').localeCompare(b.level?.name || '');
+        if (byLevel !== 0) return byLevel;
+        const byDay = (a.dayOfWeek || '').localeCompare(b.dayOfWeek || '');
+        if (byDay !== 0) return byDay;
+        return (a.startTime || '').localeCompare(b.startTime || '');
+      });
+  };
+
+  const getEditPoleOptions = (formState) => {
+    if (!formState) return [];
+    return classes
+      .filter((cls) => !formState.schoolYearId || cls.schoolYearId === formState.schoolYearId)
+      .map((cls) => cls.level?.pole)
+      .filter((pole) => pole && pole.id)
+      .reduce((acc, pole) => {
+        if (!acc.some((item) => item.id === pole.id)) acc.push(pole);
+        return acc;
+      }, []);
+  };
+
+  const getEditCourseDayOptions = (formState) => {
+    if (!formState) return [];
+    return classes
+      .filter((cls) => {
+        if (formState.schoolYearId && cls.schoolYearId !== formState.schoolYearId) return false;
+        const classPoleId = cls.level?.pole?.id || cls.poleId || '';
+        if (formState.poleId && classPoleId !== formState.poleId) return false;
+        return true;
+      })
+      .map((cls) => cls.dayOfWeek)
+      .filter(Boolean)
+      .reduce((acc, day) => {
+        if (!acc.includes(day)) acc.push(day);
+        return acc;
+      }, []);
+  };
+
+  const applyEditClassSelection = (formState, nextClassId) => {
+    const selectedClass = classes.find((cls) => cls.id === nextClassId);
+    if (!selectedClass) {
+      return {
+        ...formState,
+        classId: nextClassId,
+        isWaitlist: false,
+        waitlistOrder: '',
+      };
+    }
+
+    const capacity = Number(selectedClass.capacity);
+    const enrolledCount = Number(selectedClass.enrolledCount || 0);
+    const computedWaitlistOrder = Number.isFinite(capacity) && capacity > 0
+      ? (enrolledCount + 1) - capacity
+      : null;
+    const computedIsWaitlist = Number.isInteger(computedWaitlistOrder) && computedWaitlistOrder > 0;
+
+    return {
+      ...formState,
+      classId: nextClassId,
+      isWaitlist: computedIsWaitlist,
+      waitlistOrder: computedIsWaitlist ? computedWaitlistOrder : '',
+    };
+  };
 
   const visibleEnrollments = enrollments || [];
   const confirmedCount = visibleEnrollments.filter((e) => e.status === 'CONFIRMED').length;
@@ -351,6 +437,39 @@ export default function AdminEnrollments() {
   };
 
   const isFamilyExpanded = (familyId) => Boolean(expandedFamilies[familyId]);
+
+  const getFamilyStatusIndicator = (familyEnrollments = []) => {
+    const statuses = familyEnrollments.map((enrollment) => String(enrollment?.status || '').toUpperCase());
+    if (statuses.length > 0 && statuses.every((status) => status === 'CONFIRMED')) {
+      return { color: '#16A34A', label: 'Inscriptions confirmées' };
+    }
+    const cancelledOrRefusedStatuses = new Set(['CANCELLED', 'REFUSED', 'REJECTED', 'ARCHIVED']);
+    if (statuses.length > 0 && statuses.every((status) => cancelledOrRefusedStatuses.has(status))) {
+      return { color: '#DC2626', label: 'Inscriptions annulées ou refusées' };
+    }
+    return { color: '#F59E0B', label: 'Au moins une inscription non confirmée' };
+  };
+
+  const getFamilyPaymentIndicator = (familyEnrollments = []) => {
+    const normalizePaymentStatus = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .trim();
+
+    const validatedStatuses = new Set(['SUCCEEDED', 'COMPLETED', 'PARTIAL', 'VALIDE', 'VALIDEE', 'VALIDATED']);
+
+    const hasValidatedPayment = familyEnrollments.some((enrollment) => {
+      const status = normalizePaymentStatus(enrollment?.paymentStatus);
+      return validatedStatuses.has(status);
+    });
+
+    if (hasValidatedPayment) {
+      return { color: '#16A34A', label: 'Au moins un paiement validé' };
+    }
+
+    return { color: '#F59E0B', label: 'Aucun paiement validé' };
+  };
 
   const handleStatusChange = (enrollmentId, value) => {
     setStatusUpdates((prev) => ({ ...prev, [enrollmentId]: value }));
@@ -404,11 +523,16 @@ export default function AdminEnrollments() {
     const healthForm = getActiveHealthForm(enrollment) || {};
     const consent = getActiveConsent(enrollment) || {};
     setEditingEnrollment(enrollment);
+    const enrollmentClass = classes.find((cls) => cls.id === enrollment.classId);
+    const defaultPoleId = enrollmentClass?.level?.pole?.id || enrollmentClass?.poleId || '';
+    const defaultCourseDay = enrollmentClass?.dayOfWeek || '';
     setEditForm({
       status: enrollment.status,
       isWaitlist: isEnrollmentWaitlist(enrollment),
       waitlistOrder: enrollment.waitlistOrder || '',
       classId: enrollment.classId,
+      poleId: defaultPoleId,
+      courseDay: defaultCourseDay,
       schoolYearId: enrollment.schoolYearId,
       comment: enrollment.comment || '',
       levelValidated: Boolean(enrollment.levelValidated),
@@ -820,27 +944,40 @@ export default function AdminEnrollments() {
   const handleEditClassChange = (nextClassId) => {
     setEditForm((prev) => {
       if (!prev) return prev;
-      const selectedClass = classes.find((cls) => cls.id === nextClassId);
-      if (!selectedClass) {
-        return {
-          ...prev,
-          classId: nextClassId,
-        };
-      }
+      return applyEditClassSelection(prev, nextClassId);
+    });
+  };
 
-      const capacity = Number(selectedClass.capacity);
-      const enrolledCount = Number(selectedClass.enrolledCount || 0);
-      const computedWaitlistOrder = Number.isFinite(capacity) && capacity > 0
-        ? (enrolledCount + 1) - capacity
-        : null;
-      const computedIsWaitlist = Number.isInteger(computedWaitlistOrder) && computedWaitlistOrder > 0;
+  const handleEditPoleChange = (nextPoleId) => {
+    setEditForm((prev) => {
+      if (!prev) return prev;
+      const nextState = { ...prev, poleId: nextPoleId };
+      const eligibleClasses = getEligibleEditClasses(nextState);
+      const currentClassIsEligible = eligibleClasses.some((cls) => cls.id === nextState.classId);
+      const fallbackClassId = currentClassIsEligible ? nextState.classId : (eligibleClasses[0]?.id || '');
+      return applyEditClassSelection(nextState, fallbackClassId);
+    });
+  };
 
-      return {
-        ...prev,
-        classId: nextClassId,
-        isWaitlist: computedIsWaitlist,
-        waitlistOrder: computedIsWaitlist ? computedWaitlistOrder : '',
-      };
+  const handleEditCourseDayChange = (nextCourseDay) => {
+    setEditForm((prev) => {
+      if (!prev) return prev;
+      const nextState = { ...prev, courseDay: nextCourseDay };
+      const eligibleClasses = getEligibleEditClasses(nextState);
+      const currentClassIsEligible = eligibleClasses.some((cls) => cls.id === nextState.classId);
+      const fallbackClassId = currentClassIsEligible ? nextState.classId : (eligibleClasses[0]?.id || '');
+      return applyEditClassSelection(nextState, fallbackClassId);
+    });
+  };
+
+  const handleEditSchoolYearChange = (nextSchoolYearId) => {
+    setEditForm((prev) => {
+      if (!prev) return prev;
+      const nextState = { ...prev, schoolYearId: nextSchoolYearId };
+      const eligibleClasses = getEligibleEditClasses(nextState);
+      const currentClassIsEligible = eligibleClasses.some((cls) => cls.id === nextState.classId);
+      const fallbackClassId = currentClassIsEligible ? nextState.classId : (eligibleClasses[0]?.id || '');
+      return applyEditClassSelection(nextState, fallbackClassId);
     });
   };
 
@@ -1081,7 +1218,7 @@ export default function AdminEnrollments() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr 1fr 1fr', alignItems: 'end' }}>
+        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', alignItems: 'end' }}>
           <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Recherche élève</label>
             <input
@@ -1133,6 +1270,32 @@ export default function AdminEnrollments() {
               <option value="ARCHIVED">Archivée</option>
             </select>
           </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Recherche famille</label>
+            <input
+              type="text"
+              value={familySearch}
+              onChange={(e) => setFamilySearch(e.target.value)}
+              className="form-control"
+              placeholder="Nom de famille"
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Statut paiement</label>
+            <select
+              className="form-control"
+              value={selectedPaymentStatus}
+              onChange={(e) => setSelectedPaymentStatus(e.target.value)}
+            >
+              <option value="">Tous</option>
+              <option value="PENDING">En attente</option>
+              <option value="PARTIAL">Partiel</option>
+              <option value="COMPLETED">Complété</option>
+              <option value="FAILED">Échoué</option>
+              <option value="REFUNDED">Remboursé</option>
+              <option value="CANCELLED">Annulé</option>
+            </select>
+          </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'center' }}>
@@ -1181,11 +1344,52 @@ export default function AdminEnrollments() {
                   ) : (
                     groupedEnrollments.map((group) => (
                       <Fragment key={group.familyId}>
+                        {(() => {
+                          const familyStatusIndicator = getFamilyStatusIndicator(group.enrollments);
+                          const familyPaymentIndicator = getFamilyPaymentIndicator(group.enrollments);
+                          return (
                         <tr style={{ background: '#F3F4F6', borderRadius: 12, boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
                           <td colSpan="9" style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer' }} onClick={() => toggleFamilyExpansion(group.familyId)}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                 <span style={{ fontSize: 14, color: '#1D4ED8' }}>{isFamilyExpanded(group.familyId) ? '▾' : '▸'}</span>
+                                <span
+                                  title={familyStatusIndicator.label}
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: '50%',
+                                    backgroundColor: familyStatusIndicator.color,
+                                    display: 'inline-block',
+                                    boxShadow: `0 0 0 3px ${familyStatusIndicator.color}22`,
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  title={familyPaymentIndicator.label}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    if (group.enrollments[0]) {
+                                      openPaymentModal(group.enrollments[0]);
+                                    }
+                                  }}
+                                  style={{
+                                    border: 'none',
+                                    background: 'transparent',
+                                    color: familyPaymentIndicator.color,
+                                    padding: 0,
+                                    margin: 0,
+                                    width: 16,
+                                    height: 16,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer',
+                                    filter: `drop-shadow(0 0 0.5px ${familyPaymentIndicator.color})`,
+                                  }}
+                                >
+                                  <FiCreditCard size={11} />
+                                </button>
                                 <span>{group.familyName}</span>
                                 <span style={{ fontSize: 13, color: '#475569' }}>({group.enrollments.length} inscription{group.enrollments.length > 1 ? 's' : ''})</span>
                               </div>
@@ -1193,6 +1397,8 @@ export default function AdminEnrollments() {
                             </div>
                           </td>
                         </tr>
+                          );
+                        })()}
 
                         {isFamilyExpanded(group.familyId) && group.enrollments.map((e) => {
                           const selectedStatus = statusUpdates[e.id] || e.status;
@@ -1332,13 +1538,15 @@ export default function AdminEnrollments() {
                 <p style={{ margin: '6px 0 0', color: '#6B7280' }}>Mettre à jour les informations d’inscription, famille, élève et fiche sanitaire.</p>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                {(editForm.student?.photoBase64 || editForm.student?.photoUrl) && (
-                  <img
-                    src={editForm.student.photoBase64 || getPhotoSource(editForm.student.photoUrl)}
-                    alt={`${editForm.student.firstName} ${editForm.student.lastName}`}
-                    style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 12, border: '1px solid #E2E8F0' }}
-                  />
-                )}
+                <img
+                  src={editForm.student.photoBase64 || getPhotoSource(editForm.student.photoUrl) || DEFAULT_AVATAR_DATA_URI}
+                  alt={`${editForm.student.firstName} ${editForm.student.lastName}`}
+                  onError={(event) => {
+                    event.currentTarget.onerror = null;
+                    event.currentTarget.src = DEFAULT_AVATAR_DATA_URI;
+                  }}
+                  style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 10, border: '1px solid #E2E8F0' }}
+                />
                 <button type="button" className="btn btn-outline btn-sm" onClick={closeModal}>Fermer</button>
               </div>
             </div>
@@ -1356,31 +1564,40 @@ export default function AdminEnrollments() {
                   </select>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Classe</label>
-                  <select className="form-control" value={editForm.classId} onChange={(event) => handleEditClassChange(event.target.value)}>
-                    {classes.map((cls) => (
-                      <option key={cls.id} value={cls.id}>{`${cls.level?.pole?.name || ''} • ${cls.level?.name || ''} • ${cls.dayOfWeek || ''}`}</option>
+                  <label>Pôle</label>
+                  <select className="form-control" value={editForm.poleId || ''} onChange={(event) => handleEditPoleChange(event.target.value)}>
+                    <option value="">Tous les pôles</option>
+                    {getEditPoleOptions(editForm).map((pole) => (
+                      <option key={pole.id} value={pole.id}>{pole.name}</option>
                     ))}
                   </select>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Année scolaire</label>
-                  <select className="form-control" value={editForm.schoolYearId} onChange={(event) => updateEditForm(null, 'schoolYearId', event.target.value)}>
-                    {schoolYears.map((year) => <option key={year.id} value={year.id}>{year.label}</option>)}
+                  <label>Jour de cours</label>
+                  <select className="form-control" value={editForm.courseDay || ''} onChange={(event) => handleEditCourseDayChange(event.target.value)}>
+                    <option value="">Tous les jours</option>
+                    {getEditCourseDayOptions(editForm).map((day) => (
+                      <option key={day} value={day}>{day}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Créneau</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    value={(() => {
-                      const cls = classes.find((c) => c.id === editForm.classId);
-                      if (!cls) return '—';
-                      return cls.isProvisional ? 'À affecter' : `${cls.dayOfWeek || ''} ${cls.startTime || ''}-${cls.endTime || ''}`.trim();
-                    })()}
-                    disabled
-                  />
+                  <label>Classe</label>
+                  <select className="form-control" value={editForm.classId || ''} onChange={(event) => handleEditClassChange(event.target.value)}>
+                    {getEligibleEditClasses(editForm).length === 0 ? (
+                      <option value="">Aucune classe disponible</option>
+                    ) : (
+                      getEligibleEditClasses(editForm).map((cls) => (
+                        <option key={cls.id} value={cls.id}>{`${cls.level?.pole?.name || ''} • ${cls.level?.name || ''} • ${cls.dayOfWeek || ''}`}</option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Année scolaire</label>
+                  <select className="form-control" value={editForm.schoolYearId} onChange={(event) => handleEditSchoolYearChange(event.target.value)}>
+                    {schoolYears.map((year) => <option key={year.id} value={year.id}>{year.label}</option>)}
+                  </select>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2109,7 +2326,10 @@ export default function AdminEnrollments() {
                           <td>
                             <div>{decodeText(payment.description)}</div>
                             {(() => {
-                              const metadata = payment.paymentMetadata || {};
+                              const rowMetadata = payment.metadata || {};
+                              const parentMetadata = payment.paymentMetadata || {};
+                              const metadata = { ...parentMetadata, ...rowMetadata };
+                              const method = payment.method || payment.paymentMethod || metadata.paymentMethod || metadata.paymentPlanType;
                               const bankDebitIbanRaw = metadata.bankDebitIban || payment.bankDebitIban;
                               const bankDebitSwiftRaw = metadata.bankDebitSwift || payment.bankDebitSwift;
                               const bankDebitDay = metadata.bankDebitDay || payment.scheduleDay || payment.bankDebitDay;
@@ -2119,16 +2339,16 @@ export default function AdminEnrollments() {
                               const bankDebitRibFilename = metadata.bankDebitRibFilename || 'RIB';
                               const chequeDepositDay = metadata.chequeDepositDay || payment.scheduleDay;
                               const chequeFirstPaymentDate = metadata.chequeFirstPaymentDate || payment.firstPaymentDate;
-                              const isBankDebit = payment.method === 'PRELEVEMENT_BANCAIRE'
-                                || (payment.method === 'VIREMENT' && bankDebitIbanRaw)
-                                || payment.method === 'STRIPE_SEPA'
-                                || payment.method === 'GO_CARDLESS_SEPA';
+                              const isBankDebit = method === 'PRELEVEMENT_BANCAIRE'
+                                || (method === 'VIREMENT' && bankDebitIbanRaw)
+                                || method === 'STRIPE_SEPA'
+                                || method === 'GO_CARDLESS_SEPA';
 
-                              if (!isBankDebit && payment.method !== 'CHEQUE') return null;
+                              if (!isBankDebit && method !== 'CHEQUE') return null;
 
                               return (
                                 <div style={{ marginTop: 8, fontSize: 12, color: '#475569', lineHeight: '1.5' }}>
-                                  {payment.method === 'CHEQUE' ? (
+                                  {method === 'CHEQUE' ? (
                                     <>
                                       <div><strong>Date dépôt :</strong> {formatDate(payment.processedAt || payment.createdAt)}</div>
                                       {chequeDepositDay !== undefined && chequeDepositDay !== null && (

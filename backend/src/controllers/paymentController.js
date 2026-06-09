@@ -23,7 +23,7 @@ const {
   calculateFamilyTotal,
   buildInstallmentSchedule,
 } = require('../services/pricingService');
-const { generateInvoicePDF, getInvoiceFilePath } = require('../utils/invoiceUtils');
+const { generateInvoicePDF, getInvoiceFilePath, deleteInvoiceFile } = require('../utils/invoiceUtils');
 const { getReceiptInfo, saveReceiptFile } = require('../utils/receiptUtils');
 const config = require('../config');
 const { hasPermission, PERMISSIONS } = require('../config/permissions');
@@ -175,11 +175,30 @@ async function generateInvoiceForPayment(paymentId) {
       },
       include: {
         transactions: { orderBy: { createdAt: 'desc' } },
+        paymentPlan: true,
+        installments: { orderBy: { dueDate: 'asc' } },
       },
     });
 
     const familyTransactionsForReceipt = familyPayments
-      .flatMap((familyPayment) => familyPayment.transactions || []);
+      .flatMap((familyPayment) => (familyPayment.transactions || []).map((transaction) => {
+        const paymentMetadata = {
+          ...((familyPayment.paymentPlan?.metadata && typeof familyPayment.paymentPlan.metadata === 'object') ? familyPayment.paymentPlan.metadata : {}),
+          ...((familyPayment.metadata && typeof familyPayment.metadata === 'object') ? familyPayment.metadata : {}),
+        };
+        const installments = Array.isArray(familyPayment.installments) ? familyPayment.installments : [];
+        const firstInstallment = installments.length > 0 ? installments[0] : null;
+        const paymentMethod = familyPayment.paymentMethod || paymentMetadata.paymentMethod || paymentMetadata.checkoutMethod || paymentMetadata.paymentPlanType || familyPayment.paymentPlan?.type || null;
+        const paymentInstallmentsCount = familyPayment.numberOfInstallments || familyPayment.paymentPlan?.installmentsCount || paymentMetadata.numberOfInstallments || paymentMetadata.bankDebitInstallmentsCount || paymentMetadata.chequeInstallmentsCount || installments.length || null;
+        return {
+          ...transaction,
+          paymentMetadata,
+          paymentMethod,
+          paymentInstallmentsCount,
+          scheduleDay: familyPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
+          firstPaymentDate: paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
+        };
+      }));
 
     // Generate PDF invoice
     const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, familyTransactionsForReceipt);
@@ -847,6 +866,8 @@ async function recordOfflinePayment(req, res) {
         },
       }),
     ]);
+
+    deleteInvoiceFile(resolvedPaymentId);
 
     if (payment.paymentPlan) {
       await prisma.paymentPlan.update({
@@ -2203,12 +2224,19 @@ async function generatePaymentReceiptPDF(req, res) {
       console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
     }
 
+    const enrollmentIdsFromMetadata = Array.isArray(payment.metadata?.enrollmentIds)
+      ? payment.metadata.enrollmentIds
+      : [];
+    const enrollmentWhere = enrollmentIdsFromMetadata.length > 0
+      ? { id: { in: enrollmentIdsFromMetadata } }
+      : {
+          student: { familyId: payment.familyId },
+          schoolYearId: payment.schoolYearId,
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        };
+
     const activeEnrollments = await prisma.enrollment.findMany({
-      where: {
-        student: { familyId: payment.familyId },
-        schoolYearId: payment.schoolYearId,
-        status: { in: ['PENDING', 'CONFIRMED'] },
-      },
+      where: enrollmentWhere,
       include: {
         class: {
           include: {
@@ -2227,12 +2255,43 @@ async function generatePaymentReceiptPDF(req, res) {
       },
       include: {
         transactions: { orderBy: { createdAt: 'desc' } },
+        paymentPlan: true,
+        installments: { orderBy: { dueDate: 'asc' } },
       },
       orderBy: { createdAt: 'asc' },
     });
 
     const aggregateTransactions = familyPayments
-      .flatMap((currentPayment) => Array.isArray(currentPayment.transactions) ? currentPayment.transactions : [])
+      .flatMap((currentPayment) => {
+        debugger;
+        const paymentMetadata = {
+          ...((currentPayment.metadata && typeof currentPayment.metadata === 'object') ? currentPayment.metadata : {}),
+          ...((currentPayment.paymentPlan?.metadata && typeof currentPayment.paymentPlan.metadata === 'object') ? currentPayment.paymentPlan.metadata : {}),
+        };
+        const installments = Array.isArray(currentPayment.installments) ? currentPayment.installments : [];
+        const firstInstallment = installments.length > 0 ? installments[0] : null;
+        const paymentMethod = currentPayment.paymentMethod || paymentMetadata.paymentMethod || paymentMetadata.paymentPlanType || currentPayment.paymentPlan?.type;
+        const paymentInstallmentsCount = Number(currentPayment.numberOfInstallments || currentPayment.paymentPlan?.installmentsCount || paymentMetadata.numberOfInstallments || paymentMetadata.bankDebitInstallmentsCount || paymentMetadata.chequeInstallmentsCount || paymentMetadata.chequeCount || installments.length || 0) || 0;
+
+        return (Array.isArray(currentPayment.transactions) ? currentPayment.transactions : []).map((transaction) => {
+          const transactionMetadata = transaction.metadata && typeof transaction.metadata === 'object'
+            ? transaction.metadata
+            : {};
+          return {
+            ...transaction,
+            paymentMethod,
+            paymentMetadata,
+            paymentInstallmentsCount,
+            scheduleDay: currentPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
+            firstPaymentDate: paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
+            metadata: {
+              ...paymentMetadata,
+              ...transactionMetadata,
+            },
+            method: transaction.method || paymentMethod,
+          };
+        });
+      })
       .filter((transaction) => String(transaction.status || '').toUpperCase() !== 'CANCELLED')
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
@@ -2258,6 +2317,7 @@ async function generatePaymentReceiptPDF(req, res) {
     };
 
     const invoiceResult = await generateInvoicePDF(aggregatePayment, familyWithChildren, activeEnrollments, aggregateTransactions);
+    debugger;
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
@@ -2544,6 +2604,8 @@ async function updatePaymentDetails(req, res) {
         },
       });
     }
+
+    deleteInvoiceFile(paymentId);
 
     return res.json({
       success: true,
