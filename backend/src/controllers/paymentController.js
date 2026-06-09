@@ -2263,6 +2263,7 @@ async function generatePaymentReceiptPDF(req, res) {
 
     const aggregateTransactions = familyPayments
       .flatMap((currentPayment) => {
+        debugger;
         const paymentMetadata = {
           ...((currentPayment.metadata && typeof currentPayment.metadata === 'object') ? currentPayment.metadata : {}),
           ...((currentPayment.paymentPlan?.metadata && typeof currentPayment.paymentPlan.metadata === 'object') ? currentPayment.paymentPlan.metadata : {}),
@@ -2316,6 +2317,7 @@ async function generatePaymentReceiptPDF(req, res) {
     };
 
     const invoiceResult = await generateInvoicePDF(aggregatePayment, familyWithChildren, activeEnrollments, aggregateTransactions);
+    debugger;
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });

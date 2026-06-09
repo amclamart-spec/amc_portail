@@ -1001,8 +1001,12 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
       },
     });
 
+    // Enrich transactions with parent payment metadata for receipt generation
     const familyTransactionsForReceipt = familyPayments
-      .flatMap((familyPayment) => familyPayment.transactions || []);
+      .flatMap((familyPayment) => (familyPayment.transactions || []).map((tx) => ({
+        ...tx,
+        paymentMetadata: familyPayment.metadata || {},
+      })));
 
     // Generate invoice-like PDF file using shared utility
     const invoiceResult = await generateInvoicePDF(
@@ -1076,7 +1080,7 @@ async function createEnrollmentPayment(req, res) {
       return res.status(400).json({ error: 'Nom du payeur requis' });
     }
 
-    // Build metadata for prelevement
+    // Build metadata for prelevement and cheque
     const paymentMetadata = {};
     if (['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(method)) {
       if (bankDebitIban) paymentMetadata.bankDebitIban = String(bankDebitIban).trim();
@@ -1088,6 +1092,10 @@ async function createEnrollmentPayment(req, res) {
         paymentMetadata.bankDebitRibUrl = saveBase64File(ribDocument.base64, 'ribs', ribDocument.name || 'rib.pdf');
         paymentMetadata.bankDebitRibFilename = String(ribDocument.name || 'RIB');
       }
+    } else if (method === 'CHEQUE') {
+      if (numberOfInstallments !== undefined) paymentMetadata.chequeInstallmentsCount = Number(numberOfInstallments) || 1;
+      if (firstPaymentDate) paymentMetadata.chequeFirstPaymentDate = String(firstPaymentDate).trim();
+      if (scheduleDay !== undefined) paymentMetadata.chequeDepositDay = Number(scheduleDay) || 10;
     }
 
     const paymentData = {

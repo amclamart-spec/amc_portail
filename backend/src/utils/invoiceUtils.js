@@ -90,12 +90,14 @@ function getPaymentDetails(paymentData) {
     { label: 'Mode de paiement', value: paymentMethodLabel },
   ];
 
-  const installments = Number(paymentData.numberOfInstallments || metadata.bankDebitInstallmentsCount || metadata.numberOfInstallments || 0) || 0;
+  const directDebitInstallments = Number(paymentData.numberOfInstallments || metadata.bankDebitInstallmentsCount || 0) || 0;
+  const chequeInstallments = Number(metadata.chequeInstallmentsCount || 0) || 0;
   const isDirectDebit = methodKey === 'PRELEVEMENT_BANCAIRE' || methodKey === 'VIREMENT' || metadata.paymentPlanType === 'PRELEVEMENT_BANCAIRE' || metadata.method === 'VIREMENT';
+  const isCheque = methodKey === 'CHEQUE';
 
   if (isDirectDebit) {
-    if (installments > 0) {
-      details.push({ label: 'Nombre d’échéances', value: String(installments) });
+    if (directDebitInstallments > 0) {
+      details.push({ label: 'Nombre d\'echances', value: String(directDebitInstallments) });
     }
     if (metadata.firstPaymentDate) {
       details.push({ label: 'Date première échéance', value: formatDateValue(metadata.firstPaymentDate) || metadata.firstPaymentDate });
@@ -111,19 +113,15 @@ function getPaymentDetails(paymentData) {
     }
   }
 
-  if (methodKey === 'CHEQUE' || metadata.chequeDepositDay !== undefined || metadata.chequeFirstPaymentDate || metadata.bankDebitDay !== undefined || metadata.firstPaymentDate) {
-    if (installments > 0) {
-      details.push({ label: 'Nombre de chèques', value: String(installments) });
+  if (isCheque) {
+    if (chequeInstallments > 0) {
+      details.push({ label: 'Nombre de cheques', value: String(chequeInstallments) });
     }
-    const chequeDepositDate = metadata.chequeFirstPaymentDate || metadata.firstPaymentDate;
-    if (chequeDepositDate) {
-      details.push({ label: 'Date dépôt chèque', value: formatDateValue(chequeDepositDate) || chequeDepositDate });
+    if (metadata.chequeFirstPaymentDate) {
+      details.push({ label: 'Date depot cheque', value: formatDateValue(metadata.chequeFirstPaymentDate) || metadata.chequeFirstPaymentDate });
     }
-    const chequeDepositDay = metadata.chequeDepositDay !== undefined && metadata.chequeDepositDay !== null
-      ? metadata.chequeDepositDay
-      : metadata.bankDebitDay;
-    if (chequeDepositDay !== undefined && chequeDepositDay !== null) {
-      details.push({ label: 'Jour de dépôt', value: String(chequeDepositDay) });
+    if (metadata.chequeDepositDay !== undefined && metadata.chequeDepositDay !== null) {
+      details.push({ label: 'Jour de depot', value: String(metadata.chequeDepositDay) });
     }
   }
 
@@ -166,8 +164,8 @@ function getTransactionScheduleRecord(transaction = {}) {
 
   const bankDebitDay = mergedMetadata.bankDebitDay || transaction.scheduleDay || transaction.bankDebitDay;
   const bankDebitFirstPaymentDate = mergedMetadata.firstPaymentDate || transaction.firstPaymentDate;
-  const chequeDepositDay = mergedMetadata.chequeDepositDay || transaction.scheduleDay || mergedMetadata.bankDebitDay;
-  const chequeFirstPaymentDate = mergedMetadata.chequeFirstPaymentDate || mergedMetadata.firstPaymentDate || transaction.firstPaymentDate;
+  const chequeDepositDay = mergedMetadata.chequeDepositDay || mergedMetadata.bankDebitDay || transaction.scheduleDay || transaction.chequeDepositDay;
+  const chequeFirstPaymentDate = mergedMetadata.chequeFirstPaymentDate || mergedMetadata.firstPaymentDate || transaction.firstPaymentDate || transaction.chequeFirstPaymentDate;
 
   if (isCheque) {
     return {
