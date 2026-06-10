@@ -2263,7 +2263,6 @@ async function generatePaymentReceiptPDF(req, res) {
 
     const aggregateTransactions = familyPayments
       .flatMap((currentPayment) => {
-        debugger;
         const paymentMetadata = {
           ...((currentPayment.metadata && typeof currentPayment.metadata === 'object') ? currentPayment.metadata : {}),
           ...((currentPayment.paymentPlan?.metadata && typeof currentPayment.paymentPlan.metadata === 'object') ? currentPayment.paymentPlan.metadata : {}),
@@ -2295,29 +2294,7 @@ async function generatePaymentReceiptPDF(req, res) {
       .filter((transaction) => String(transaction.status || '').toUpperCase() !== 'CANCELLED')
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    const totalAmount = aggregateTransactions.reduce((sum, transaction) => {
-      return sum + Number(transaction.amount || transaction.total || 0);
-    }, 0);
-
-    const aggregatePayment = {
-      id: `famille-${payment.familyId}-${payment.schoolYearId}`,
-      createdAt: payment.createdAt,
-      paymentMethod: payment.paymentMethod,
-      metadata: {
-        ...(payment.metadata || {}),
-        payerName: payment.metadata?.payerName || `${payment.family.user?.firstName || ''} ${payment.family.user?.lastName || ''}`.trim(),
-      },
-      numberOfInstallments: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.numberOfInstallments || 0), 0),
-      totalAmount,
-      paidAmount: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.paidAmount || 0), 0),
-      registrationFee: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.registrationFee || 0), 0),
-      arabicFee: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.arabicFee || 0), 0),
-      coranScienceFee: familyPayments.reduce((sum, currentPayment) => sum + Number(currentPayment.coranScienceFee || 0), 0),
-      transactions: aggregateTransactions,
-    };
-
-    const invoiceResult = await generateInvoicePDF(aggregatePayment, familyWithChildren, activeEnrollments, aggregateTransactions);
-    debugger;
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, activeEnrollments, aggregateTransactions);
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
