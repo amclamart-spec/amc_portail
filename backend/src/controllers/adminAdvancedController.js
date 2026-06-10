@@ -873,15 +873,22 @@ async function getAccountingDataset(kind, schoolYearId) {
 
     return {
       title: 'Synthèse des paiements',
-      headers: ['Date', 'Année', 'Famille', 'Montant total', 'Montant payé', 'Reste', 'Statut', 'Méthode', 'Nombre échéances prélèvement', 'Date début prélèvement', 'Jour prélèvement', 'IBAN', 'SWIFT', 'Nombre de chèques', 'Date dépôt chèque', 'Jour dépôt chèque'],
+      headers: ['Date', 'Année', 'Famille', 'Adresse', 'Payeur', 'Montant total', 'Montant payé', 'Reste', 'Statut', 'Méthode', 'Nombre échéances prélèvement', 'Date début prélèvement', 'Jour prélèvement', 'IBAN', 'SWIFT', 'Nombre de chèques', 'Date dépôt chèque', 'Jour dépôt chèque'],
       rows: payments.map((p) => {
         const metadata = p.metadata || {};
         const bankDebit = getBankDebitExportFields(metadata);
         const cheque = getChequeExportFields(metadata);
+        const payerName = p.payerName || metadata.payerName || '';
+        const familyAddress = [p.family?.addressLine1, p.family?.addressLine2]
+          .filter(Boolean)
+          .join(', ');
+        const familyCity = [p.family?.postalCode, p.family?.city].filter(Boolean).join(' ');
         return [
           new Date(p.createdAt).toLocaleDateString('fr-FR'),
           p.schoolYear?.label || '-',
           p.family?.familyName || '-',
+          [familyAddress, familyCity].filter(Boolean).join(', '),
+          payerName,
           formatCurrency(p.totalAmount),
           formatCurrency(p.paidAmount),
           formatCurrency(Math.max(toNumber(p.totalAmount) - toNumber(p.paidAmount), 0)),
@@ -912,16 +919,23 @@ async function getAccountingDataset(kind, schoolYearId) {
 
     return {
       title: 'Liste des impayés',
-      headers: ['Famille', 'Année', 'Montant total', 'Montant payé', 'Impayé', 'Statut', 'Dernière mise à jour'],
-      rows: payments.map((p) => [
-        p.family?.familyName || '-',
-        p.schoolYear?.label || '-',
-        formatCurrency(p.totalAmount),
-        formatCurrency(p.paidAmount),
-        formatCurrency(Math.max(toNumber(p.totalAmount) - toNumber(p.paidAmount), 0)),
-        formatExportPaymentStatus(p.status),
-        new Date(p.updatedAt).toLocaleDateString('fr-FR'),
-      ]),
+      headers: ['Famille', 'Adresse', 'Année', 'Montant total', 'Montant payé', 'Impayé', 'Statut', 'Dernière mise à jour'],
+      rows: payments.map((p) => {
+        const familyAddress = [p.family?.addressLine1, p.family?.addressLine2]
+          .filter(Boolean)
+          .join(', ');
+        const familyCity = [p.family?.postalCode, p.family?.city].filter(Boolean).join(' ');
+        return [
+          p.family?.familyName || '-',
+          [familyAddress, familyCity].filter(Boolean).join(', '),
+          p.schoolYear?.label || '-',
+          formatCurrency(p.totalAmount),
+          formatCurrency(p.paidAmount),
+          formatCurrency(Math.max(toNumber(p.totalAmount) - toNumber(p.paidAmount), 0)),
+          formatExportPaymentStatus(p.status),
+          new Date(p.updatedAt).toLocaleDateString('fr-FR'),
+        ];
+      }),
     };
   }
 
@@ -941,14 +955,21 @@ async function getAccountingDataset(kind, schoolYearId) {
 
     return {
       title: 'Historique des transactions',
-      headers: ['Date', 'Famille', 'Année', 'Type', 'Provider', 'Méthode', 'Montant', 'Statut', 'Référence', 'Nombre échéances prélèvement', 'Date début prélèvement', 'Jour prélèvement', 'IBAN', 'SWIFT', 'Nombre de chèques', 'Date dépôt chèque', 'Jour dépôt chèque'],
+      headers: ['Date', 'Famille', 'Adresse', 'Payeur', 'Année', 'Type', 'Provider', 'Méthode', 'Montant', 'Statut', 'Référence', 'Nombre échéances prélèvement', 'Date début prélèvement', 'Jour prélèvement', 'IBAN', 'SWIFT', 'Nombre de chèques', 'Date dépôt chèque', 'Jour dépôt chèque'],
       rows: transactions.map((t) => {
         const paymentMetadata = t.payment?.metadata || {};
         const bankDebit = getBankDebitExportFields(paymentMetadata);
         const cheque = getChequeExportFields(paymentMetadata);
+        const payerName = t.payerName || paymentMetadata.payerName || '';
+        const familyAddress = [t.payment?.family?.addressLine1, t.payment?.family?.addressLine2]
+          .filter(Boolean)
+          .join(', ');
+        const familyCity = [t.payment?.family?.postalCode, t.payment?.family?.city].filter(Boolean).join(' ');
         return [
           new Date(t.createdAt).toLocaleString('fr-FR'),
           t.payment?.family?.familyName || '-',
+          [familyAddress, familyCity].filter(Boolean).join(', '),
+          payerName,
           t.payment?.schoolYear?.label || '-',
           t.type,
           t.provider,
