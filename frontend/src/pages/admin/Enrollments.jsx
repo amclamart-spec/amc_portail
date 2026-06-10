@@ -323,6 +323,16 @@ export default function AdminEnrollments() {
     return poles;
   };
 
+  const formatClassLabel = (cls) => {
+    const poleName = cls.level?.pole?.name || '';
+    const levelName = cls.level?.name || '';
+    const schedulePart = [cls.dayOfWeek, cls.startTime ? `${cls.startTime}${cls.endTime ? `-${cls.endTime}` : ''}` : '']
+      .filter(Boolean)
+      .join(' ');
+    const baseLabel = [poleName, levelName].filter(Boolean).join(' • ');
+    return schedulePart ? `${baseLabel} (${schedulePart})` : baseLabel || 'Classe';
+  };
+
   const getClassOptions = () => classes
     .filter((cls) => cls.level && cls.level.name)
     .sort((a, b) => (a.level?.name || '').localeCompare(b.level?.name || ''));
@@ -1253,7 +1263,7 @@ export default function AdminEnrollments() {
               ))}
             </select>
           </div>
-          <div>
+          <div style={{ gridColumn: 'span 2' }}>
             <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Classe</label>
             <select
               className="form-control"
@@ -1262,7 +1272,7 @@ export default function AdminEnrollments() {
             >
               <option value="">Toutes les classes</option>
               {getClassOptions().map((cls) => (
-                <option key={cls.id} value={cls.id}>{`${cls.level?.pole?.name || ''} – ${cls.level?.name || ''} ${cls.dayOfWeek || ''}`}</option>
+                <option key={cls.id} value={cls.id}>{formatClassLabel(cls)}</option>
               ))}
             </select>
           </div>
@@ -1582,14 +1592,14 @@ export default function AdminEnrollments() {
                     ))}
                   </select>
                 </div>
-                <div className="form-group" style={{ margin: 0 }}>
+                <div className="form-group" style={{ margin: 0, gridColumn: 'span 2' }}>
                   <label>Classe</label>
                   <select className="form-control" value={editForm.classId || ''} onChange={(event) => handleEditClassChange(event.target.value)}>
                     {getEligibleEditClasses(editForm).length === 0 ? (
                       <option value="">Aucune classe disponible</option>
                     ) : (
                       getEligibleEditClasses(editForm).map((cls) => (
-                        <option key={cls.id} value={cls.id}>{`${cls.level?.pole?.name || ''} • ${cls.level?.name || ''} • ${cls.dayOfWeek || ''}`}</option>
+                        <option key={cls.id} value={cls.id}>{formatClassLabel(cls)}</option>
                       ))
                     )}
                   </select>
