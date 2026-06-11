@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { FiDownload, FiEdit2, FiTrash2, FiFileText, FiCreditCard, FiCheckCircle, FiXCircle } from 'react-icons/fi';
+import AdminEnrollmentWizard from './AdminEnrollmentWizard';
 
 export default function AdminEnrollments() {
   const [enrollments, setEnrollments] = useState([]);
@@ -54,6 +55,17 @@ export default function AdminEnrollments() {
   const [registrationsBlocked, setRegistrationsBlocked] = useState(false);
   const [registrationBlockLoading, setRegistrationBlockLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [enrollmentsRefreshKey, setEnrollmentsRefreshKey] = useState(0);
+
+  // "Ajouter une inscription" flow
+  const [addEnrollmentOpen, setAddEnrollmentOpen] = useState(false);
+  const [isExistingFamily, setIsExistingFamily] = useState(true);
+  const [familySearchQuery, setFamilySearchQuery] = useState('');
+  const [familySearchResults, setFamilySearchResults] = useState([]);
+  const [familySearchLoading, setFamilySearchLoading] = useState(false);
+  const [selectedFamilyForEnrollment, setSelectedFamilyForEnrollment] = useState(null);
+  const [selectedFamilyDetails, setSelectedFamilyDetails] = useState(null);
+  const [familyDetailsLoading, setFamilyDetailsLoading] = useState(false);
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, page: 1 }));
@@ -109,7 +121,7 @@ export default function AdminEnrollments() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, selectedPaymentStatus, pagination.page, pagination.limit]);
+  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, selectedPaymentStatus, pagination.page, pagination.limit, enrollmentsRefreshKey]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1170,6 +1182,27 @@ export default function AdminEnrollments() {
     }
   };
 
+  const searchFamilies = async (q) => {
+    if (!q || q.trim().length < 2) { setFamilySearchResults([]); return; }
+    setFamilySearchLoading(true);
+    try {
+      const { data } = await api.get(`/admin/families?search=${encodeURIComponent(q.trim())}&limit=10`);
+      setFamilySearchResults(data.families || []);
+    } catch { toast.error('Impossible de chercher les familles'); }
+    finally { setFamilySearchLoading(false); }
+  };
+
+  const selectFamilyForEnrollment = async (f) => {
+    setSelectedFamilyForEnrollment(f);
+    setFamilyDetailsLoading(true);
+    try {
+      const { data } = await api.get(`/admin/families/${f.id}`);
+      setSelectedFamilyDetails(data.family);
+      setAddEnrollmentOpen(false);
+    } catch { toast.error('Impossible de charger les détails de la famille'); setSelectedFamilyForEnrollment(null); }
+    finally { setFamilyDetailsLoading(false); }
+  };
+
   const overlayStyle = {
     position: 'fixed',
     top: 0,
@@ -1196,7 +1229,12 @@ export default function AdminEnrollments() {
 
   return (
     <div>
-      <h2 style={{ color: 'var(--amc-primary)', marginBottom: 12 }}>Gestion des inscriptions</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h2 style={{ color: 'var(--amc-primary)', margin: 0 }}>Gestion des inscriptions</h2>
+        <button className="btn btn-primary" onClick={() => { setFamilySearchQuery(''); setFamilySearchResults([]); setIsExistingFamily(true); setAddEnrollmentOpen(true); }}>
+          + Ajouter une inscription
+        </button>
+      </div>
 
       <div style={{ display: 'grid', gap: 12, marginBottom: 18 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
@@ -2709,6 +2747,116 @@ export default function AdminEnrollments() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Modale de recherche famille */}
+      {addEnrollmentOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 14, width: 'min(600px, 95vw)', boxShadow: '0 20px 60px rgba(0,0,0,0.2)', padding: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ margin: 0, color: 'var(--amc-primary)' }}>Nouvelle inscription</h3>
+              <button className="btn btn-outline btn-sm" onClick={() => setAddEnrollmentOpen(false)}>✕</button>
+            </div>
+
+            {/* Case Famille existante */}
+            <div style={{ padding: '12px 16px', background: '#F8FAFC', border: '1px solid #E5E7EB', borderRadius: 10, marginBottom: 20 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={isExistingFamily}
+                  onChange={(e) => {
+                    setIsExistingFamily(e.target.checked);
+                    setFamilySearchQuery('');
+                    setFamilySearchResults([]);
+                  }}
+                  style={{ width: 16, height: 16 }}
+                />
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>Famille existante</div>
+                  <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+                    {isExistingFamily
+                      ? 'Les informations de la famille seront pré-remplies automatiquement.'
+                      : 'Les informations de la famille seront saisies manuellement dans l\'assistant.'}
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            {/* Recherche famille existante */}
+            {isExistingFamily && (
+              <>
+                <div className="form-group" style={{ marginBottom: 12 }}>
+                  <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 6 }}>Rechercher la famille</label>
+                  <input
+                    className="form-control"
+                    placeholder="Nom, email, ville…"
+                    value={familySearchQuery}
+                    autoFocus
+                    onChange={(e) => { setFamilySearchQuery(e.target.value); searchFamilies(e.target.value); }}
+                  />
+                </div>
+
+                {familySearchLoading && <p style={{ color: '#6B7280', textAlign: 'center' }}>Recherche en cours…</p>}
+                {!familySearchLoading && familySearchQuery.trim().length >= 2 && familySearchResults.length === 0 && (
+                  <p style={{ color: '#9CA3AF', textAlign: 'center' }}>Aucune famille trouvée.</p>
+                )}
+
+                <div style={{ display: 'grid', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
+                  {familySearchResults.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => selectFamilyForEnrollment(f)}
+                      style={{ textAlign: 'left', padding: '10px 14px', border: '1px solid #E5E7EB', borderRadius: 10, background: '#F9FAFB', cursor: 'pointer', transition: 'background 0.15s' }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = '#EFF6FF'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = '#F9FAFB'}
+                    >
+                      <div style={{ fontWeight: 700 }}>{f.familyName}</div>
+                      <div style={{ fontSize: 13, color: '#6B7280' }}>{f.user?.email} — {f.city} {f.postalCode}</div>
+                      <div style={{ fontSize: 12, color: '#9CA3AF', marginTop: 2 }}>{f._count?.students ?? 0} élève(s)</div>
+                    </button>
+                  ))}
+                </div>
+
+                {familyDetailsLoading && <p style={{ marginTop: 12, color: '#6B7280', textAlign: 'center' }}>Chargement des détails…</p>}
+              </>
+            )}
+
+            {/* Bouton pour démarrer en mode nouvelle famille */}
+            {!isExistingFamily && (
+              <div style={{ textAlign: 'center', paddingTop: 8 }}>
+                <p style={{ color: '#374151', marginBottom: 16, fontSize: 14 }}>
+                  L'assistant vous guidera pour créer le compte famille et inscrire les membres.
+                </p>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setSelectedFamilyForEnrollment({});
+                    setSelectedFamilyDetails({});
+                    setAddEnrollmentOpen(false);
+                  }}
+                >
+                  Lancer l'assistant →
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Wizard d'inscription admin */}
+      {selectedFamilyForEnrollment !== null && selectedFamilyDetails !== null && (
+        <AdminEnrollmentWizard
+          family={selectedFamilyDetails?.id ? selectedFamilyDetails : null}
+          familyDetails={selectedFamilyDetails?.id ? selectedFamilyDetails : null}
+          isNewFamily={!isExistingFamily}
+          onClose={() => { setSelectedFamilyForEnrollment(null); setSelectedFamilyDetails(null); }}
+          onSuccess={() => {
+            setSelectedFamilyForEnrollment(null);
+            setSelectedFamilyDetails(null);
+            setEnrollmentsRefreshKey((k) => k + 1);
+          }}
+        />
       )}
     </div>
   );

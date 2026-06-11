@@ -9,6 +9,7 @@ const SPECIALTIES = [
   'Arabe avancé (Niv. 6-8)',
   'Coran',
   'Sciences islamiques',
+  'Soutien scolaire',
 ];
 
 const emptyForm = {
