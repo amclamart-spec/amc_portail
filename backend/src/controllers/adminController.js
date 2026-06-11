@@ -1527,6 +1527,7 @@ async function updateEnrollment(req, res) {
     }
 
     const familyUpdates = {};
+    let userEmailUpdate = null;
     if (family) {
       if (family.familyName !== undefined) familyUpdates.familyName = family.familyName;
       if (family.addressLine1 !== undefined) familyUpdates.addressLine1 = family.addressLine1;
@@ -1536,6 +1537,20 @@ async function updateEnrollment(req, res) {
       if (family.country !== undefined) familyUpdates.country = family.country;
       if (family.phonePrimary !== undefined) familyUpdates.phonePrimary = family.phonePrimary;
       if (family.phoneSecondary !== undefined) familyUpdates.phoneSecondary = family.phoneSecondary;
+      if (family.email !== undefined && family.email.trim()) {
+        const newEmail = family.email.trim().toLowerCase();
+        const familyRecord = await prisma.family.findUnique({
+          where: { id: enrollment.student.familyId },
+          include: { user: { select: { id: true, email: true } } },
+        });
+        if (familyRecord?.user && familyRecord.user.email !== newEmail) {
+          const conflict = await prisma.user.findUnique({ where: { email: newEmail } });
+          if (conflict) {
+            return res.status(409).json({ error: 'Cette adresse email est déjà utilisée par un autre compte' });
+          }
+          userEmailUpdate = { userId: familyRecord.user.id, email: newEmail };
+        }
+      }
     }
 
     const targetSchoolYearId = schoolYearId || enrollment.schoolYearId;
@@ -1719,6 +1734,9 @@ async function updateEnrollment(req, res) {
     }
     if (Object.keys(familyUpdates).length > 0) {
       actions.push(prisma.family.update({ where: { id: enrollment.student.familyId }, data: familyUpdates }));
+    }
+    if (userEmailUpdate) {
+      actions.push(prisma.user.update({ where: { id: userEmailUpdate.userId }, data: { email: userEmailUpdate.email } }));
     }
     if (Object.keys(enrollmentUpdates).length > 0) {
       actions.push(prisma.enrollment.update({ where: { id }, data: enrollmentUpdates }));
