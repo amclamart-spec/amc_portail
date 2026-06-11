@@ -11,11 +11,11 @@ const STORAGE_KEY_BASE = 'amc_family_wizard_draft_v1';
 const REGISTRATION_PENDING_VALIDATION_MESSAGE = 'Votre inscription a bien été prise en compte, une validation par le service secrétériat interviendra sous peu.';
 
 const engagementBulletPoints = [
-  'Les élèves de moins de 11 ans doivent être accompagnés et récupérés par le responsable légal.',
-  'Les familles s’engagent à respecter ponctualité, assiduité et suivi pédagogique à domicile.',
-  'Tout changement de personne autorisée à récupérer l’enfant doit être signalé par écrit.',
-  'PARTAGE est déchargée de responsabilité dès récupération de l’enfant devant sa salle.',
-  'Le stationnement dangereux ou gênant aux abords du centre est strictement interdit.',
+  "Les élèves de moins de 11 ans doivent être accompagnés et récupérés par le responsable légal.",
+  "Les familles s'engagent à respecter ponctualité, assiduité et suivi pédagogique à domicile.",
+  "Tout changement de personne autorisée à récupérer l'enfant doit être signalé par écrit.",
+  "PARTAGE est déchargée de responsabilité dès récupération de l'enfant devant sa salle.",
+  "Le stationnement dangereux ou gênant aux abords du centre est strictement interdit.",
 ];
 
 const emptyMember = {
@@ -50,6 +50,39 @@ const emptyHealthForm = {
 };
 
 const WEEK_DAYS = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI', 'DIMANCHE'];
+
+const SCHOOL_GRADES = [
+  { value: 'CP', label: 'CP', category: 'primaire' },
+  { value: 'CE1', label: 'CE1', category: 'primaire' },
+  { value: 'CE2', label: 'CE2', category: 'primaire' },
+  { value: 'CM1', label: 'CM1', category: 'primaire' },
+  { value: 'CM2', label: 'CM2', category: 'primaire' },
+  { value: '6eme', label: '6ème', category: 'college' },
+  { value: '5eme', label: '5ème', category: 'college' },
+  { value: '4eme', label: '4ème', category: 'college' },
+  { value: '3eme', label: '3ème', category: 'college' },
+  { value: 'Seconde', label: 'Seconde', category: 'lycee' },
+  { value: 'Premiere', label: 'Première', category: 'lycee' },
+  { value: 'Terminale', label: 'Terminale', category: 'lycee' },
+];
+
+function normStr(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[éèêë]/g, 'e').replace(/[àâä]/g, 'a')
+    .replace(/[ôö]/g, 'o').replace(/ç/g, 'c').replace(/[ùûü]/g, 'u');
+}
+
+function matchSoutienLevel(levelName, grade, gender) {
+  if (!grade || !levelName) return false;
+  const gradeObj = SCHOOL_GRADES.find((g) => g.value === grade);
+  if (!gradeObj) return false;
+  const ln = normStr(levelName);
+  if (gradeObj.category === 'primaire') return ln.includes('primaire');
+  const isFille = gender === 'FILLE';
+  if (gradeObj.category === 'college') return ln.includes('college') && (isFille ? ln.includes('fille') : ln.includes('garcon'));
+  if (gradeObj.category === 'lycee') return ln.includes('lycee') && (isFille ? ln.includes('fille') : ln.includes('garcon'));
+  return false;
+}
 
 const getDefaultHealthForm = (wizardState) => ({
   ...emptyHealthForm,
@@ -184,6 +217,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [pricingPreview, setPricingPreview] = useState(null);
   const [courseFilterPoleId, setCourseFilterPoleId] = useState('');
   const [courseFilterDay, setCourseFilterDay] = useState('');
+  const [schoolGradeByMember, setSchoolGradeByMember] = useState({});
   const [memberForm, setMemberForm] = useState(emptyMember);
   const [editingMemberIndex, setEditingMemberIndex] = useState(null);
   const [activeHealthMember, setActiveHealthMember] = useState(0);
@@ -388,7 +422,11 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       if (selection.classId) {
         const cls = allClasses.find((c) => c.id === selection.classId);
         if (!cls) return null;
-        return `${member.firstName} ${member.lastName} — ${cls.level?.pole?.name || ''} / ${cls.level?.name || ''} (${cls.dayOfWeek} ${cls.startTime}-${cls.endTime})`;
+        const slots = cls.classTimeSlots?.map((cts) => cts.timeSlot) || [];
+        const scheduleStr = slots.length > 0
+          ? slots.map((s) => `${s.dayOfWeek} ${s.startTime}-${s.endTime}`).join(', ')
+          : `${cls.dayOfWeek} ${cls.startTime}-${cls.endTime}`;
+        return `${member.firstName} ${member.lastName} — ${cls.level?.pole?.name || ''} / ${cls.level?.name || ''} (${scheduleStr})`;
       }
 
       if (selection.levelId) {
@@ -478,7 +516,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         toast.error('Un compte existe déjà avec cet email');
         return false;
       }
-      toast.error('Impossible de vérifier l’email pour le moment');
+      toast.error("Impossible de vérifier l'email pour le moment");
       return false;
     }
   };
@@ -548,7 +586,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
         return false;
       }
       if (!a.addressLine1 || !a.postalCode || !a.city || !a.country) {
-        toast.error('Veuillez compléter l’adresse et le pays');
+        toast.error("Veuillez compléter l'adresse et le pays");
         return false;
       }
     }
@@ -582,17 +620,17 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
       if (form.hasDisability && !form.disabilityDetails.trim()) return toast.error('Détail du handicap requis'), false;
       if (form.canLeaveAloneAfterClass === null || form.canLeaveAloneAfterClass === undefined) return toast.error('Choix de sortie obligatoire'), false;
       if (form.canLeaveAloneAfterClass === false && !(form.pickupAuthorizedPersons || []).some((p) => p.fullName && p.phone)) {
-        return toast.error('Ajoutez au moins une personne autorisée à récupérer l’enfant'), false;
+        return toast.error("Ajoutez au moins une personne autorisée à récupérer l'enfant"), false;
       }
       if (!form.emergencyAuthorizationAccepted || !form.legalRepresentativeFullName || !form.citySigned || !form.signedAt) {
-        return toast.error('Autorisation d’urgence et signature sanitaire obligatoires'), false;
+        return toast.error("Autorisation d'urgence et signature sanitaire obligatoires"), false;
       }
     }
 
     if ((existingFamily && step === 3) || (!existingFamily && step === 4)) {
       const e = wizard.engagement;
       if (!e.readAndApproved || !e.legalMentionAccepted || !e.signedByFullName || !e.citySigned || !e.signedAt) {
-        toast.error('Veuillez compléter l’engagement (lu/approuvé, nom, lieu, date)');
+        toast.error("Veuillez compléter l'engagement (lu/approuvé, nom, lieu, date)");
         return false;
       }
     }
@@ -629,7 +667,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
           return false;
         }
         if (!Number.isInteger(Number(p.installmentsCount)) || Number(p.installmentsCount) < 1 || Number(p.installmentsCount) > 8) {
-          toast.error('Le nombre d’échéances doit être compris entre 1 et 8');
+          toast.error("Le nombre d'échéances doit être compris entre 1 et 8");
           return false;
         }
       }
@@ -883,7 +921,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               }}
               style={{ padding: 0, color: '#1D4ED8' }}
             >
-              ← Retourner à l’étape Paiement
+              ← Retourner à l'étape Paiement
             </button>
           </p>
           <Elements stripe={stripePromise}>
@@ -1192,6 +1230,59 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                                 );
                               }
 
+                              // Soutien scolaire: grade-gated level selection
+                              const isSoutien = normStr(pole.name).includes('soutien');
+                              if (isSoutien) {
+                                const schoolGrade = schoolGradeByMember[memberIndex] || '';
+                                const matchingLevels = (pole.levels || []).filter((lvl) => matchSoutienLevel(lvl.name, schoolGrade, member.gender));
+                                return (
+                                  <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                      <div>
+                                        <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name}</div>
+                                        <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Cours de soutien scolaire'}</div>
+                                      </div>
+                                    </div>
+                                    <div style={{ marginBottom: 12 }}>
+                                      <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Classe de l'élève *</label>
+                                      <select
+                                        className="form-control"
+                                        value={schoolGrade}
+                                        onChange={(e) => setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: e.target.value }))}
+                                        style={{ maxWidth: 240 }}
+                                      >
+                                        <option value="">— Sélectionner —</option>
+                                        {SCHOOL_GRADES.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+                                      </select>
+                                    </div>
+                                    {!schoolGrade ? (
+                                      <div style={{ padding: 12, borderRadius: 8, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E', fontSize: 13 }}>
+                                        Sélectionnez la classe de l'élève pour afficher les cours disponibles.
+                                      </div>
+                                    ) : matchingLevels.length === 0 ? (
+                                      <div style={{ padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13 }}>
+                                        Aucun cours de soutien disponible pour ce niveau.
+                                      </div>
+                                    ) : (
+                                      <div style={{ display: 'grid', gap: 12 }}>
+                                        {matchingLevels.map((level) => {
+                                          const levelSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.levelId === level.id);
+                                          return (
+                                            <label key={level.id} style={{ borderRadius: 14, border: '1px solid', borderColor: levelSelected ? '#2563EB' : '#E2E8F0', background: levelSelected ? '#EFF6FF' : '#FFFFFF', padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+                                              <div>
+                                                <div style={{ fontSize: 14, fontWeight: 700 }}>{level.name}</div>
+                                                <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>{level.code || ''}</div>
+                                              </div>
+                                              <input type="checkbox" checked={levelSelected} onChange={() => toggleLevelSelection(memberIndex, pole.id, level.id)} />
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }
+
                               // Default: show levels for other poles
                                   const levelList = (pole.levels || []).filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
                               return (
@@ -1247,17 +1338,31 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                           </div>
                       ) : null}
                       {isOldStudent && classesGroupedByPole.length > 0 ? (() => {
+                        const schoolGrade = schoolGradeByMember[memberIndex] || '';
                         const filteredGroups = classesGroupedByPole
-                          .map((group) => ({
-                            ...group,
-                            classes: group.classes.filter((cls) => {
-                              if (!isClassAllowedForAge(cls, memberAge)) return false;
-                              if (courseFilterPoleId && group.poleId !== courseFilterPoleId) return false;
-                              if (courseFilterDay && cls.dayOfWeek !== courseFilterDay) return false;
-                              return true;
-                            }),
-                          }))
-                          .filter((group) => group.classes.length > 0);
+                          .map((group) => {
+                            const isSoutienGroup = normStr(group.poleName).includes('soutien');
+                            return {
+                              ...group,
+                              isSoutien: isSoutienGroup,
+                              classes: group.classes.filter((cls) => {
+                                if (!isClassAllowedForAge(cls, memberAge)) return false;
+                                if (courseFilterPoleId && group.poleId !== courseFilterPoleId) return false;
+                                if (courseFilterDay) {
+                                  const slots = cls.classTimeSlots?.map((cts) => cts.timeSlot) || [];
+                                  const days = slots.length > 0 ? slots.map((s) => s.dayOfWeek) : [cls.dayOfWeek];
+                                  if (!days.includes(courseFilterDay)) return false;
+                                }
+                                // Soutien scolaire: hide classes until grade is selected and level matches
+                                if (isSoutienGroup) {
+                                  if (!schoolGrade) return false;
+                                  if (!matchSoutienLevel(cls.level?.name, schoolGrade, member.gender)) return false;
+                                }
+                                return true;
+                              }),
+                            };
+                          })
+                          .filter((group) => group.classes.length > 0 || group.isSoutien); // keep soutien group even if empty (to show grade selector)
                         const hasAnyClass = filteredGroups.some((group) => group.classes.length > 0);
                         const filtersSelected = Boolean(courseFilterPoleId || courseFilterDay);
                         return (
@@ -1327,65 +1432,89 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                                   </div>
                                 ) : null}
 
-                                {filteredGroups.map((group) => (
-                                  <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                                <div>
-                                  <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
-                                  <div style={{ color: '#64748B', fontSize: 13 }}>{group.classes.length} cours disponibles</div>
-                                </div>
-                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
-                                  Par pôle
-                                </div>
-                              </div>
-
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-                                {group.classes.map((cls) => {
-                                  const selected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.classId === cls.id);
-                                  const isWaitlist = cls.status === 'FULL';
-                                  return (
-                                    <label
-                                      key={cls.id}
-                                      style={{
-                                        borderRadius: 14,
-                                        border: '1px solid',
-                                        borderColor: selected ? '#2563EB' : isWaitlist ? '#F87171' : '#E2E8F0',
-                                        background: selected ? '#EFF6FF' : isWaitlist ? '#FEF2F2' : '#FFFFFF',
-                                        padding: 14,
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        justifyContent: 'space-between',
-                                        cursor: 'pointer',
-                                        minHeight: 130,
-                                        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-                                        boxShadow: selected ? '0 10px 30px rgba(37,99,235,0.08)' : '0 0 0 rgba(0,0,0,0)',
-                                      }}
-                                    >
-                                      <div>
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-                                          <div>
-                                            <div style={{ fontSize: 14, fontWeight: 700 }}>{cls.level?.name || cls.pole?.name || 'Niveau'}</div>
-                                            <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{cls.dayOfWeek} {cls.startTime} - {cls.endTime}</div>
+                                {filteredGroups.map((group) => {
+                                  // Render a reusable class card
+                                  const renderClassCard = (cls) => {
+                                    const selected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.classId === cls.id);
+                                    const isWaitlist = cls.status === 'FULL';
+                                    return (
+                                      <label key={cls.id} style={{ borderRadius: 14, border: '1px solid', borderColor: selected ? '#2563EB' : isWaitlist ? '#F87171' : '#E2E8F0', background: selected ? '#EFF6FF' : isWaitlist ? '#FEF2F2' : '#FFFFFF', padding: 14, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', cursor: 'pointer', minHeight: 130, transition: 'transform 0.15s ease, box-shadow 0.15s ease', boxShadow: selected ? '0 10px 30px rgba(37,99,235,0.08)' : '0 0 0 rgba(0,0,0,0)' }}>
+                                        <div>
+                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                                            <div>
+                                              <div style={{ fontSize: 14, fontWeight: 700 }}>{cls.level?.name || cls.pole?.name || 'Niveau'}</div>
+                                              {(() => {
+                                                const slots = cls.classTimeSlots?.map((cts) => cts.timeSlot) || [];
+                                                return slots.length > 0
+                                                  ? slots.map((s, si) => <div key={si} style={{ fontSize: 12, color: '#475569', marginTop: si === 0 ? 2 : 1 }}>{s.dayOfWeek} {s.startTime} - {s.endTime}</div>)
+                                                  : <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{cls.dayOfWeek} {cls.startTime} - {cls.endTime}</div>;
+                                              })()}
+                                            </div>
+                                            {selected && <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#DBEAFE', borderRadius: 999, padding: '4px 10px' }}>Sélectionné</span>}
                                           </div>
-                                          {selected && (
-                                            <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#DBEAFE', borderRadius: 999, padding: '4px 10px' }}>
-                                              Sélectionné
-                                            </span>
-                                          )}
+                                          <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>Salle {cls.room || '-'}</div>
+                                          {cls.teacherName ? <div style={{ fontSize: 12, color: '#475569' }}>Professeur : {cls.teacherName}</div> : null}
                                         </div>
-                                        <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>Salle {cls.room || '-'}</div>
-                                        {cls.teacherName ? <div style={{ fontSize: 12, color: '#475569' }}>Professeur : {cls.teacherName}</div> : null}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                                          <span style={{ fontSize: 12, color: isWaitlist ? '#B91C1C' : '#334155' }}>{isWaitlist ? 'Liste d\'attente' : `${cls.enrolledCount}/${cls.capacity} inscrits`}</span>
+                                          <input type="checkbox" checked={selected} onChange={() => toggleCourseSelection(memberIndex, cls.id)} />
+                                        </div>
+                                      </label>
+                                    );
+                                  };
+
+                                  // Soutien scolaire group: show grade selector + filtered classes
+                                  if (group.isSoutien) {
+                                    return (
+                                      <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                          <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
+                                        </div>
+                                        <div style={{ marginBottom: 12 }}>
+                                          <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Classe de l'élève *</label>
+                                          <select
+                                            className="form-control"
+                                            value={schoolGrade}
+                                            onChange={(e) => setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: e.target.value }))}
+                                            style={{ maxWidth: 240 }}
+                                          >
+                                            <option value="">— Sélectionner —</option>
+                                            {SCHOOL_GRADES.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+                                          </select>
+                                        </div>
+                                        {!schoolGrade ? (
+                                          <div style={{ padding: 12, borderRadius: 8, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E', fontSize: 13 }}>
+                                            Sélectionnez la classe de l'élève pour afficher les créneaux disponibles.
+                                          </div>
+                                        ) : group.classes.length === 0 ? (
+                                          <div style={{ padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13 }}>
+                                            Aucun cours disponible pour ce niveau.
+                                          </div>
+                                        ) : (
+                                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                                            {group.classes.map(renderClassCard)}
+                                          </div>
+                                        )}
                                       </div>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-                                        <span style={{ fontSize: 12, color: isWaitlist ? '#B91C1C' : '#334155' }}>{isWaitlist ? 'Liste d’attente' : `${cls.enrolledCount}/${cls.capacity} inscrits`}</span>
-                                        <input type="checkbox" checked={selected} onChange={() => toggleCourseSelection(memberIndex, cls.id)} />
+                                    );
+                                  }
+
+                                  // Normal group rendering
+                                  return (
+                                    <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                        <div>
+                                          <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
+                                          <div style={{ color: '#64748B', fontSize: 13 }}>{group.classes.length} cours disponibles</div>
+                                        </div>
+                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>Par pôle</div>
                                       </div>
-                                    </label>
+                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                                        {group.classes.map(renderClassCard)}
+                                      </div>
+                                    </div>
                                   );
                                 })}
-                              </div>
-                            </div>
-                          ))}
                                 </>
                               )}
                         </div>
@@ -1401,7 +1530,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                   <div className="card" style={{ marginTop: 16, background: '#EEF2FF' }}>
                     <strong>Récap tarifaire</strong>
                     <div>Frais inscription (1 fois par famille): {Number(pricingPreview.registrationFee).toFixed(2)} €</div>
-                    <div style={{ fontSize: 12, color: '#475569', marginBottom: 12 }}>Ce montant est facturé une seule fois, quel que soit le nombre d’enfants inscrits.</div>
+                    <div style={{ fontSize: 12, color: '#475569', marginBottom: 12 }}>Ce montant est facturé une seule fois, quel que soit le nombre d'enfants inscrits.</div>
                     <div>Arabe ({pricingPreview.arabicCount} élève(s)): {Number(pricingPreview.arabicFee).toFixed(2)} €</div>
                     <div>Coran: {Number(pricingPreview.coranFee ?? pricingPreview.coranScienceFee).toFixed(2)} €</div>
                     <div>Sciences islamiques: {Number(pricingPreview.sciencesFee || 0).toFixed(2)} €</div>
@@ -1429,7 +1558,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
               ))}
             </div>
 
-            {wizard.members.length === 0 ? <p>Ajoutez d’abord des membres à l’étape 2.</p> : (
+            {wizard.members.length === 0 ? <p>Ajoutez d'abord des membres à l'étape 2.</p> : (
               <div>
                 {[
                   ['hasChronicDisease', 'Maladies chroniques', 'chronicDiseaseDetails'],
@@ -1548,12 +1677,12 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                   Total estimé: {Number(pricingPreview.total + ((wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') ? pricingPreview.fraisPrelevement : 0)).toFixed(2)} €
                   {(wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') && pricingPreview.fraisPrelevement > 0 && (
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
-                      Montant total incluant les frais de prélèvement et les frais d’inscription facturés une seule fois par famille.
+                      Montant total incluant les frais de prélèvement et les frais d'inscription facturés une seule fois par famille.
                     </div>
                   )}
                   {!(wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') && (
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
-                      Montant total incluant les frais d’inscription facturés une seule fois par famille.
+                      Montant total incluant les frais d'inscription facturés une seule fois par famille.
                     </div>
                   )}
                 </div>
@@ -1713,11 +1842,11 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                 <div className="card" style={{ background: '#FFFBEB', border: '1px solid #FDE68A', marginTop: 12 }}>
                   <p><strong>Instructions chèque :</strong></p>
                   <ul>
-                    <li>Libeller à l’ordre de l’Association PARTAGE.</li>
-                    <li>Indiquer au dos le nom de famille et l’année scolaire.</li>
-                    <li>Déposer le lot de chèques selon l’échéancier généré.</li>
+                    <li>Libeller à l'ordre de l'Association PARTAGE.</li>
+                    <li>Indiquer au dos le nom de famille et l'année scolaire.</li>
+                    <li>Déposer le lot de chèques selon l'échéancier généré.</li>
                   </ul>
-                  <label><input type="checkbox" checked={wizard.payment.chequeInstructionsAccepted || false} onChange={(e) => updateWizard('payment', { chequeInstructionsAccepted: e.target.checked })} /> J’ai lu les instructions chèque.</label>
+                  <label><input type="checkbox" checked={wizard.payment.chequeInstructionsAccepted || false} onChange={(e) => updateWizard('payment', { chequeInstructionsAccepted: e.target.checked })} /> J'ai lu les instructions chèque.</label>
                 </div>
               </>
             )}

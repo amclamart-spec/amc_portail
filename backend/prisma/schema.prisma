@@ -221,16 +221,31 @@ model TimeSlot {
   startTime String   @map("start_time")
   endTime   String   @map("end_time")
   roomId    String   @map("room_id")
+  poleId    String?  @map("pole_id")
   recurring Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  room    Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  classes Class[]
+  room           Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  pole           Pole?           @relation(fields: [poleId], references: [id], onDelete: SetNull)
+  classes        Class[]
+  classTimeSlots ClassTimeSlot[]
 
   @@index([dayOfWeek, startTime, endTime])
   @@index([roomId, dayOfWeek])
   @@map("time_slots")
+}
+
+model ClassTimeSlot {
+  classId    String @map("class_id")
+  timeSlotId String @map("time_slot_id")
+  sortOrder  Int    @default(0) @map("sort_order")
+
+  class    Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  timeSlot TimeSlot @relation(fields: [timeSlotId], references: [id], onDelete: Cascade)
+
+  @@id([classId, timeSlotId])
+  @@map("class_time_slots")
 }
 
 model Teacher {
@@ -278,8 +293,9 @@ model Pole {
   sortOrder   Int              @default(0) @map("sort_order")
   createdAt   DateTime         @default(now()) @map("created_at")
 
-  levels  Level[]
-  classes Class[]
+  levels     Level[]
+  classes    Class[]
+  timeSlots  TimeSlot[]
 
   @@map("poles")
 }
@@ -337,6 +353,7 @@ model Class {
   enrollments      Enrollment[]
   lessons          Lesson[]
   homeworkMessages HomeworkMessage[]
+  classTimeSlots   ClassTimeSlot[]
 
   @@index([schoolYearId, poleId, levelId])
   @@index([timeSlotId])

@@ -1527,6 +1527,7 @@ async function updateEnrollment(req, res) {
     }
 
     const familyUpdates = {};
+    let userEmailUpdate = null;
     if (family) {
       if (family.familyName !== undefined) familyUpdates.familyName = family.familyName;
       if (family.addressLine1 !== undefined) familyUpdates.addressLine1 = family.addressLine1;
@@ -1536,6 +1537,20 @@ async function updateEnrollment(req, res) {
       if (family.country !== undefined) familyUpdates.country = family.country;
       if (family.phonePrimary !== undefined) familyUpdates.phonePrimary = family.phonePrimary;
       if (family.phoneSecondary !== undefined) familyUpdates.phoneSecondary = family.phoneSecondary;
+      if (family.email !== undefined && family.email.trim()) {
+        const newEmail = family.email.trim().toLowerCase();
+        const familyRecord = await prisma.family.findUnique({
+          where: { id: enrollment.student.familyId },
+          include: { user: { select: { id: true, email: true } } },
+        });
+        if (familyRecord?.user && familyRecord.user.email !== newEmail) {
+          const conflict = await prisma.user.findUnique({ where: { email: newEmail } });
+          if (conflict) {
+            return res.status(409).json({ error: 'Cette adresse email est déjà utilisée par un autre compte' });
+          }
+          userEmailUpdate = { userId: familyRecord.user.id, email: newEmail };
+        }
+      }
     }
 
     const targetSchoolYearId = schoolYearId || enrollment.schoolYearId;
@@ -1719,6 +1734,9 @@ async function updateEnrollment(req, res) {
     }
     if (Object.keys(familyUpdates).length > 0) {
       actions.push(prisma.family.update({ where: { id: enrollment.student.familyId }, data: familyUpdates }));
+    }
+    if (userEmailUpdate) {
+      actions.push(prisma.user.update({ where: { id: userEmailUpdate.userId }, data: { email: userEmailUpdate.email } }));
     }
     if (Object.keys(enrollmentUpdates).length > 0) {
       actions.push(prisma.enrollment.update({ where: { id }, data: enrollmentUpdates }));
@@ -2124,16 +2142,18 @@ async function deleteRoom(req, res) {
  */
 async function getTimeSlots(req, res) {
   try {
-    const { dayOfWeek, roomId } = req.query;
+    const { dayOfWeek, roomId, poleId } = req.query;
     const where = {
       ...(dayOfWeek ? { dayOfWeek } : {}),
       ...(roomId ? { roomId } : {}),
+      ...(poleId ? { poleId } : {}),
     };
 
     const timeSlots = await prisma.timeSlot.findMany({
       where,
       include: {
         room: true,
+        pole: true,
         _count: { select: { classes: true } },
       },
       orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
@@ -2148,7 +2168,7 @@ async function getTimeSlots(req, res) {
 
 async function createTimeSlot(req, res) {
   try {
-    const { dayOfWeek, startTime, endTime, roomId, recurring = true } = req.body;
+    const { dayOfWeek, startTime, endTime, roomId, poleId, recurring = true } = req.body;
 
     if (!dayOfWeek || !startTime || !endTime || !roomId) {
       return res.status(400).json({ error: 'dayOfWeek, startTime, endTime et roomId sont requis' });
@@ -2165,9 +2185,10 @@ async function createTimeSlot(req, res) {
         startTime,
         endTime,
         roomId,
+        ...(poleId ? { poleId } : {}),
         recurring: !!recurring,
       },
-      include: { room: true },
+      include: { room: true, pole: true },
     });
 
     res.status(201).json({ timeSlot });
@@ -2200,9 +2221,10 @@ async function updateTimeSlot(req, res) {
         ...(req.body.startTime !== undefined ? { startTime: req.body.startTime } : {}),
         ...(req.body.endTime !== undefined ? { endTime: req.body.endTime } : {}),
         ...(req.body.roomId !== undefined ? { roomId: req.body.roomId } : {}),
+        ...(req.body.poleId !== undefined ? { poleId: req.body.poleId || null } : {}),
         ...(req.body.recurring !== undefined ? { recurring: !!req.body.recurring } : {}),
       },
-      include: { room: true },
+      include: { room: true, pole: true },
     });
 
     await prisma.class.updateMany({
@@ -2259,6 +2281,7 @@ async function getClasses(req, res) {
         timeSlot: true,
         roomRef: true,
         teacher: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } },
+        classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
         _count: {
           select: {
             enrollments: {
@@ -2302,6 +2325,7 @@ async function getClassDetails(req, res) {
         pole: true,
         level: { include: { pole: true } },
         timeSlot: { include: { room: true } },
+        classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
         roomRef: true,
         teacher: { include: { user: { select: { firstName: true, lastName: true, email: true, phone: true } } } },
         enrollments: {
@@ -2409,71 +2433,92 @@ async function createClass(req, res) {
       schoolYearId,
       poleId,
       levelId,
-      timeSlotId,
-      roomId,
       teacherId,
       capacity,
       status = 'OPEN',
     } = req.body;
 
-    if (!schoolYearId || !poleId || !levelId || !timeSlotId || !roomId || !teacherId) {
-      return res.status(400).json({ error: 'schoolYearId, poleId, levelId, timeSlotId, roomId et teacherId sont requis' });
+    // Support both timeSlotIds[] (new) and timeSlotId (legacy single)
+    const rawIds = req.body.timeSlotIds;
+    const timeSlotIds = Array.isArray(rawIds) && rawIds.length > 0
+      ? rawIds
+      : (req.body.timeSlotId ? [req.body.timeSlotId] : []);
+
+    if (!schoolYearId || !poleId || !levelId || timeSlotIds.length === 0 || !teacherId) {
+      return res.status(400).json({ error: 'schoolYearId, poleId, levelId, au moins un timeSlotId et teacherId sont requis' });
     }
 
-    const [year, pole, level, timeSlot, room, teacher] = await Promise.all([
+    const [year, pole, level, teacher] = await Promise.all([
       prisma.schoolYear.findUnique({ where: { id: schoolYearId } }),
       prisma.pole.findUnique({ where: { id: poleId } }),
       prisma.level.findUnique({ where: { id: levelId } }),
-      prisma.timeSlot.findUnique({ where: { id: timeSlotId }, include: { room: true } }),
-      prisma.room.findUnique({ where: { id: roomId } }),
       prisma.teacher.findUnique({ where: { id: teacherId }, include: { user: true } }),
     ]);
 
-    if (!year || !pole || !level || !timeSlot || !room || !teacher) {
-      return res.status(404).json({ error: 'Référence invalide (année/pôle/niveau/créneau/salle/professeur)' });
+    if (!year || !pole || !level || !teacher) {
+      return res.status(404).json({ error: 'Référence invalide (année/pôle/niveau/professeur)' });
     }
 
     if (level.poleId !== poleId) {
       return res.status(400).json({ error: 'Le niveau sélectionné ne correspond pas au pôle choisi' });
     }
 
-    if (timeSlot.roomId !== roomId) {
-      return res.status(400).json({ error: 'La salle doit être cohérente avec la salle du créneau sélectionné' });
-    }
-
-    const classCapacity = Number(capacity ?? room.capacity);
-    if (classCapacity > room.capacity) {
-      return res.status(400).json({ error: 'La capacité de classe ne peut pas dépasser la capacité de la salle' });
-    }
-
-    const conflictError = await validateClassConflicts({
-      schoolYearId,
-      teacherId,
-      roomId,
-      dayOfWeek: timeSlot.dayOfWeek,
-      startTime: timeSlot.startTime,
-      endTime: timeSlot.endTime,
+    const timeSlots = await prisma.timeSlot.findMany({
+      where: { id: { in: timeSlotIds } },
+      include: { room: true },
     });
 
-    if (conflictError) return res.status(400).json({ error: conflictError });
+    if (timeSlots.length !== timeSlotIds.length) {
+      return res.status(404).json({ error: 'Un ou plusieurs créneaux sont introuvables' });
+    }
 
-    const cls = await prisma.class.create({
-      data: {
+    // Use primary slot (first) for denormalized class fields
+    const primarySlot = timeSlots.find((s) => s.id === timeSlotIds[0]) || timeSlots[0];
+    const primaryRoom = primarySlot.room;
+    const classCapacity = Number(capacity ?? primaryRoom.capacity);
+
+    // Validate conflicts for each slot
+    for (const slot of timeSlots) {
+      const conflictError = await validateClassConflicts({
         schoolYearId,
-        poleId,
-        levelId,
-        timeSlotId,
-        roomId,
         teacherId,
-        teacherUserId: teacher.userId,
-        teacherName: `${teacher.firstName} ${teacher.lastName}`,
-        dayOfWeek: timeSlot.dayOfWeek,
-        startTime: timeSlot.startTime,
-        endTime: timeSlot.endTime,
-        room: room.name,
-        capacity: classCapacity,
-        status,
-      },
+        roomId: slot.roomId,
+        dayOfWeek: slot.dayOfWeek,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+      });
+      if (conflictError) return res.status(400).json({ error: `Créneau ${slot.dayOfWeek} ${slot.startTime}-${slot.endTime}: ${conflictError}` });
+    }
+
+    const cls = await prisma.$transaction(async (tx) => {
+      const created = await tx.class.create({
+        data: {
+          schoolYearId,
+          poleId,
+          levelId,
+          timeSlotId: primarySlot.id,
+          roomId: primaryRoom.id,
+          teacherId,
+          teacherUserId: teacher.userId,
+          teacherName: `${teacher.firstName} ${teacher.lastName}`,
+          dayOfWeek: primarySlot.dayOfWeek,
+          startTime: primarySlot.startTime,
+          endTime: primarySlot.endTime,
+          room: primaryRoom.name,
+          capacity: classCapacity,
+          status,
+        },
+      });
+
+      await tx.classTimeSlot.createMany({
+        data: timeSlotIds.map((tsId, idx) => ({ classId: created.id, timeSlotId: tsId, sortOrder: idx })),
+      });
+
+      return created;
+    });
+
+    const fullClass = await prisma.class.findUnique({
+      where: { id: cls.id },
       include: {
         schoolYear: true,
         pole: true,
@@ -2481,10 +2526,11 @@ async function createClass(req, res) {
         timeSlot: true,
         roomRef: true,
         teacher: { include: { user: true } },
+        classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
       },
     });
 
-    res.status(201).json({ class: { ...cls, fillIndicator: classFillIndicator(cls.enrolledCount, cls.capacity) } });
+    res.status(201).json({ class: { ...fullClass, fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
   } catch (error) {
     console.error('Erreur createClass:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -2497,21 +2543,23 @@ async function updateClass(req, res) {
     const existing = await prisma.class.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Classe non trouvée' });
 
+    // Support timeSlotIds[] (new) or single timeSlotId (legacy)
+    const rawIds = req.body.timeSlotIds;
+    const timeSlotIds = Array.isArray(rawIds) && rawIds.length > 0
+      ? rawIds
+      : (req.body.timeSlotId ? [req.body.timeSlotId] : null);
+
     const next = {
       schoolYearId: req.body.schoolYearId ?? existing.schoolYearId,
       poleId: req.body.poleId ?? existing.poleId,
       levelId: req.body.levelId ?? existing.levelId,
-      timeSlotId: req.body.timeSlotId ?? existing.timeSlotId,
-      roomId: req.body.roomId ?? existing.roomId,
       teacherId: req.body.teacherId ?? existing.teacherId,
       capacity: req.body.capacity !== undefined ? Number(req.body.capacity) : existing.capacity,
       status: req.body.status ?? existing.status,
     };
 
-    const [level, timeSlot, room, teacher] = await Promise.all([
+    const [level, teacher] = await Promise.all([
       prisma.level.findUnique({ where: { id: next.levelId } }),
-      next.timeSlotId ? prisma.timeSlot.findUnique({ where: { id: next.timeSlotId }, include: { room: true } }) : null,
-      next.roomId ? prisma.room.findUnique({ where: { id: next.roomId } }) : null,
       next.teacherId ? prisma.teacher.findUnique({ where: { id: next.teacherId }, include: { user: true } }) : null,
     ]);
 
@@ -2519,60 +2567,85 @@ async function updateClass(req, res) {
     if (next.poleId && level.poleId !== next.poleId) {
       return res.status(400).json({ error: 'Le niveau sélectionné ne correspond pas au pôle choisi' });
     }
-
-    if (next.timeSlotId && !timeSlot) return res.status(400).json({ error: 'Créneau invalide' });
-    if (next.roomId && !room) return res.status(400).json({ error: 'Salle invalide' });
     if (next.teacherId && !teacher) return res.status(400).json({ error: 'Professeur invalide' });
 
-    if (timeSlot && room && timeSlot.roomId !== room.id) {
-      return res.status(400).json({ error: 'La salle doit être cohérente avec la salle du créneau sélectionné' });
-    }
+    // Resolve time slots to update
+    let newTimeSlots = null;
+    if (timeSlotIds) {
+      newTimeSlots = await prisma.timeSlot.findMany({
+        where: { id: { in: timeSlotIds } },
+        include: { room: true },
+      });
+      if (newTimeSlots.length !== timeSlotIds.length) {
+        return res.status(404).json({ error: 'Un ou plusieurs créneaux sont introuvables' });
+      }
 
-    if (room && next.capacity > room.capacity) {
-      return res.status(400).json({ error: 'La capacité de classe ne peut pas dépasser la capacité de la salle' });
-    }
-
-    const dayOfWeek = timeSlot ? timeSlot.dayOfWeek : existing.dayOfWeek;
-    const startTime = timeSlot ? timeSlot.startTime : existing.startTime;
-    const endTime = timeSlot ? timeSlot.endTime : existing.endTime;
-
-    const conflictError = await validateClassConflicts({
-      classId: id,
-      schoolYearId: next.schoolYearId,
-      teacherId: next.teacherId,
-      roomId: next.roomId,
-      dayOfWeek,
-      startTime,
-      endTime,
-    });
-    if (conflictError) return res.status(400).json({ error: conflictError });
-
-    const updated = await prisma.class.update({
-      where: { id },
-      data: {
+      for (const slot of newTimeSlots) {
+        const conflictError = await validateClassConflicts({
+          classId: id,
+          schoolYearId: next.schoolYearId,
+          teacherId: next.teacherId,
+          roomId: slot.roomId,
+          dayOfWeek: slot.dayOfWeek,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+        });
+        if (conflictError) return res.status(400).json({ error: `Créneau ${slot.dayOfWeek} ${slot.startTime}-${slot.endTime}: ${conflictError}` });
+      }
+    } else {
+      // No slot change: validate existing primary slot for teacher conflict
+      const conflictError = await validateClassConflicts({
+        classId: id,
         schoolYearId: next.schoolYearId,
-        poleId: next.poleId,
-        levelId: next.levelId,
-        timeSlotId: next.timeSlotId,
-        roomId: next.roomId,
         teacherId: next.teacherId,
-        teacherUserId: teacher ? teacher.userId : null,
-        teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : null,
-        dayOfWeek,
-        startTime,
-        endTime,
-        room: room ? room.name : existing.room,
-        capacity: next.capacity,
-        status: next.status,
-      },
-      include: {
-        schoolYear: true,
-        pole: true,
-        level: { include: { pole: true } },
-        timeSlot: true,
-        roomRef: true,
-        teacher: { include: { user: true } },
-      },
+        roomId: existing.roomId,
+        dayOfWeek: existing.dayOfWeek,
+        startTime: existing.startTime,
+        endTime: existing.endTime,
+      });
+      if (conflictError) return res.status(400).json({ error: conflictError });
+    }
+
+    const primarySlot = newTimeSlots ? (newTimeSlots.find((s) => s.id === timeSlotIds[0]) || newTimeSlots[0]) : null;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (newTimeSlots) {
+        await tx.classTimeSlot.deleteMany({ where: { classId: id } });
+        await tx.classTimeSlot.createMany({
+          data: timeSlotIds.map((tsId, idx) => ({ classId: id, timeSlotId: tsId, sortOrder: idx })),
+        });
+      }
+
+      return tx.class.update({
+        where: { id },
+        data: {
+          schoolYearId: next.schoolYearId,
+          poleId: next.poleId,
+          levelId: next.levelId,
+          ...(primarySlot ? {
+            timeSlotId: primarySlot.id,
+            roomId: primarySlot.roomId,
+            dayOfWeek: primarySlot.dayOfWeek,
+            startTime: primarySlot.startTime,
+            endTime: primarySlot.endTime,
+            room: primarySlot.room.name,
+          } : {}),
+          teacherId: next.teacherId,
+          teacherUserId: teacher ? teacher.userId : existing.teacherUserId,
+          teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : existing.teacherName,
+          capacity: next.capacity,
+          status: next.status,
+        },
+        include: {
+          schoolYear: true,
+          pole: true,
+          level: { include: { pole: true } },
+          timeSlot: true,
+          roomRef: true,
+          teacher: { include: { user: true } },
+          classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
+        },
+      });
     });
 
     res.json({ class: { ...updated, fillIndicator: classFillIndicator(updated.enrolledCount, updated.capacity) } });
@@ -3032,6 +3105,27 @@ async function resetTeacherPassword(req, res) {
   }
 }
 
+async function resetUserPassword(req, res) {
+  try {
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+    const temporaryPassword = `AMC-${uuidv4().slice(0, 10)}`;
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+
+    await prisma.user.update({
+      where: { id },
+      data: { passwordHash, resetPasswordToken: null, resetPasswordExpires: null },
+    });
+
+    res.json({ password: temporaryPassword });
+  } catch (error) {
+    console.error('Erreur resetUserPassword:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 async function deleteTeacher(req, res) {
   try {
     const { id } = req.params;
@@ -3108,6 +3202,7 @@ module.exports = {
   updateTeacher,
   resetTeacherPassword,
   deleteTeacher,
+  resetUserPassword,
   getRegistrationBlockStatus,
   updateRegistrationBlockStatus,
   getStudentAcademicRecord,
