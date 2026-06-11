@@ -1110,6 +1110,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
           addressLine2: effectiveAddress.addressLine2,
 
+
           postalCode: effectiveAddress.postalCode,
 
           city: effectiveAddress.city,
@@ -1132,35 +1133,54 @@ async function completeExistingFamilyRegistration(req, res) {
 
         const m = members[i];
 
-        const photoUrl = m.photoBase64 ? savePhotoBase64(m.photoBase64) : null;
+        let student;
 
-        const student = await tx.student.create({
+        // Si un studentId est fourni (admin re-inscrivant un élève existant), réutiliser l'enregistrement
+        if (m.studentId) {
 
-          data: {
+          const existing = await tx.student.findUnique({ where: { id: m.studentId } });
 
-            familyId: family.id,
+          if (existing && existing.familyId === family.id) {
 
-            firstName: m.firstName,
+            student = existing;
 
-            lastName: m.lastName,
+          }
 
-            dateOfBirth: new Date(m.dateOfBirth),
+        }
 
-            gender: m.gender || 'GARCON',
+        if (!student) {
 
-            photoUrl,
+          const photoUrl = m.photoBase64 ? savePhotoBase64(m.photoBase64) : null;
 
-            allergies: m.allergies || null,
+          student = await tx.student.create({
 
-            currentTreatments: m.currentTreatments || null,
+            data: {
 
-            emergencyContactName: m.emergencyContactName || null,
+              familyId: family.id,
 
-            emergencyContactPhone: m.emergencyContactPhone || null,
+              firstName: m.firstName,
 
-          },
+              lastName: m.lastName,
 
-        });
+              dateOfBirth: new Date(m.dateOfBirth),
+
+              gender: m.gender || 'GARCON',
+
+              photoUrl,
+
+              allergies: m.allergies || null,
+
+              currentTreatments: m.currentTreatments || null,
+
+              emergencyContactName: m.emergencyContactName || null,
+
+              emergencyContactPhone: m.emergencyContactPhone || null,
+
+            },
+
+          });
+
+        }
 
         students.push(student);
 

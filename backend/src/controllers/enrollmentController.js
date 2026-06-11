@@ -58,6 +58,7 @@ async function getAvailableClasses(req, res) {
         level: { include: { pole: true } },
         pole: true,
         schoolYear: true,
+        classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
         _count: {
           select: {
             enrollments: {
