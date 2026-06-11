@@ -1711,10 +1711,10 @@ export default function AdminEnrollments() {
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Email de la famille</label>
                   <input
-                    type="text"
+                    type="email"
                     className="form-control"
                     value={editForm.family.email || ''}
-                    readOnly
+                    onChange={(event) => updateEditForm('family', 'email', event.target.value)}
                   />
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
