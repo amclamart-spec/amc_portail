@@ -10,26 +10,30 @@ const emptyForm = {
   startTime: '14:00',
   endTime: '16:00',
   roomId: '',
+  poleId: '',
   recurring: true,
 };
 
 export default function AdminTimeslots() {
   const [rooms, setRooms] = useState([]);
+  const [poles, setPoles] = useState([]);
   const [timeSlots, setTimeSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingSlot, setEditingSlot] = useState(null);
   const [form, setForm] = useState(emptyForm);
-  const [filters, setFilters] = useState({ dayOfWeek: '', roomId: '' });
+  const [filters, setFilters] = useState({ dayOfWeek: '', roomId: '', poleId: '' });
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [roomsRes, slotsRes] = await Promise.all([
+      const [roomsRes, polesRes, slotsRes] = await Promise.all([
         api.get('/admin/salles'),
+        api.get('/admin/poles'),
         api.get('/admin/creneaux', { params: filters }),
       ]);
       setRooms(roomsRes.data.rooms || []);
+      setPoles(polesRes.data.poles || []);
       setTimeSlots(slotsRes.data.timeSlots || []);
     } catch (error) {
       console.error(error);
@@ -41,7 +45,7 @@ export default function AdminTimeslots() {
 
   useEffect(() => {
     fetchData();
-  }, [filters.dayOfWeek, filters.roomId]);
+  }, [filters.dayOfWeek, filters.roomId, filters.poleId]);
 
   const groupedByDay = useMemo(() => {
     const grouped = Object.fromEntries(DAYS.map((day) => [day, []]));
@@ -68,6 +72,7 @@ export default function AdminTimeslots() {
       startTime: slot.startTime,
       endTime: slot.endTime,
       roomId: slot.roomId,
+      poleId: slot.poleId || '',
       recurring: Boolean(slot.recurring),
     });
     setModalOpen(true);
@@ -116,7 +121,7 @@ export default function AdminTimeslots() {
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
           <div className="form-group" style={{ margin: 0 }}>
             <label>Filtrer par jour</label>
             <select className="form-control" value={filters.dayOfWeek} onChange={(e) => setFilters((prev) => ({ ...prev, dayOfWeek: e.target.value }))}>
@@ -129,6 +134,13 @@ export default function AdminTimeslots() {
             <select className="form-control" value={filters.roomId} onChange={(e) => setFilters((prev) => ({ ...prev, roomId: e.target.value }))}>
               <option value="">Toutes les salles</option>
               {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label>Filtrer par pôle</label>
+            <select className="form-control" value={filters.poleId} onChange={(e) => setFilters((prev) => ({ ...prev, poleId: e.target.value }))}>
+              <option value="">Tous les pôles</option>
+              {poles.map((pole) => <option key={pole.id} value={pole.id}>{pole.name}</option>)}
             </select>
           </div>
         </div>
@@ -151,6 +163,7 @@ export default function AdminTimeslots() {
                       <div key={slot.id} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: 8 }}>
                         <div style={{ fontWeight: 700 }}>{slot.startTime} - {slot.endTime}</div>
                         <div style={{ fontSize: 13 }}>{slot.room?.name}</div>
+                        {slot.pole?.name && <div style={{ fontSize: 12, color: '#2563EB', fontWeight: 600 }}>{slot.pole.name}</div>}
                         <div style={{ fontSize: 12, color: '#6B7280' }}>{slot.recurring ? 'Chaque semaine' : 'Ponctuel'}</div>
                         <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
                           <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditModal(slot)}>
@@ -198,6 +211,14 @@ export default function AdminTimeslots() {
                 <select className="form-control" value={form.roomId} onChange={(e) => setForm((prev) => ({ ...prev, roomId: e.target.value }))}>
                   <option value="">Sélectionner</option>
                   {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
+                </select>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Pôle</label>
+                <select className="form-control" value={form.poleId} onChange={(e) => setForm((prev) => ({ ...prev, poleId: e.target.value }))}>
+                  <option value="">— Aucun pôle —</option>
+                  {poles.map((pole) => <option key={pole.id} value={pole.id}>{pole.name}</option>)}
                 </select>
               </div>
 

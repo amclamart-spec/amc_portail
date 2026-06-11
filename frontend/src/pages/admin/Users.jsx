@@ -1,7 +1,103 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
-import { FiCheck, FiX, FiFilter } from 'react-icons/fi';
+import { FiCheck, FiX, FiFilter, FiKey, FiCopy, FiCheckCircle, FiXCircle } from 'react-icons/fi';
+
+function ResetPasswordModal({ user, onClose }) {
+  const [generatedPassword, setGeneratedPassword] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleGenerate = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.post(`/admin/users/${user.id}/reset-password`);
+      setGeneratedPassword(data.password);
+      toast.success('Mot de passe généré et sauvegardé');
+    } catch {
+      toast.error('Erreur lors de la génération du mot de passe');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(generatedPassword);
+    toast.success('Mot de passe copié');
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="card"
+        style={{ width: 420, padding: 28, position: 'relative' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 style={{ marginBottom: 8, color: 'var(--amc-primary)' }}>
+          Réinitialisation du mot de passe
+        </h3>
+        <p style={{ color: '#6B7280', marginBottom: 20 }}>
+          Utilisateur : <strong>{user.lastName} {user.firstName}</strong><br />
+          <span style={{ fontSize: 13 }}>{user.email}</span>
+        </p>
+
+        {!generatedPassword ? (
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%' }}
+            onClick={handleGenerate}
+            disabled={loading}
+          >
+            {loading ? 'Génération…' : 'Générer un nouveau mot de passe'}
+          </button>
+        ) : (
+          <div>
+            <p style={{ marginBottom: 8, fontWeight: 600 }}>Nouveau mot de passe :</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <code
+                style={{
+                  flex: 1, padding: '8px 12px',
+                  background: '#F3F4F6', borderRadius: 6,
+                  fontSize: 15, letterSpacing: 1, border: '1px solid #E5E7EB',
+                }}
+              >
+                {generatedPassword}
+              </code>
+              <button className="btn btn-outline btn-sm" onClick={handleCopy} title="Copier">
+                <FiCopy />
+              </button>
+            </div>
+            <p style={{ color: '#EF4444', fontSize: 13, marginBottom: 16 }}>
+              Notez ce mot de passe — il ne sera plus affiché après fermeture.
+            </p>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%' }}
+              onClick={handleGenerate}
+              disabled={loading}
+            >
+              {loading ? 'Génération…' : 'Régénérer'}
+            </button>
+          </div>
+        )}
+
+        <button
+          className="btn btn-outline"
+          style={{ width: '100%', marginTop: 10 }}
+          onClick={onClose}
+        >
+          Fermer
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
@@ -10,6 +106,7 @@ export default function AdminUsers() {
   const [filterRole, setFilterRole] = useState('');
   const [searchName, setSearchName] = useState('');
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0 });
+  const [resetModalUser, setResetModalUser] = useState(null);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -59,6 +156,10 @@ export default function AdminUsers() {
 
   return (
     <div>
+      {resetModalUser && (
+        <ResetPasswordModal user={resetModalUser} onClose={() => setResetModalUser(null)} />
+      )}
+
       <div className="flex-between mb-2">
         <h2 style={{ color: 'var(--amc-primary)' }}>Gestion des utilisateurs</h2>
       </div>
@@ -105,19 +206,33 @@ export default function AdminUsers() {
                     <td>{u.email}</td>
                     <td><span className="badge badge-info">{u.role}</span></td>
                     <td>{statusBadge(u.validationStatus)}</td>
-                    <td>{u.emailVerified ? '✅' : '❌'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      {u.emailVerified && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(u.email)
+                        ? <FiCheckCircle size={18} style={{ color: '#22C55E', verticalAlign: 'middle' }} title="Email vérifié" />
+                        : <FiXCircle size={18} style={{ color: '#EF4444', verticalAlign: 'middle' }} title={!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(u.email) ? 'Format email invalide' : 'Email non vérifié'} />
+                      }
+                    </td>
                     <td style={{ fontSize: 13 }}>{new Date(u.createdAt).toLocaleDateString('fr-FR')}</td>
                     <td>
-                      {u.validationStatus === 'PENDING' && (
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button className="btn btn-success btn-sm" onClick={() => handleApprove(u.id)} title="Valider">
-                            <FiCheck /> Valider
-                          </button>
-                          <button className="btn btn-danger btn-sm" onClick={() => handleReject(u.id)} title="Refuser">
-                            <FiX /> Refuser
-                          </button>
-                        </div>
-                      )}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {u.validationStatus === 'PENDING' && (
+                          <>
+                            <button className="btn btn-success btn-sm" onClick={() => handleApprove(u.id)} title="Valider">
+                              <FiCheck /> Valider
+                            </button>
+                            <button className="btn btn-danger btn-sm" onClick={() => handleReject(u.id)} title="Refuser">
+                              <FiX /> Refuser
+                            </button>
+                          </>
+                        )}
+                        <button
+                          className="btn btn-outline btn-sm"
+                          onClick={() => setResetModalUser(u)}
+                          title="Réinitialiser le mot de passe"
+                        >
+                          <FiKey /> MDP
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

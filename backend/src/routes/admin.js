@@ -59,10 +59,13 @@ const {
   updateTeacher,
   resetTeacherPassword,
   deleteTeacher,
+  resetUserPassword,
 } = require('../controllers/adminController');
 const {
   getFamilies,
   getFamilyDetails,
+  adminEnrollForFamily,
+  adminEnrollNewFamily,
 } = require('../controllers/adminFamilyController');
 const {
   exportStudents,
@@ -116,6 +119,7 @@ router.get('/users', authorizePermission(PERMISSIONS.USERS_MANAGE), getAllUsers)
 router.get('/users/pending', authorizePermission(PERMISSIONS.USERS_APPROVE), getPendingUsers);
 router.put('/users/:id/approve', authorizePermission(PERMISSIONS.USERS_APPROVE), approveUser);
 router.put('/users/:id/reject', authorizePermission(PERMISSIONS.USERS_APPROVE), rejectUser);
+router.post('/users/:id/reset-password', authorizePermission(PERMISSIONS.USERS_MANAGE), resetUserPassword);
 
 router.get('/enrollments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollments);
 router.post('/enrollments/export', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), exportEnrollments);
@@ -209,5 +213,7 @@ router.post('/mailing/send', authorizePermission(PERMISSIONS.CLASSES_MANAGE), up
 // Familles
 router.get('/families', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilies);
 router.get('/families/:id', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilyDetails);
+router.post('/families/enroll-new', authorizePermission(PERMISSIONS.CLASSES_MANAGE), adminEnrollNewFamily);
+router.post('/families/:id/enroll', authorizePermission(PERMISSIONS.CLASSES_MANAGE), adminEnrollForFamily);
 
 module.exports = router;

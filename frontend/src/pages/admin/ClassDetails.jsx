@@ -153,8 +153,28 @@ export default function AdminClassDetails() {
         <h3 style={{ marginBottom: 12 }}>Informations générales</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
           <InfoItem label="Année" value={classData.schoolYear?.label || '-'} />
-          <InfoItem label="Salle" value={classData.roomRef?.name || classData.room || '-'} />
-          <InfoItem label="Créneau" value={`${classData.dayOfWeek} ${classData.startTime}-${classData.endTime}`} />
+          <InfoItem label="Salle" value={
+            (() => {
+              const slots = classData.classTimeSlots?.map((cts) => cts.timeSlot) || [];
+              const rooms = [...new Set(slots.map((s) => s.room?.name).filter(Boolean))];
+              return rooms.length > 0 ? rooms.join(', ') : (classData.roomRef?.name || classData.room || '-');
+            })()
+          } />
+          <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: 10 }}>
+            <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 4 }}>Créneaux</div>
+            {(() => {
+              const slots = classData.classTimeSlots?.map((cts) => cts.timeSlot) || [];
+              if (slots.length === 0) {
+                return <div style={{ fontWeight: 700 }}>{classData.dayOfWeek} {classData.startTime}-{classData.endTime}</div>;
+              }
+              return slots.map((s, i) => (
+                <div key={i} style={{ fontWeight: 700, lineHeight: '1.6' }}>
+                  {s.dayOfWeek} {s.startTime}-{s.endTime}
+                  {s.room?.name ? <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}> · {s.room.name}</span> : null}
+                </div>
+              ));
+            })()}
+          </div>
           <InfoItem label="Professeur" value={teacherName} />
           <InfoItem label="Effectif" value={`${classData.enrolledCount}/${classData.capacity} ${classData.fillIndicator?.label || ''}`} />
           <InfoItem label="Statut" value={classStatusLabel} />

@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcryptjs');
 const { createActivityLog } = require('../services/activityLogService');
 
 const prisma = new PrismaClient();
@@ -375,6 +376,118 @@ async function deleteFamilyStudent(req, res) {
   }
 }
 
+const { completeExistingFamilyRegistration } = require('./familyWizardController');
+
+async function adminEnrollForFamily(req, res) {
+  const { id: familyId } = req.params;
+  try {
+    const family = await prisma.family.findUnique({
+      where: { id: familyId },
+      include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } },
+    });
+    if (!family) return res.status(404).json({ error: 'Famille introuvable' });
+
+    // Proxy req.user so completeExistingFamilyRegistration finds the family by userId
+    // Preserve firstName/lastName so the paymentTransaction payerName is set correctly
+    const proxyReq = Object.create(req);
+    proxyReq.user = {
+      ...req.user,
+      id: family.userId,
+      firstName: family.user?.firstName || req.user.firstName || '',
+      lastName: family.user?.lastName || req.user.lastName || '',
+      email: family.user?.email || req.user.email || '',
+    };
+
+    return await completeExistingFamilyRegistration(proxyReq, res);
+  } catch (error) {
+    console.error('Erreur adminEnrollForFamily:', error);
+    // Erreurs de validation métier → 400, erreurs serveur → 500
+    const isValidationError = error.message && (
+      error.message.includes('Fiche sanitaire') ||
+      error.message.includes('Adresse') ||
+      error.message.includes('Ajoutez au moins') ||
+      error.message.includes('Engagement incomplet')
+    );
+    return res.status(isValidationError ? 400 : 500).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function adminEnrollNewFamily(req, res) {
+  const { email, address } = req.body;
+
+  if (!email || !address?.familyName || !address?.addressLine1 || !address?.postalCode || !address?.city || !address?.phonePrimary) {
+    return res.status(400).json({ error: 'Email, nom famille, adresse et téléphone sont requis' });
+  }
+
+  try {
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ error: 'Un compte avec cet email existe déjà' });
+    }
+
+    // Mot de passe aléatoire — la famille pourra le réinitialiser
+    const tempPassword = Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 12);
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email,
+          passwordHash: hashedPassword,
+          firstName: address.familyName,
+          lastName: '',
+          role: 'FAMILLE',
+          validationStatus: 'APPROVED',
+          emailVerified: true,
+        },
+      });
+
+      const family = await tx.family.create({
+        data: {
+          userId: user.id,
+          familyName: address.familyName,
+          addressLine1: address.addressLine1,
+          addressLine2: address.addressLine2 || null,
+          postalCode: address.postalCode,
+          city: address.city,
+          country: address.country || 'France',
+          phonePrimary: address.phonePrimary,
+          phoneSecondary: address.phoneSecondary || null,
+        },
+      });
+
+      return { user, family };
+    });
+
+    await createActivityLog({
+      userId: req.user?.id,
+      action: 'ADMIN_NEW_FAMILY_ENROLLED',
+      entityType: 'Family',
+      entityId: result.family.id,
+      details: { email, familyName: address.familyName },
+    });
+
+    const proxyReq = Object.create(req);
+    proxyReq.user = {
+      ...req.user,
+      id: result.user.id,
+      firstName: address.familyName,
+      lastName: '',
+      email,
+    };
+    return await completeExistingFamilyRegistration(proxyReq, res);
+  } catch (error) {
+    console.error('Erreur adminEnrollNewFamily:', error);
+    const isValidationError = error.message && (
+      error.message.includes('Fiche sanitaire') ||
+      error.message.includes('Adresse') ||
+      error.message.includes('Ajoutez au moins') ||
+      error.message.includes('Engagement incomplet')
+    );
+    return res.status(isValidationError ? 400 : 500).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   getFamilies,
   getFamilyDetails,
@@ -384,4 +497,6 @@ module.exports = {
   createFamilyStudent,
   updateFamilyStudent,
   deleteFamilyStudent,
+  adminEnrollForFamily,
+  adminEnrollNewFamily,
 };
