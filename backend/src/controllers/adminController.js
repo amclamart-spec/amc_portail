@@ -432,6 +432,24 @@ function computePaymentFilterCategory(pmts) {
   return null;
 }
 
+// Mapping rôle → mot-clé pôle (recherche insensible à la casse dans le nom du pôle)
+const ROLE_POLE_KEYWORD = {
+  RESPONSABLE_POLE_CORAN:      'coran',
+  RESPONSABLE_POLE_ARABE:      'arab',
+  RESPONSABLE_POLE_SOUTIEN_SCO: 'soutien',
+  RESPONSABLE_POLE_SCIENCE_IS:  'science',
+};
+
+async function getScopedPoleId(role) {
+  const keyword = ROLE_POLE_KEYWORD[role];
+  if (!keyword) return null;
+  const pole = await prisma.pole.findFirst({
+    where: { name: { contains: keyword, mode: 'insensitive' } },
+    select: { id: true },
+  });
+  return pole?.id || null;
+}
+
 /**
  * GET /api/admin/enrollments
  */
@@ -468,9 +486,13 @@ async function getEnrollments(req, res) {
       where.levelValidated = false;
     }
 
+    // Forcer le filtre pôle pour les responsables de pôle
+    const scopedPoleId = await getScopedPoleId(req.user?.role);
+    const effectivePoleId = scopedPoleId || poleId;
+
     const classWhere = {};
     if (classId) classWhere.id = classId;
-    if (poleId) classWhere.level = { poleId };
+    if (effectivePoleId) classWhere.level = { poleId: effectivePoleId };
     if (req.query.provisional === 'true') {
       classWhere.OR = getProvisionalClassFilter().OR;
     }
@@ -1905,7 +1927,10 @@ async function createSchoolYear(req, res) {
  */
 async function getPoles(req, res) {
   try {
+    const scopedPoleId = await getScopedPoleId(req.user?.role);
+    const where = scopedPoleId ? { id: scopedPoleId } : {};
     const poles = await prisma.pole.findMany({
+      where,
       include: { levels: { orderBy: { sortOrder: 'asc' } }, _count: { select: { classes: true, levels: true } } },
       orderBy: { sortOrder: 'asc' },
     });
@@ -1971,9 +1996,10 @@ async function deletePole(req, res) {
  */
 async function getLevels(req, res) {
   try {
-    const { poleId } = req.query;
+    const scopedPoleId = await getScopedPoleId(req.user?.role);
+    const effectivePoleId = scopedPoleId || req.query.poleId;
     const levels = await prisma.level.findMany({
-      where: poleId ? { poleId } : {},
+      where: effectivePoleId ? { poleId: effectivePoleId } : {},
       include: { pole: true, _count: { select: { classes: true } } },
       orderBy: [{ pole: { sortOrder: 'asc' } }, { sortOrder: 'asc' }],
     });
@@ -2297,10 +2323,12 @@ async function deleteTimeSlot(req, res) {
  */
 async function getClasses(req, res) {
   try {
-    const { schoolYearId, poleId, levelId } = req.query;
+    const { schoolYearId, levelId } = req.query;
+    const scopedPoleId = await getScopedPoleId(req.user?.role);
+    const effectivePoleId = scopedPoleId || req.query.poleId;
     const where = {};
     if (schoolYearId) where.schoolYearId = schoolYearId;
-    if (poleId) where.poleId = poleId;
+    if (effectivePoleId) where.poleId = effectivePoleId;
     if (levelId) where.levelId = levelId;
 
     const classes = await prisma.class.findMany({
@@ -2937,7 +2965,13 @@ async function sendMessageToClassFamilies(req, res) {
  */
 async function getTeachers(req, res) {
   try {
+    const scopedPoleId = await getScopedPoleId(req.user?.role);
+    const where = scopedPoleId
+      ? { classes: { some: { poleId: scopedPoleId } } }
+      : {};
+
     const teachers = await prisma.teacher.findMany({
+      where,
       include: {
         user: { select: { id: true, validationStatus: true, emailVerified: true, createdAt: true } },
         _count: { select: { classes: true } },

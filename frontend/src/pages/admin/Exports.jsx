@@ -1,6 +1,8 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
+import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
 
 const STUDENT_COLUMNS = [
   { key: 'name', label: 'Nom élève' },
@@ -22,6 +24,8 @@ function downloadBlob(blob, filename) {
 }
 
 export default function AdminExports() {
+  const { user } = useAuth();
+  const canViewAccounting = !RESPONSABLE_POLE_ROLES.includes(user?.role);
   const [activeTab, setActiveTab] = useState('students');
   const [schoolYears, setSchoolYears] = useState([]);
   const [poles, setPoles] = useState([]);
@@ -220,7 +224,9 @@ export default function AdminExports() {
         <button className={`btn ${activeTab === 'students' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('students')}>Listes élèves</button>
         <button className={`btn ${activeTab === 'attendance' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('attendance')}>Feuilles présence</button>
         <button className={`btn ${activeTab === 'planning' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('planning')}>Planning</button>
-        <button className={`btn ${activeTab === 'accounting' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('accounting')}>Comptabilité</button>
+        {canViewAccounting && (
+          <button className={`btn ${activeTab === 'accounting' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('accounting')}>Comptabilité</button>
+        )}
       </div>
 
       {activeTab === 'students' && (
