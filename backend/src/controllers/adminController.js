@@ -204,6 +204,8 @@ async function getAllUsers(req, res) {
           emailVerified: true,
           createdAt: true,
           lastLogin: true,
+          lockedUntil: true,
+          failedLoginAttempts: true,
         },
         orderBy: { createdAt: 'desc' },
         skip: (parseInt(page, 10) - 1) * parseInt(limit, 10),
@@ -404,6 +406,32 @@ async function updateRegistrationBlockStatus(req, res) {
   }
 }
 
+// Statut d'affichage : statut le plus significatif parmi tous les paiements liés à une inscription
+function computePaymentDisplayStatus(pmts) {
+  if (!pmts || pmts.length === 0) return null;
+  const s = pmts.map(p => String(p.status || '').toUpperCase());
+  if (s.some(x => x === 'COMPLETED')) return 'COMPLETED';
+  if (s.some(x => x === 'PARTIAL'))   return 'PARTIAL';
+  if (s.some(x => x === 'OVERDUE'))   return 'OVERDUE';
+  if (s.some(x => x === 'PENDING'))   return 'PENDING';
+  if (s.every(x => x === 'CANCELLED')) return 'CANCELLED';
+  if (s.some(x => x === 'FAILED'))    return 'FAILED';
+  return String(pmts[0].status || '');
+}
+
+// Catégorie de filtre (3 valeurs UI)
+// PENDING  : aucun paiement COMPLETED + au moins un PENDING ou PARTIAL (en cours)
+// COMPLETED: au moins un paiement COMPLETED
+// CANCELLED: tous les paiements sont CANCELLED
+function computePaymentFilterCategory(pmts) {
+  if (!pmts || pmts.length === 0) return null;
+  const s = pmts.map(p => String(p.status || '').toUpperCase());
+  if (s.some(x => x === 'COMPLETED')) return 'COMPLETED';
+  if (s.every(x => x === 'CANCELLED')) return 'CANCELLED';
+  if (s.some(x => x === 'PENDING' || x === 'PARTIAL' || x === 'OVERDUE')) return 'PENDING';
+  return null;
+}
+
 /**
  * GET /api/admin/enrollments
  */
@@ -478,8 +506,7 @@ async function getEnrollments(req, res) {
       orderBy: { createdAt: 'desc' },
     });
 
-    // add provisional flag when enrollment.class indicates provisional assignment
-    // Ajout du statut de paiement principal pour chaque inscription
+    // Récupère TOUS les paiements liés aux inscriptions (plusieurs paiements possibles par inscription)
     const enrollmentIds = enrollments.map(e => e.id);
     const paymentsByEnrollment = {};
     if (enrollmentIds.length > 0) {
@@ -492,15 +519,19 @@ async function getEnrollments(req, res) {
         select: { id: true, status: true, metadata: true },
       });
       for (const eid of enrollmentIds) {
-        const payment = payments.find(p => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(eid));
-        paymentsByEnrollment[eid] = payment ? payment.status : null;
+        paymentsByEnrollment[eid] = payments.filter(
+          p => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(eid),
+        );
       }
     }
+
     const enhanced = enrollments.map((e) => {
       const isProvisional = isProvisionalClass(e.class);
       const isWaitlist = e.status === 'PENDING' && e.isWaitlist === true;
-      const paymentStatus = paymentsByEnrollment[e.id] || null;
-      return { ...e, isProvisional, isWaitlist, waitlistOrder: e.waitlistOrder || null, paymentStatus };
+      const pmts = paymentsByEnrollment[e.id] || [];
+      const paymentStatus = computePaymentDisplayStatus(pmts);
+      const paymentFilterCategory = computePaymentFilterCategory(pmts);
+      return { ...e, isProvisional, isWaitlist, waitlistOrder: e.waitlistOrder || null, paymentStatus, paymentFilterCategory };
     });
 
     const waitlistWithoutOrderClassIds = [...new Set(enhanced.filter((e) => e.isWaitlist && !e.waitlistOrder && e.classId).map((e) => e.classId))];
@@ -535,7 +566,7 @@ async function getEnrollments(req, res) {
 
     const normalizedPaymentStatus = String(paymentStatus || '').trim().toUpperCase();
     const filteredEnhanced = normalizedPaymentStatus
-      ? enhanced.filter((enrollment) => String(enrollment.paymentStatus || '').toUpperCase() === normalizedPaymentStatus)
+      ? enhanced.filter((enrollment) => enrollment.paymentFilterCategory === normalizedPaymentStatus)
       : enhanced;
 
     const totalFiltered = filteredEnhanced.length;
@@ -3105,6 +3136,24 @@ async function resetTeacherPassword(req, res) {
   }
 }
 
+async function unlockUser(req, res) {
+  try {
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+    await prisma.user.update({
+      where: { id },
+      data: { lockedUntil: null, failedLoginAttempts: 0 },
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Erreur unlockUser:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 async function resetUserPassword(req, res) {
   try {
     const { id } = req.params;
@@ -3203,6 +3252,7 @@ module.exports = {
   resetTeacherPassword,
   deleteTeacher,
   resetUserPassword,
+  unlockUser,
   getRegistrationBlockStatus,
   updateRegistrationBlockStatus,
   getStudentAcademicRecord,

@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { PrismaClient } = require('@prisma/client');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { sendVerificationEmail, sendResetPasswordEmail } = require('../services/emailService');
+const { sendPasswordResetSms } = require('../services/smsService');
 const config = require('../config');
 
 const prisma = new PrismaClient();
@@ -138,7 +139,9 @@ async function login(req, res) {
       });
     }
 
-    if (user.lockedUntil && user.lockedUntil > new Date()) {
+    const isAdmin = user.role === 'ADMIN' || user.role === 'SUPER_ADMIN';
+
+    if (!isAdmin && user.lockedUntil && user.lockedUntil > new Date()) {
       return res.status(423).json({
         error: 'Compte verrouillé suite à trop de tentatives. Réessayez plus tard.',
         lockedUntil: user.lockedUntil,
@@ -147,12 +150,14 @@ async function login(req, res) {
 
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
-      const attempts = user.failedLoginAttempts + 1;
-      const updateData = { failedLoginAttempts: attempts };
-      if (attempts >= 5) {
-        updateData.lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+      if (!isAdmin) {
+        const attempts = user.failedLoginAttempts + 1;
+        const updateData = { failedLoginAttempts: attempts };
+        if (attempts >= 5) {
+          updateData.lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+        }
+        await prisma.user.update({ where: { id: user.id }, data: updateData });
       }
-      await prisma.user.update({ where: { id: user.id }, data: updateData });
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
 
@@ -380,7 +385,22 @@ async function forgotPassword(req, res) {
       },
     });
 
-    await sendResetPasswordEmail(user, token);
+    const resetUrl = `${config.frontendUrl}/reset-password?token=${token}`;
+    try {
+      await sendResetPasswordEmail(user, token);
+    } catch (emailErr) {
+      console.error('[forgotPassword] Echec envoi email, tentative SMS :', emailErr?.message || emailErr);
+      try {
+        const family = await prisma.family.findUnique({ where: { userId: user.id } });
+        if (family?.phonePrimary) {
+          await sendPasswordResetSms(family.phonePrimary, resetUrl);
+        } else {
+          console.warn('[forgotPassword] Aucun numero de telephone trouve pour cet utilisateur');
+        }
+      } catch (smsErr) {
+        console.error('[forgotPassword] Echec envoi SMS :', smsErr?.message || smsErr);
+      }
+    }
 
     return res.json({ message: 'Si cet email existe dans notre système, un lien de réinitialisation a été envoyé.' });
   } catch (error) {
@@ -470,6 +490,44 @@ async function changePassword(req, res) {
 }
 
 /**
+ * GET /api/auth/profile
+ */
+async function getProfile(req, res) {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, email: true, firstName: true, lastName: true, phone: true, role: true, emailVerified: true, createdAt: true },
+    });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    res.json({ user });
+  } catch (error) {
+    console.error('Erreur getProfile:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/auth/profile
+ */
+async function updateProfile(req, res) {
+  try {
+    const { firstName, lastName, phone } = req.body;
+    if (!firstName || !lastName) {
+      return res.status(400).json({ error: 'Prénom et nom sont requis' });
+    }
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { firstName: firstName.trim(), lastName: lastName.trim(), phone: phone?.trim() || null },
+      select: { id: true, email: true, firstName: true, lastName: true, phone: true, role: true },
+    });
+    res.json({ user: updated });
+  } catch (error) {
+    console.error('Erreur updateProfile:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
  * POST /api/auth/logout
  */
 async function logout(req, res) {
@@ -495,5 +553,7 @@ module.exports = {
   forgotPassword,
   resetPassword,
   changePassword,
+  getProfile,
+  updateProfile,
   logout,
 };

@@ -58,7 +58,7 @@ function getTransporter() {
 // Provider : Brevo (ex-Sendinblue) - API transactionnelle v3
 // ---------------------------------------------------------------------------
 
-async function sendWithBrevo({ to, subject, html, text, attachments }) {
+async function sendWithBrevo({ to, subject, html, text, attachments, bcc }) {
   const { apiKey } = config.brevoEmail;
 
   if (!apiKey) {
@@ -86,6 +86,11 @@ async function sendWithBrevo({ to, subject, html, text, attachments }) {
     brevoBody.htmlContent = html;
   } else if (text) {
     brevoBody.textContent = text;
+  }
+
+  // CCI (BCC) — chaque destinataire ne voit pas les autres
+  if (bcc && bcc.length > 0) {
+    brevoBody.bcc = bcc.map((email) => ({ email }));
   }
 
   // Pieces jointes (Brevo accepte base64)
@@ -165,7 +170,7 @@ async function sendWithAbacus({ to, subject, html, text, attachments }) {
 // Provider : SMTP (nodemailer)
 // ---------------------------------------------------------------------------
 
-async function sendWithSmtp({ to, subject, html, text, attachments }) {
+async function sendWithSmtp({ to, subject, html, text, attachments, bcc }) {
   const recipientEmail = normalizeEmail(to);
   if (!recipientEmail) {
     throw new Error(`Adresse email destinataire invalide : "${to}"`);
@@ -182,6 +187,10 @@ async function sendWithSmtp({ to, subject, html, text, attachments }) {
       'Content-Type': 'text/html; charset=UTF-8',
     },
   };
+
+  if (bcc && bcc.length > 0) {
+    mailOptions.bcc = bcc.join(',');
+  }
 
   if (attachments && attachments.length > 0) {
     mailOptions.attachments = attachments;

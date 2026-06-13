@@ -60,6 +60,7 @@ const {
   resetTeacherPassword,
   deleteTeacher,
   resetUserPassword,
+  unlockUser,
 } = require('../controllers/adminController');
 const {
   getFamilies,
@@ -81,6 +82,8 @@ const {
   getMailingStructure,
   sendMailing,
   getMailingPreview,
+  getMailingRecipientsByCriteria,
+  sendMailingBcc,
 } = require('../controllers/adminMailController');
 const { generatePaymentReceiptPDF } = require('../controllers/paymentController');
 
@@ -120,6 +123,7 @@ router.get('/users/pending', authorizePermission(PERMISSIONS.USERS_APPROVE), get
 router.put('/users/:id/approve', authorizePermission(PERMISSIONS.USERS_APPROVE), approveUser);
 router.put('/users/:id/reject', authorizePermission(PERMISSIONS.USERS_APPROVE), rejectUser);
 router.post('/users/:id/reset-password', authorizePermission(PERMISSIONS.USERS_MANAGE), resetUserPassword);
+router.post('/users/:id/unlock', authorizePermission(PERMISSIONS.USERS_MANAGE), unlockUser);
 
 router.get('/enrollments', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollments);
 router.post('/enrollments/export', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), exportEnrollments);
@@ -209,6 +213,8 @@ router.get('/teachers', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getTeac
 router.get('/mailing/structure', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingStructure);
 router.post('/mailing/preview', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingPreview);
 router.post('/mailing/send', authorizePermission(PERMISSIONS.CLASSES_MANAGE), upload.single('attachment'), sendMailing);
+router.post('/mailing/recipients-by-criteria', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingRecipientsByCriteria);
+router.post('/mailing/send-bcc', authorizePermission(PERMISSIONS.CLASSES_MANAGE), upload.single('attachment'), sendMailingBcc);
 
 // Familles
 router.get('/families', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilies);

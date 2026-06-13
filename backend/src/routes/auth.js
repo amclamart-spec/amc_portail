@@ -11,6 +11,8 @@ const {
   resetPassword,
   getMe,
   changePassword,
+  getProfile,
+  updateProfile,
   logout,
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
@@ -80,6 +82,8 @@ router.post('/forgot-password', forgotPasswordValidation, validate, forgotPasswo
 router.post('/reset-password', resetPasswordValidation, validate, resetPassword);
 router.get('/verify-email/:token', verifyEmail);
 router.get('/me', authenticate, getMe);
+router.get('/profile', authenticate, getProfile);
+router.put('/profile', authenticate, updateProfile);
 router.post('/change-password', authenticate, changePasswordValidation, validate, changePassword);
 router.post('/logout', authenticate, logout);
 

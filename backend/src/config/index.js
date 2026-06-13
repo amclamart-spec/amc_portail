@@ -29,6 +29,10 @@ module.exports = {
     apiKey: process.env.BREVO_API_KEY,
   },
 
+  sms: {
+    sender: process.env.BREVO_SMS_SENDER || 'AMC',
+  },
+
   smtp: {
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587', 10),
