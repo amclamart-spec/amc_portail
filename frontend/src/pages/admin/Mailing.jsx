@@ -1,29 +1,19 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
-import { FiMail, FiFileText, FiUsers, FiPaperclip, FiX } from 'react-icons/fi';
+import { FiMail, FiFileText, FiUsers, FiPaperclip, FiX, FiSearch } from 'react-icons/fi';
 
-/**
- * Convertit le texte brut en HTML lisible
- * Gère les sauts de ligne, espaces multiples, et crée des paragraphes
- */
 function plainTextToHtml(plainText) {
   if (!plainText) return '';
-
-  // Échapper les caractères HTML spéciaux
   const escaped = plainText
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-
-  // Convertir les double sauts de ligne en paragraphes
   const paragraphs = escaped.split(/\n\n+/);
-
   return paragraphs
     .map((para) => {
-      // Convertir les simple sauts de ligne en <br>
       const lines = para.split('\n').map((line) => line.trim()).filter((line) => line);
       return `<p>${lines.join('<br>')}</p>`;
     })
@@ -31,166 +21,177 @@ function plainTextToHtml(plainText) {
 }
 
 export default function AdminMailing() {
-  const [form, setForm] = useState({
-    recipientType: 'ALL_FAMILIES',
-    poleId: '',
-    levelId: '',
-    classId: '',
-    subject: '',
-    content: '',
-  });
+  // --- Critères de ciblage ---
+  const [criteria, setCriteria] = useState({ population: '', objet: '', statut: '' });
+  const [criteriaLoading, setCriteriaLoading] = useState(false);
 
+  // --- Modale destinataires ---
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalRecipients, setModalRecipients] = useState([]);
+  const [checkedEmails, setCheckedEmails] = useState(new Set());
+
+  // --- Champ BCC ---
+  const [bccEmails, setBccEmails] = useState('');
+
+  // --- Formulaire mail ---
+  const [form, setForm] = useState({ subject: '', content: '' });
   const [attachment, setAttachment] = useState(null);
-  const [structure, setStructure] = useState([]);
-  const [preview, setPreview] = useState(null);
-  const [showPreview, setShowPreview] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
-  // Charger la structure des pôles/niveaux/classes
+  // --- Ancien ciblage par type (conservé) ---
+  const [recipientType, setRecipientType] = useState('ALL_FAMILIES');
+  const [poleId, setPoleId] = useState('');
+  const [levelId, setLevelId] = useState('');
+  const [classId, setClassId] = useState('');
+  const [structure, setStructure] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [preview, setPreview] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
+
+  // Mode d'utilisation : 'classic' (type destinataire) ou 'criteria' (ciblage par critères)
+  const [mode, setMode] = useState('criteria');
+
   useEffect(() => {
-    async function loadStructure() {
-      try {
-        const { data } = await api.get('/admin/mailing/structure');
-        setStructure(data.structure || []);
-      } catch (error) {
-        toast.error('Impossible de charger la structure');
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadStructure();
+    api.get('/admin/mailing/structure')
+      .then(({ data }) => setStructure(data.structure || []))
+      .catch(() => toast.error('Impossible de charger la structure'))
+      .finally(() => setLoading(false));
   }, []);
 
-  // Réinitialiser les sélections si le type de destinataire change
-  const handleRecipientTypeChange = (newType) => {
-    setForm((prev) => ({
-      ...prev,
-      recipientType: newType,
-      poleId: '',
-      levelId: '',
-      classId: '',
-    }));
-    setPreview(null);
-  };
-
-  // Récupérer un aperçu des destinataires
-  async function loadPreview() {
-    if (!form.subject || !form.content) {
-      toast.error('Veuillez remplir le sujet et le contenu');
+  // --- Recherche destinataires par critères ---
+  async function searchByCriteria() {
+    if (!criteria.population) {
+      toast.error('Veuillez sélectionner une population');
       return;
     }
-
+    if (criteria.population !== 'PROFESSEURS' && (!criteria.objet || !criteria.statut)) {
+      toast.error('Veuillez sélectionner l\'objet et le statut');
+      return;
+    }
+    setCriteriaLoading(true);
     try {
-      const htmlContent = plainTextToHtml(form.content);
-      const { data } = await api.post('/admin/mailing/preview', {
-        recipientType: form.recipientType,
-        poleId: form.poleId || undefined,
-        levelId: form.levelId || undefined,
-        classId: form.classId || undefined,
-        subject: form.subject,
-        content: htmlContent,
-      });
-
-      setPreview(data.preview);
-      setShowPreview(true);
-    } catch (error) {
-      toast.error(error?.response?.data?.error || 'Erreur chargement aperçu');
+      const { data } = await api.post('/admin/mailing/recipients-by-criteria', criteria);
+      const recipients = data.recipients || [];
+      setModalRecipients(recipients);
+      setCheckedEmails(new Set(recipients.map((r) => r.email)));
+      setModalOpen(true);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Erreur lors de la recherche');
+    } finally {
+      setCriteriaLoading(false);
     }
   }
 
-  // Gérer la sélection du fichier
+  function validateRecipients() {
+    const emails = modalRecipients
+      .filter((r) => checkedEmails.has(r.email))
+      .map((r) => r.email)
+      .join('; ');
+    setBccEmails(emails);
+    setModalOpen(false);
+    toast.success(`${checkedEmails.size} destinataire(s) ajouté(s)`);
+  }
+
+  function toggleEmail(email) {
+    setCheckedEmails((prev) => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email);
+      else next.add(email);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (checkedEmails.size === modalRecipients.length) {
+      setCheckedEmails(new Set());
+    } else {
+      setCheckedEmails(new Set(modalRecipients.map((r) => r.email)));
+    }
+  }
+
+  // --- Pièce jointe ---
   function handleAttachmentChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Vérifier la taille (max 5MB)
-    const maxSize = 5 * 1024 * 1024;
-    if (file.size > maxSize) {
-      toast.error('La pièce jointe ne doit pas dépasser 5 MB');
-      return;
-    }
-
-    // Vérifier les formats autorisés
-    const allowedTypes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'text/plain',
-      'image/jpeg',
-      'image/png',
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      toast.error('Format non autorisé. Acceptés: PDF, Word, Excel, texte, images');
-      return;
-    }
-
+    if (file.size > 5 * 1024 * 1024) { toast.error('La pièce jointe ne doit pas dépasser 5 MB'); return; }
+    const allowed = ['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','text/plain','image/jpeg','image/png'];
+    if (!allowed.includes(file.type)) { toast.error('Format non autorisé'); return; }
     setAttachment(file);
   }
 
-  function removeAttachment() {
-    setAttachment(null);
+  // --- Aperçu (mode classic) ---
+  async function loadPreview() {
+    if (!form.subject || !form.content) { toast.error('Veuillez remplir le sujet et le contenu'); return; }
+    try {
+      const { data } = await api.post('/admin/mailing/preview', {
+        recipientType,
+        poleId: poleId || undefined,
+        levelId: levelId || undefined,
+        classId: classId || undefined,
+        subject: form.subject,
+        content: plainTextToHtml(form.content),
+      });
+      setPreview(data.preview);
+      setShowPreview(true);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Erreur chargement aperçu');
+    }
   }
 
-  // Envoyer le mailing
-  async function submitMailing() {
-    if (!form.subject || !form.content) {
-      toast.error('Sujet et contenu sont requis');
-      return;
-    }
-
-    if (!preview) {
-      toast.error('Veuillez d\'abord générer un aperçu');
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Confirmer l'envoi du mail à ${preview.recipientCount} destinataire(s) ?\n\n${preview.recipientInfo}`
-    );
+  // --- Envoi BCC (mode critères) ---
+  async function submitBcc() {
+    if (!form.subject || !form.content) { toast.error('Sujet et contenu sont requis'); return; }
+    const emails = bccEmails.split(/[;,\n]+/).map((e) => e.trim()).filter(Boolean);
+    if (emails.length === 0) { toast.error('Aucun destinataire CCI renseigné'); return; }
+    const confirmed = window.confirm(`Confirmer l'envoi du mail à ${emails.length} destinataire(s) ?`);
     if (!confirmed) return;
-
     setSending(true);
     try {
       const formData = new FormData();
-      formData.append('recipientType', form.recipientType);
-      if (form.poleId) formData.append('poleId', form.poleId);
-      if (form.levelId) formData.append('levelId', form.levelId);
-      if (form.classId) formData.append('classId', form.classId);
+      formData.append('bccEmails', JSON.stringify(emails));
       formData.append('subject', form.subject);
       formData.append('content', plainTextToHtml(form.content));
+      if (attachment) formData.append('attachment', attachment);
+      const { data } = await api.post('/admin/mailing/send-bcc', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const ok = data.successCount ?? emails.length;
+      const ko = data.failedCount ?? 0;
+      toast.success(ko > 0 ? `Mail envoyé : ${ok} succès, ${ko} échec(s)` : `Mail envoyé à ${ok} destinataire(s) !`);
+      setForm({ subject: '', content: '' });
+      setBccEmails('');
+      setAttachment(null);
+      setCriteria({ population: '', objet: '', statut: '' });
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Erreur envoi mail');
+    } finally {
+      setSending(false);
+    }
+  }
 
-      if (attachment) {
-        formData.append('attachment', attachment);
-      }
-
-      const { data } = await api.post('/admin/mailing/send', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
+  // --- Envoi classic ---
+  async function submitMailing() {
+    if (!form.subject || !form.content) { toast.error('Sujet et contenu sont requis'); return; }
+    if (!preview) { toast.error('Veuillez d\'abord générer un aperçu'); return; }
+    const confirmed = window.confirm(`Confirmer l'envoi du mail à ${preview.recipientCount} destinataire(s) ?\n\n${preview.recipientInfo}`);
+    if (!confirmed) return;
+    setSending(true);
+    try {
+      const formData = new FormData();
+      formData.append('recipientType', recipientType);
+      if (poleId) formData.append('poleId', poleId);
+      if (levelId) formData.append('levelId', levelId);
+      if (classId) formData.append('classId', classId);
+      formData.append('subject', form.subject);
+      formData.append('content', plainTextToHtml(form.content));
+      if (attachment) formData.append('attachment', attachment);
+      const { data } = await api.post('/admin/mailing/send', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       const result = data.result || {};
-      toast.success(
-        `Mail envoyé!\n${result.successCount} succès / ${result.failedCount} échoués`
-      );
-
-      // Réinitialiser le formulaire
-      setForm({
-        recipientType: 'ALL_FAMILIES',
-        poleId: '',
-        levelId: '',
-        classId: '',
-        subject: '',
-        content: '',
-      });
+      toast.success(`Mail envoyé ! ${result.successCount} succès / ${result.failedCount} échoués`);
+      setForm({ subject: '', content: '' });
       setAttachment(null);
       setPreview(null);
       setShowPreview(false);
-    } catch (error) {
-      toast.error(error?.response?.data?.error || 'Erreur envoi mail');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Erreur envoi mail');
     } finally {
       setSending(false);
     }
@@ -198,8 +199,8 @@ export default function AdminMailing() {
 
   if (loading) return <p>Chargement...</p>;
 
-  const selectedPole = structure.find((p) => p.id === form.poleId);
-  const selectedLevel = selectedPole?.levels.find((l) => l.id === form.levelId);
+  const selectedPole = structure.find((p) => p.id === poleId);
+  const selectedLevel = selectedPole?.levels.find((l) => l.id === levelId);
 
   return (
     <div>
@@ -208,115 +209,186 @@ export default function AdminMailing() {
         Envoi de mails en masse
       </h2>
 
-      <div className="card mb-4">
-        <div className="card-header">
-          <h3>Configuration des destinataires</h3>
+      {/* Sélecteur de mode */}
+      <div className="card mb-4" style={{ padding: '12px 16px' }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            type="button"
+            className={`btn ${mode === 'criteria' ? 'btn-primary' : 'btn-outline'}`}
+            onClick={() => setMode('criteria')}
+          >
+            Ciblage par critères
+          </button>
+          <button
+            type="button"
+            className={`btn ${mode === 'classic' ? 'btn-primary' : 'btn-outline'}`}
+            onClick={() => setMode('classic')}
+          >
+            Ciblage par type
+          </button>
         </div>
+      </div>
 
-        <div className="form-group">
-          <label>Type de destinataires</label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {[
-              { value: 'ALL_FAMILIES', label: 'Toutes les familles inscrites' },
-              { value: 'TEACHERS', label: 'Tous les professeurs' },
-              { value: 'POLE_FAMILIES', label: 'Familles d\'un pôle' },
-              { value: 'LEVEL_FAMILIES', label: 'Familles d\'un niveau' },
-              { value: 'CLASS_FAMILIES', label: 'Familles d\'une classe' },
-            ].map((option) => (
-              <label key={option.value} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input
-                  type="radio"
-                  name="recipientType"
-                  value={option.value}
-                  checked={form.recipientType === option.value}
-                  onChange={(e) => handleRecipientTypeChange(e.target.value)}
-                />
-                {option.label}
-              </label>
-            ))}
+      {/* ===== MODE CRITÈRES ===== */}
+      {mode === 'criteria' && (
+        <div className="card mb-4">
+          <div className="card-header">
+            <h3>
+              <FiUsers style={{ marginRight: 6, display: 'inline' }} />
+              Ciblage par critères
+            </h3>
           </div>
-        </div>
 
-        {(form.recipientType === 'POLE_FAMILIES' ||
-          form.recipientType === 'LEVEL_FAMILIES' ||
-          form.recipientType === 'CLASS_FAMILIES') && (
-          <>
-            <div className="form-group">
-              <label>Sélectionner un Pôle</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>Population</label>
               <select
                 className="form-control"
-                value={form.poleId}
-                onChange={(e) =>
-                  setForm((p) => ({
-                    ...p,
-                    poleId: e.target.value,
-                    levelId: '',
-                    classId: '',
-                  }))
-                }
+                value={criteria.population}
+                onChange={(e) => setCriteria((p) => ({ ...p, population: e.target.value }))}
               >
-                <option value="">-- Choisir un pôle --</option>
-                {structure.map((pole) => (
-                  <option key={pole.id} value={pole.id}>
-                    {pole.name}
-                  </option>
-                ))}
+                <option value="">-- Choisir --</option>
+                <option value="TOUS">Tous</option>
+                <option value="FAMILLES">Familles</option>
+                <option value="PROFESSEURS">Professeurs</option>
               </select>
             </div>
 
-            {(form.recipientType === 'LEVEL_FAMILIES' ||
-              form.recipientType === 'CLASS_FAMILIES') &&
-              form.poleId && (
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>Objet</label>
+              <select
+                className="form-control"
+                value={criteria.objet}
+                onChange={(e) => setCriteria((p) => ({ ...p, objet: e.target.value }))}
+                disabled={!criteria.population || criteria.population === 'PROFESSEURS'}
+              >
+                <option value="">-- Choisir --</option>
+                <option value="INSCRIPTION">Inscription</option>
+                <option value="PAIEMENT">Paiement</option>
+              </select>
+            </div>
+
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>Statut</label>
+              <select
+                className="form-control"
+                value={criteria.statut}
+                onChange={(e) => setCriteria((p) => ({ ...p, statut: e.target.value }))}
+                disabled={!criteria.objet || criteria.population === 'PROFESSEURS'}
+              >
+                <option value="">-- Choisir --</option>
+                <option value="EN_ATTENTE">En attente</option>
+                <option value="VALIDE">Validé</option>
+              </select>
+            </div>
+          </div>
+
+          {criteria.population === 'PROFESSEURS' && (
+            <p style={{ marginTop: 12, fontSize: 13, color: '#6B7280' }}>
+              Pour les professeurs, tous les professeurs actifs seront sélectionnés (objet et statut non applicables).
+            </p>
+          )}
+
+          <div style={{ marginTop: 16 }}>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={searchByCriteria}
+              disabled={criteriaLoading || !criteria.population || (criteria.population !== 'PROFESSEURS' && (!criteria.objet || !criteria.statut))}
+            >
+              <FiSearch style={{ marginRight: 6, display: 'inline' }} />
+              {criteriaLoading ? 'Recherche...' : 'Rechercher les destinataires'}
+            </button>
+          </div>
+
+          {/* Champ destinataires */}
+          <div className="form-group" style={{ marginTop: 20 }}>
+            <label style={{ fontWeight: 600 }}>
+              Destinataires&nbsp;
+              <span style={{ fontWeight: 400, fontSize: 13, color: '#6B7280' }}>
+                — Chaque destinataire reçoit son propre email (confidentialité préservée)
+              </span>
+            </label>
+            <textarea
+              rows={5}
+              className="form-control"
+              placeholder="Les adresses email s'ajouteront ici après validation. Vous pouvez aussi les saisir manuellement séparées par ;"
+              value={bccEmails}
+              onChange={(e) => setBccEmails(e.target.value)}
+              style={{ fontFamily: 'monospace', fontSize: 12 }}
+            />
+            {bccEmails && (
+              <small style={{ color: '#374151', marginTop: 4, display: 'block' }}>
+                {bccEmails.split(/[;,\n]+/).filter((e) => e.trim()).length} adresse(s) renseignée(s)
+              </small>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ===== MODE CLASSIC ===== */}
+      {mode === 'classic' && (
+        <div className="card mb-4">
+          <div className="card-header">
+            <h3>Configuration des destinataires</h3>
+          </div>
+          <div className="form-group">
+            <label>Type de destinataires</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              {[
+                { value: 'ALL_FAMILIES', label: 'Toutes les familles inscrites' },
+                { value: 'TEACHERS', label: 'Tous les professeurs' },
+                { value: 'POLE_FAMILIES', label: 'Familles d\'un pôle' },
+                { value: 'LEVEL_FAMILIES', label: 'Familles d\'un niveau' },
+                { value: 'CLASS_FAMILIES', label: 'Familles d\'une classe' },
+              ].map((option) => (
+                <label key={option.value} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="radio"
+                    name="recipientType"
+                    value={option.value}
+                    checked={recipientType === option.value}
+                    onChange={(e) => { setRecipientType(e.target.value); setPoleId(''); setLevelId(''); setClassId(''); setPreview(null); }}
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {['POLE_FAMILIES','LEVEL_FAMILIES','CLASS_FAMILIES'].includes(recipientType) && (
+            <>
+              <div className="form-group">
+                <label>Sélectionner un Pôle</label>
+                <select className="form-control" value={poleId} onChange={(e) => { setPoleId(e.target.value); setLevelId(''); setClassId(''); }}>
+                  <option value="">-- Choisir un pôle --</option>
+                  {structure.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              {['LEVEL_FAMILIES','CLASS_FAMILIES'].includes(recipientType) && poleId && (
                 <div className="form-group">
                   <label>Sélectionner un Niveau</label>
-                  <select
-                    className="form-control"
-                    value={form.levelId}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        levelId: e.target.value,
-                        classId: '',
-                      }))
-                    }
-                  >
+                  <select className="form-control" value={levelId} onChange={(e) => { setLevelId(e.target.value); setClassId(''); }}>
                     <option value="">-- Choisir un niveau --</option>
-                    {selectedPole?.levels.map((level) => (
-                      <option key={level.id} value={level.id}>
-                        {level.name}
-                      </option>
-                    ))}
+                    {selectedPole?.levels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </select>
                 </div>
               )}
-
-            {form.recipientType === 'CLASS_FAMILIES' &&
-              form.levelId && (
+              {recipientType === 'CLASS_FAMILIES' && levelId && (
                 <div className="form-group">
                   <label>Sélectionner une Classe</label>
-                  <select
-                    className="form-control"
-                    value={form.classId}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        classId: e.target.value,
-                      }))
-                    }
-                  >
+                  <select className="form-control" value={classId} onChange={(e) => setClassId(e.target.value)}>
                     <option value="">-- Choisir une classe --</option>
-                    {selectedLevel?.classes.map((cls) => (
-                      <option key={cls.id} value={cls.id}>
-                        {cls.label}
-                      </option>
-                    ))}
+                    {selectedLevel?.classes.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
                   </select>
                 </div>
               )}
-          </>
-        )}
-      </div>
+            </>
+          )}
+        </div>
+      )}
 
+      {/* ===== RÉDACTION ===== */}
       <div className="card mb-4">
         <div className="card-header">
           <h3>Rédaction du mail</h3>
@@ -328,9 +400,7 @@ export default function AdminMailing() {
             className="form-control"
             placeholder="Ex: Informations importantes concernant les inscriptions"
             value={form.subject}
-            onChange={(e) =>
-              setForm((p) => ({ ...p, subject: e.target.value }))
-            }
+            onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
           />
         </div>
 
@@ -339,204 +409,155 @@ export default function AdminMailing() {
           <textarea
             rows={12}
             className="form-control"
-            placeholder="Entrez votre message ici. Les sauts de ligne seront conservés et bien formatés dans le mail."
+            placeholder="Entrez votre message ici."
             value={form.content}
-            onChange={(e) =>
-              setForm((p) => ({ ...p, content: e.target.value }))
-            }
+            onChange={(e) => setForm((p) => ({ ...p, content: e.target.value }))}
             style={{ fontFamily: 'monospace', fontSize: 12 }}
           />
-          <small style={{ color: '#6B7280', marginTop: 8, display: 'block' }}>
-            💡 Conseil: Tapez votre message naturellement. Les espaces et les retours à la ligne seront préservés.
-            Laissez une ligne vide entre les paragraphes pour les séparer.
-          </small>
         </div>
 
         <div className="form-group">
           <label>Pièce jointe (optionnel)</label>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <div style={{ flex: 1 }}>
-              <label
-                style={{
-                  display: 'inline-block',
-                  padding: '12px 16px',
-                  background: '#f0f9ff',
-                  border: '2px dashed #0088CC',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                  fontWeight: 500,
-                  color: '#0088CC',
-                  transition: 'all 0.2s',
-                }}
-              >
-                <FiPaperclip style={{ marginRight: 6, display: 'inline' }} />
-                Sélectionner un fichier
-                <input
-                  type="file"
-                  onChange={handleAttachmentChange}
-                  style={{ display: 'none' }}
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png"
-                />
-              </label>
-            </div>
-
+            <label style={{ display: 'inline-block', padding: '12px 16px', background: '#f0f9ff', border: '2px dashed #0088CC', borderRadius: 8, cursor: 'pointer', fontWeight: 500, color: '#0088CC' }}>
+              <FiPaperclip style={{ marginRight: 6, display: 'inline' }} />
+              Sélectionner un fichier
+              <input type="file" onChange={handleAttachmentChange} style={{ display: 'none' }} accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" />
+            </label>
             {attachment && (
-              <div
-                style={{
-                  flex: 1,
-                  padding: 12,
-                  background: '#ecfdf5',
-                  border: '1px solid #86efac',
-                  borderRadius: 8,
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
+              <div style={{ flex: 1, padding: 12, background: '#ecfdf5', border: '1px solid #86efac', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <p style={{ margin: '0 0 4px', fontWeight: 500, color: '#166534' }}>
-                    ✓ {attachment.name}
-                  </p>
-                  <p style={{ margin: 0, fontSize: 12, color: '#4b5563' }}>
-                    {(attachment.size / 1024).toFixed(1)} KB
-                  </p>
+                  <p style={{ margin: '0 0 4px', fontWeight: 500, color: '#166534' }}>✓ {attachment.name}</p>
+                  <p style={{ margin: 0, fontSize: 12, color: '#4b5563' }}>{(attachment.size / 1024).toFixed(1)} KB</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={removeAttachment}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#dc2626',
-                    cursor: 'pointer',
-                    padding: 4,
-                  }}
-                >
+                <button type="button" onClick={() => setAttachment(null)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer' }}>
                   <FiX size={20} />
                 </button>
               </div>
             )}
           </div>
-          <small style={{ color: '#6B7280', marginTop: 8, display: 'block' }}>
-            Formats acceptés: PDF, Word, Excel, texte, images (max 5 MB)
-          </small>
         </div>
 
         <div style={{ display: 'flex', gap: 8, marginTop: 24 }}>
-          <button
-            className="btn btn-outline"
-            onClick={loadPreview}
-            disabled={sending || !form.subject || !form.content}
-          >
-            <FiFileText style={{ marginRight: 6, display: 'inline' }} />
-            Générer aperçu
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={submitMailing}
-            disabled={sending || !preview}
-          >
-            {sending ? 'Envoi en cours...' : 'Envoyer le mail'}
-          </button>
+          {mode === 'criteria' ? (
+            <button className="btn btn-primary" onClick={submitBcc} disabled={sending || !form.subject || !form.content || !bccEmails.trim()}>
+              {sending ? 'Envoi en cours...' : 'Envoyer aux destinataires'}
+            </button>
+          ) : (
+            <>
+              <button className="btn btn-outline" onClick={loadPreview} disabled={sending || !form.subject || !form.content}>
+                <FiFileText style={{ marginRight: 6, display: 'inline' }} />
+                Générer aperçu
+              </button>
+              <button className="btn btn-primary" onClick={submitMailing} disabled={sending || !preview}>
+                {sending ? 'Envoi en cours...' : 'Envoyer le mail'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {showPreview && preview && (
+      {/* Aperçu (mode classic) */}
+      {mode === 'classic' && showPreview && preview && (
         <div className="card">
           <div className="card-header">
-            <h3>
-              <FiUsers style={{ marginRight: 6, display: 'inline' }} />
-              Aperçu et confirmation
-            </h3>
+            <h3><FiUsers style={{ marginRight: 6, display: 'inline' }} />Aperçu et confirmation</h3>
           </div>
+          <p><strong>{preview.recipientInfo}</strong></p>
+          <p style={{ color: '#6B7280', fontSize: 14 }}>Total: <strong>{preview.totalRecipients}</strong> destinataire(s)</p>
+          {preview.recipients.length > 0 && (
+            <ul style={{ fontSize: 13, color: '#1f2937' }}>
+              {preview.recipients.map((r, i) => <li key={i}>{r.name} &lt;{r.email}&gt;</li>)}
+            </ul>
+          )}
+          {preview.hasMore && <p style={{ fontSize: 13, color: '#6B7280' }}>... et {preview.totalRecipients - preview.recipients.length} autre(s)</p>}
+        </div>
+      )}
 
-          <div style={{ marginBottom: 24 }}>
-            <h4 style={{ color: '#213B88', marginBottom: 12 }}>Destinataires</h4>
-            <p style={{ color: '#1f2937', marginBottom: 8 }}>
-              <strong>{preview.recipientInfo}</strong>
-            </p>
-            <p style={{ color: '#6B7280', fontSize: 14 }}>
-              Total: <strong>{preview.totalRecipients}</strong> destinataire(s)
-            </p>
+      {/* ===== MODALE DESTINATAIRES ===== */}
+      {modalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: '#fff', borderRadius: 12, width: '100%', maxWidth: 680, maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            {/* Header modale */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, color: 'var(--amc-primary)' }}>Destinataires trouvés</h3>
+                <p style={{ margin: '4px 0 0', fontSize: 13, color: '#6B7280' }}>
+                  {modalRecipients.length} résultat(s) — {checkedEmails.size} sélectionné(s)
+                </p>
+              </div>
+              <button type="button" onClick={() => setModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280' }}>
+                <FiX size={22} />
+              </button>
+            </div>
 
-            {preview.recipients.length > 0 && (
-              <div
-                style={{
-                  background: '#f8fafc',
-                  borderRadius: 8,
-                  padding: 12,
-                  marginTop: 12,
-                }}
-              >
-                <p style={{ fontSize: 13, color: '#475569', marginBottom: 8 }}>
-                  Premiers destinataires:
-                </p>
-                <ul style={{ fontSize: 13, color: '#1f2937', margin: 0, paddingLeft: 20 }}>
-                  {preview.recipients.map((r, idx) => (
-                    <li key={idx}>
-                      {r.name} &lt;{r.email}&gt;
-                    </li>
-                  ))}
-                </ul>
-                {preview.hasMore && (
-                  <p style={{ fontSize: 13, color: '#6B7280', marginTop: 8 }}>
-                    ... et {preview.totalRecipients - preview.recipients.length} autre(s)
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
+            {/* Table */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '0 24px' }}>
+              {modalRecipients.length === 0 ? (
+                <p style={{ textAlign: 'center', color: '#6B7280', padding: 32 }}>Aucun destinataire trouvé pour ces critères.</p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #e5e7eb', textAlign: 'left' }}>
+                      <th style={{ padding: '12px 8px', width: 36 }}>
+                        <input
+                          type="checkbox"
+                          checked={checkedEmails.size === modalRecipients.length}
+                          ref={(el) => { if (el) el.indeterminate = checkedEmails.size > 0 && checkedEmails.size < modalRecipients.length; }}
+                          onChange={toggleAll}
+                          title="Tout sélectionner / désélectionner"
+                          style={{ cursor: 'pointer', width: 16, height: 16 }}
+                        />
+                      </th>
+                      <th style={{ padding: '12px 8px', color: '#374151', fontWeight: 600 }}>Nom</th>
+                      <th style={{ padding: '12px 8px', color: '#374151', fontWeight: 600 }}>Prénom</th>
+                      <th style={{ padding: '12px 8px', color: '#374151', fontWeight: 600 }}>Email</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modalRecipients.map((r, i) => {
+                      const checked = checkedEmails.has(r.email);
+                      return (
+                        <tr
+                          key={i}
+                          style={{ borderBottom: '1px solid #f3f4f6', background: checked ? '#F0F9FF' : 'transparent', cursor: 'pointer' }}
+                          onClick={() => toggleEmail(r.email)}
+                        >
+                          <td style={{ padding: '10px 8px' }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleEmail(r.email)}
+                              onClick={(e) => e.stopPropagation()}
+                              style={{ cursor: 'pointer', width: 16, height: 16 }}
+                            />
+                          </td>
+                          <td style={{ padding: '10px 8px', color: checked ? '#111827' : '#6B7280' }}>{r.lastName || '—'}</td>
+                          <td style={{ padding: '10px 8px', color: checked ? '#111827' : '#6B7280' }}>{r.firstName || '—'}</td>
+                          <td style={{ padding: '10px 8px', color: checked ? '#2563EB' : '#9CA3AF' }}>{r.email}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
 
-          <div>
-            <h4 style={{ color: '#213B88', marginBottom: 12 }}>Aperçu du mail</h4>
-            <div
-              style={{
-                border: '1px solid #e2e8f0',
-                borderRadius: 8,
-                overflow: 'hidden',
-                background: '#f3f4f6',
-              }}
-            >
-              <div
-                style={{
-                  background: '#213B88',
-                  color: 'white',
-                  padding: 20,
-                  textAlign: 'center',
-                  fontSize: 24,
-                }}
-              >
-                Logo AMC
-              </div>
-              <div style={{ background: 'white', padding: 24 }}>
-                <h5 style={{ color: '#1f2937', marginBottom: 16 }}>
-                  {form.subject}
-                </h5>
-                <div
-                  style={{
-                    color: '#1f2937',
-                    fontSize: 14,
-                    lineHeight: 1.6,
-                  }}
-                  dangerouslySetInnerHTML={{ __html: plainTextToHtml(form.content) }}
-                />
-              </div>
-              <div
-                style={{
-                  background: '#f8fafc',
-                  padding: 16,
-                  textAlign: 'center',
-                  fontSize: 12,
-                  color: '#64748b',
-                  borderTop: '1px solid #e2e8f0',
-                }}
-              >
-                <p style={{ margin: 0, marginBottom: 4 }}>
-                  Association Partage et des Musulmans de Clamart (AMC)
-                </p>
-                <p style={{ margin: 0, opacity: 0.7 }}>
-                  École de Langue Arabe et Sciences Islamiques
-                </p>
+            {/* Footer modale */}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, color: '#6B7280' }}>
+                {checkedEmails.size} / {modalRecipients.length} sélectionné(s)
+              </span>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button type="button" className="btn btn-outline" onClick={() => setModalOpen(false)}>Annuler</button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={validateRecipients}
+                  disabled={checkedEmails.size === 0}
+                >
+                  Valider ({checkedEmails.size} destinataire(s))
+                </button>
               </div>
             </div>
           </div>

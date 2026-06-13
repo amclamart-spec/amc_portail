@@ -1338,10 +1338,7 @@ export default function AdminEnrollments() {
             >
               <option value="">Tous</option>
               <option value="PENDING">En attente</option>
-              <option value="PARTIAL">Partiel</option>
-              <option value="COMPLETED">Complété</option>
-              <option value="FAILED">Échoué</option>
-              <option value="REFUNDED">Remboursé</option>
+              <option value="COMPLETED">Validé (complété)</option>
               <option value="CANCELLED">Annulé</option>
             </select>
           </div>

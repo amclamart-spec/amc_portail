@@ -394,9 +394,121 @@ async function getPoleStructure(currentSchoolYear = null) {
   }));
 }
 
+/**
+ * Récupère les destinataires selon 3 critères : population, objet, statut
+ * population : 'TOUS' | 'FAMILLES' | 'PROFESSEURS'
+ * objet      : 'INSCRIPTION' | 'PAIEMENT'
+ * statut     : 'EN_ATTENTE' | 'VALIDE'
+ */
+async function getRecipientsByCriteria({ population, objet, statut }) {
+  let all = [];
+
+  if (population === 'FAMILLES' || population === 'TOUS') {
+    let famMap = new Map();
+
+    if (objet === 'INSCRIPTION') {
+      const enrollmentStatus = statut === 'VALIDE' ? 'CONFIRMED' : 'PENDING';
+      const enrollments = await prisma.enrollment.findMany({
+        where: { status: enrollmentStatus },
+        include: {
+          student: {
+            include: {
+              family: { include: { user: { select: { email: true, firstName: true, lastName: true } } } },
+            },
+          },
+        },
+      });
+      for (const e of enrollments) {
+        const fam = e.student?.family;
+        const email = fam?.user?.email;
+        if (email && !famMap.has(email)) {
+          famMap.set(email, {
+            email,
+            firstName: fam.user.firstName || '',
+            lastName: fam.familyName || fam.user.lastName || '',
+          });
+        }
+      }
+    } else if (objet === 'PAIEMENT') {
+      const paymentWhere = statut === 'VALIDE'
+        ? { status: 'COMPLETED' }
+        : { status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } };
+      const payments = await prisma.payment.findMany({
+        where: paymentWhere,
+        include: { family: { include: { user: { select: { email: true, firstName: true, lastName: true } } } } },
+      });
+      for (const p of payments) {
+        const email = p.family?.user?.email;
+        if (email && !famMap.has(email)) {
+          famMap.set(email, {
+            email,
+            firstName: p.family.user.firstName || '',
+            lastName: p.family.familyName || p.family.user.lastName || '',
+          });
+        }
+      }
+    }
+
+    all = [...all, ...Array.from(famMap.values())];
+  }
+
+  if (population === 'PROFESSEURS' || population === 'TOUS') {
+    const teachers = await prisma.teacher.findMany({
+      where: { status: 'ACTIVE' },
+      select: { email: true, firstName: true, lastName: true },
+    });
+    for (const t of teachers) {
+      if (t.email) all.push({ email: t.email, firstName: t.firstName || '', lastName: t.lastName || '' });
+    }
+  }
+
+  // Dédupliquer par email
+  const unique = new Map();
+  for (const r of all) {
+    if (r.email && !unique.has(r.email)) unique.set(r.email, r);
+  }
+  return Array.from(unique.values());
+}
+
+/**
+ * Envoie un email individuel à chaque destinataire (confidentialité : personne ne voit les autres)
+ */
+async function sendMailBcc({ bccEmails, subject, content, attachmentInfo }) {
+  if (!bccEmails || bccEmails.length === 0) throw new Error('Aucun destinataire');
+
+  const htmlContent = renderMailHtml({ subject, content, attachmentInfo });
+
+  let successCount = 0;
+  let failedCount = 0;
+  const errors = [];
+
+  for (const email of bccEmails) {
+    try {
+      const mailPayload = {
+        to: email,
+        subject,
+        html: htmlContent,
+      };
+      if (attachmentInfo) {
+        mailPayload.attachments = [{ filename: attachmentInfo.filename, path: attachmentInfo.path }];
+      }
+      await sendMail(mailPayload);
+      successCount++;
+    } catch (err) {
+      failedCount++;
+      errors.push({ email, error: err.message });
+      console.warn(`[MAIL BCC] Echec envoi à ${email}:`, err.message);
+    }
+  }
+
+  return { successCount, failedCount, errors };
+}
+
 module.exports = {
   getRecipients,
+  getRecipientsByCriteria,
   renderMailHtml,
   sendBulkMail,
+  sendMailBcc,
   getPoleStructure,
 };

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
-import { FiCheck, FiX, FiFilter, FiKey, FiCopy, FiCheckCircle, FiXCircle } from 'react-icons/fi';
+import { FiCheck, FiX, FiFilter, FiKey, FiCopy, FiCheckCircle, FiXCircle, FiUnlock } from 'react-icons/fi';
 
 function ResetPasswordModal({ user, onClose }) {
   const [generatedPassword, setGeneratedPassword] = useState(null);
@@ -135,6 +135,14 @@ export default function AdminUsers() {
     } catch { toast.error('Erreur lors de la validation'); }
   };
 
+  const handleUnlock = async (id) => {
+    try {
+      await api.post(`/admin/users/${id}/unlock`);
+      toast.success('Compte déverrouillé');
+      fetchUsers();
+    } catch { toast.error('Erreur lors du déverrouillage'); }
+  };
+
   const handleReject = async (id) => {
     const reason = prompt('Motif du refus (optionnel) :');
     try {
@@ -193,15 +201,18 @@ export default function AdminUsers() {
                   <th>Rôle</th>
                   <th>Statut</th>
                   <th>Email vérifié</th>
+                  <th>Verrou</th>
                   <th>Date</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {users.length === 0 ? (
-                  <tr><td colSpan="7" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun utilisateur trouvé</td></tr>
-                ) : users.map((u) => (
-                  <tr key={u.id}>
+                  <tr><td colSpan="8" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun utilisateur trouvé</td></tr>
+                ) : users.map((u) => {
+                  const isLocked = u.lockedUntil && new Date(u.lockedUntil) > new Date();
+                  return (
+                  <tr key={u.id} style={isLocked ? { background: '#FFF7ED' } : {}}>
                     <td style={{ fontWeight: 700 }}>{u.lastName} {u.firstName}</td>
                     <td>{u.email}</td>
                     <td><span className="badge badge-info">{u.role}</span></td>
@@ -211,6 +222,17 @@ export default function AdminUsers() {
                         ? <FiCheckCircle size={18} style={{ color: '#22C55E', verticalAlign: 'middle' }} title="Email vérifié" />
                         : <FiXCircle size={18} style={{ color: '#EF4444', verticalAlign: 'middle' }} title={!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(u.email) ? 'Format email invalide' : 'Email non vérifié'} />
                       }
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {isLocked ? (
+                        <span title={`Verrouillé jusqu'au ${new Date(u.lockedUntil).toLocaleString('fr-FR')}`}>
+                          🔒 <span style={{ fontSize: 11, color: '#DC2626' }}>
+                            {new Date(u.lockedUntil).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </span>
+                      ) : (
+                        <span style={{ color: '#9CA3AF', fontSize: 13 }}>—</span>
+                      )}
                     </td>
                     <td style={{ fontSize: 13 }}>{new Date(u.createdAt).toLocaleDateString('fr-FR')}</td>
                     <td>
@@ -225,6 +247,16 @@ export default function AdminUsers() {
                             </button>
                           </>
                         )}
+                        {isLocked && (
+                          <button
+                            className="btn btn-warning btn-sm"
+                            onClick={() => handleUnlock(u.id)}
+                            title="Déverrouiller le compte"
+                            style={{ background: '#F59E0B', color: '#fff', border: 'none' }}
+                          >
+                            <FiUnlock /> Déverrouiller
+                          </button>
+                        )}
                         <button
                           className="btn btn-outline btn-sm"
                           onClick={() => setResetModalUser(u)}
@@ -235,7 +267,8 @@ export default function AdminUsers() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
