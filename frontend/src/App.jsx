@@ -46,6 +46,10 @@ import FamilyPayments from './pages/family/Payments';
 import FamilyPedagogy from './pages/family/SuiviPedagogique';
 import FamilyChat from './pages/family/Chat';
 
+// Rôles ayant accès à l'espace admin (sauf paiements/tarifs pour les responsables)
+const ADMIN_ROLES = ['ADMIN', 'SUPER_ADMIN', 'RESPONSABLE_POLE_CORAN', 'RESPONSABLE_POLE_ARABE', 'RESPONSABLE_POLE_SOUTIEN_SCO', 'RESPONSABLE_POLE_SCIENCE_IS'];
+const ADMIN_ONLY  = ['ADMIN', 'SUPER_ADMIN'];
+
 function App() {
   const { isAuthenticated, user } = useAuth();
 
@@ -62,23 +66,23 @@ function App() {
       <Route path="/auth/google/callback" element={<GoogleCallback />} />
       <Route path="/super-admin" element={<PrivateRoute roles={['SUPER_ADMIN']}><Layout><SuperAdminDashboard /></Layout></PrivateRoute>} />
 
-      <Route path="/admin" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><EnrollmentDashboard /></Layout></PrivateRoute>} />
-      <Route path="/admin/users" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminUsers /></Layout></PrivateRoute>} />
-      <Route path="/admin/enrollments" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminEnrollments /></Layout></PrivateRoute>} />
-      <Route path="/admin/settings" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminSettings /></Layout></PrivateRoute>} />
-      <Route path="/admin/payments" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminPayments /></Layout></PrivateRoute>} />
+      <Route path="/admin" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><EnrollmentDashboard /></Layout></PrivateRoute>} />
+      <Route path="/admin/users" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminUsers /></Layout></PrivateRoute>} />
+      <Route path="/admin/enrollments" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminEnrollments /></Layout></PrivateRoute>} />
+      <Route path="/admin/settings" element={<PrivateRoute roles={ADMIN_ONLY}><Layout><AdminSettings /></Layout></PrivateRoute>} />
+      <Route path="/admin/payments" element={<PrivateRoute roles={ADMIN_ONLY}><Layout><AdminPayments /></Layout></PrivateRoute>} />
 
-      <Route path="/admin/salles" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminRooms /></Layout></PrivateRoute>} />
-      <Route path="/admin/creneaux" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminTimeslots /></Layout></PrivateRoute>} />
-      <Route path="/admin/niveaux" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminLevels /></Layout></PrivateRoute>} />
-      <Route path="/admin/classes" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminClasses /></Layout></PrivateRoute>} />
-      <Route path="/admin/classes/:id" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminClassDetails /></Layout></PrivateRoute>} />
-      <Route path="/admin/professeurs" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminTeachers /></Layout></PrivateRoute>} />
-      <Route path="/admin/exports" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminExports /></Layout></PrivateRoute>} />
-      <Route path="/admin/planning" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminPlanning /></Layout></PrivateRoute>} />
-      <Route path="/admin/chat" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminChat /></Layout></PrivateRoute>} />
-      <Route path="/admin/mailing" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminMailing /></Layout></PrivateRoute>} />
-      <Route path="/admin/profile" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminProfile /></Layout></PrivateRoute>} />
+      <Route path="/admin/salles" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminRooms /></Layout></PrivateRoute>} />
+      <Route path="/admin/creneaux" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminTimeslots /></Layout></PrivateRoute>} />
+      <Route path="/admin/niveaux" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminLevels /></Layout></PrivateRoute>} />
+      <Route path="/admin/classes" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminClasses /></Layout></PrivateRoute>} />
+      <Route path="/admin/classes/:id" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminClassDetails /></Layout></PrivateRoute>} />
+      <Route path="/admin/professeurs" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminTeachers /></Layout></PrivateRoute>} />
+      <Route path="/admin/exports" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminExports /></Layout></PrivateRoute>} />
+      <Route path="/admin/planning" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminPlanning /></Layout></PrivateRoute>} />
+      <Route path="/admin/chat" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminChat /></Layout></PrivateRoute>} />
+      <Route path="/admin/mailing" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminMailing /></Layout></PrivateRoute>} />
+      <Route path="/admin/profile" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminProfile /></Layout></PrivateRoute>} />
       <Route path="/admin/tableau-inscriptions" element={<Navigate to="/admin" replace />} />
 
       {/* Alias historiques */}

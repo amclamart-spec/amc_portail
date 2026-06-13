@@ -3,8 +3,12 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { FiDownload, FiEdit2, FiTrash2, FiFileText, FiCreditCard, FiCheckCircle, FiXCircle } from 'react-icons/fi';
 import AdminEnrollmentWizard from './AdminEnrollmentWizard';
+import { useAuth } from '../../context/AuthContext';
+import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
 
 export default function AdminEnrollments() {
+  const { user } = useAuth();
+  const canManagePayments = !RESPONSABLE_POLE_ROLES.includes(user?.role);
   const [enrollments, setEnrollments] = useState([]);
   const [statusUpdates, setStatusUpdates] = useState({});
   const [classes, setClasses] = useState([]);
@@ -1410,6 +1414,7 @@ export default function AdminEnrollments() {
                                     boxShadow: `0 0 0 3px ${familyStatusIndicator.color}22`,
                                   }}
                                 />
+                                {canManagePayments && (
                                 <button
                                   type="button"
                                   title={familyPaymentIndicator.label}
@@ -1436,6 +1441,7 @@ export default function AdminEnrollments() {
                                 >
                                   <FiCreditCard size={11} />
                                 </button>
+                                )}
                                 <span>{group.familyName}</span>
                                 <span style={{ fontSize: 13, color: '#475569' }}>({group.enrollments.length} inscription{group.enrollments.length > 1 ? 's' : ''})</span>
                               </div>
@@ -1514,6 +1520,7 @@ export default function AdminEnrollments() {
                                     <FiFileText size={14} />
                                     <span style={{ fontSize: 13 }}>Fiche</span>
                                   </button>
+                                  {canManagePayments && (
                                   <button
                                     className="btn btn-outline btn-sm"
                                     type="button"
@@ -1524,6 +1531,7 @@ export default function AdminEnrollments() {
                                     <FiCreditCard size={14} />
                                     <span style={{ fontSize: 13 }}>Paiement</span>
                                   </button>
+                                  )}
                                   <button
                                     className="btn btn-outline btn-sm"
                                     type="button"

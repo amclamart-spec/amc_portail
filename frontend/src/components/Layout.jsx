@@ -181,28 +181,82 @@ const navSectionsByRole = {
       ],
     },
   ],
-  PROFESSEUR: [
-    {
-      title: 'Pédagogie',
-      items: [
-        { path: '/professeur', icon: FiHome, label: 'Mes classes' },
-        { path: '/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
-      ],
-    },
-  ],
-  FAMILLE: [
+};
+
+// Sections de navigation communes aux responsables de pôle (même que ADMIN sans Finance/Tarifs)
+function buildResponsablePoleNav(poleLabel) {
+  return [
     {
       title: 'Mon espace',
       items: [
-        { path: '/famille', icon: FiHome, label: 'Tableau de bord' },
-        { path: '/famille/inscription', icon: FiBookOpen, label: 'Inscriptions' },
-        { path: '/famille/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
-        { path: '/famille/paiements', icon: FiCreditCard, label: 'Paiements' },
-        { path: '/famille/profil', icon: FiUser, label: 'Profil' },
+        { path: '/admin',         icon: FiHome, label: 'Tableau de bord' },
+        { path: '/admin/profile', icon: FiUser, label: 'Mon profil' },
       ],
     },
-  ],
+    {
+      title: `Gestion — ${poleLabel}`,
+      items: [
+        { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
+      ],
+    },
+    {
+      title: 'Pédagogie',
+      items: [
+        { path: '/admin/classes',    icon: FiBookOpen,  label: 'Classes' },
+        { path: '/admin/niveaux',    icon: FiSettings,  label: 'Niveaux' },
+        { path: '/admin/professeurs',icon: FiUser,      label: 'Professeurs' },
+        { path: '/admin/salles',     icon: FiHome,      label: 'Salles' },
+        { path: '/admin/creneaux',   icon: FiCalendar,  label: 'Créneaux' },
+        { path: '/admin/planning',   icon: FiCalendar,  label: 'Planning' },
+      ],
+    },
+    {
+      title: 'Communication',
+      items: [
+        { path: '/admin/mailing', icon: FiClipboard, label: 'Mailing' },
+      ],
+    },
+    {
+      title: 'Exports',
+      items: [
+        { path: '/admin/exports', icon: FiBookOpen,  label: 'Listes élèves' },
+        { path: '/admin/exports', icon: FiClipboard, label: 'Feuilles présence' },
+      ],
+    },
+  ];
+}
+
+// Ajout des sections pour les 4 rôles responsables dans navSectionsByRole
+const navSectionsByRoleExtra = {
+  RESPONSABLE_POLE_CORAN:       buildResponsablePoleNav('Coran'),
+  RESPONSABLE_POLE_ARABE:       buildResponsablePoleNav('Arabe'),
+  RESPONSABLE_POLE_SOUTIEN_SCO: buildResponsablePoleNav('Soutien Scolaire'),
+  RESPONSABLE_POLE_SCIENCE_IS:  buildResponsablePoleNav('Sciences Islamiques'),
 };
+
+// Fusion dans navSectionsByRole (variable définie avant cette ligne)
+Object.assign(navSectionsByRole, navSectionsByRoleExtra);
+
+// Réouverture de navSectionsByRole pour PROFESSEUR et FAMILLE (suite du fichier d'origine)
+navSectionsByRole.PROFESSEUR = [{
+  title: 'Pédagogie',
+  items: [
+    { path: '/professeur', icon: FiHome, label: 'Mes classes' },
+    { path: '/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
+  ],
+}];
+
+navSectionsByRole.FAMILLE = [{
+  title: 'Mon espace',
+  items: [
+    { path: '/famille', icon: FiHome, label: 'Tableau de bord' },
+    { path: '/famille/inscription', icon: FiBookOpen, label: 'Inscriptions' },
+    { path: '/famille/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
+    { path: '/famille/paiements', icon: FiCreditCard, label: 'Paiements' },
+    { path: '/famille/profil', icon: FiUser, label: 'Profil' },
+  ],
+}];
+
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
