@@ -1,8 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
 const {
   sendBulkMail,
+  sendMailBcc,
   getPoleStructure,
   getRecipients,
+  getRecipientsByCriteria,
 } = require('../services/mailService');
 
 const prisma = new PrismaClient();
@@ -194,8 +196,74 @@ async function getMailingPreview(req, res) {
   }
 }
 
+/**
+ * POST /admin/mailing/recipients-by-criteria
+ * Retourne la liste des destinataires selon population + objet + statut
+ */
+async function getMailingRecipientsByCriteria(req, res) {
+  try {
+    const { population, objet, statut } = req.body;
+    if (!population) {
+      return res.status(400).json({ error: 'population est requis' });
+    }
+    if (population !== 'PROFESSEURS' && (!objet || !statut)) {
+      return res.status(400).json({ error: 'objet et statut sont requis pour cette population' });
+    }
+    const recipients = await getRecipientsByCriteria({ population, objet, statut });
+    return res.json({ recipients });
+  } catch (error) {
+    console.error('Erreur getMailingRecipientsByCriteria:', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+/**
+ * POST /admin/mailing/send-bcc
+ * Envoie un email unique avec tous les destinataires en CCI (BCC)
+ * Body: { bccEmails: string[], subject: string, content: string }
+ * File: attachment (optionnel)
+ */
+async function sendMailingBcc(req, res) {
+  try {
+    let { bccEmails, subject, content } = req.body;
+    const attachmentFile = req.file;
+
+    if (!subject || !content) {
+      return res.status(400).json({ error: 'subject et content sont requis' });
+    }
+
+    // bccEmails peut arriver comme chaîne JSON ou tableau
+    if (typeof bccEmails === 'string') {
+      try { bccEmails = JSON.parse(bccEmails); } catch { bccEmails = bccEmails.split(/[;,\n]+/).map(e => e.trim()).filter(Boolean); }
+    }
+    if (!Array.isArray(bccEmails) || bccEmails.length === 0) {
+      return res.status(400).json({ error: 'Au moins un destinataire BCC requis' });
+    }
+
+    let attachmentInfo = null;
+    if (attachmentFile) {
+      attachmentInfo = { filename: attachmentFile.originalname, path: attachmentFile.path, mimetype: attachmentFile.mimetype };
+    }
+
+    const result = await sendMailBcc({ bccEmails, subject, content, attachmentInfo });
+
+    if (attachmentFile) {
+      const fs = require('fs');
+      fs.unlink(attachmentFile.path, () => {});
+    }
+
+    return res.json({ success: true, recipientCount: bccEmails.length, successCount: result.successCount, failedCount: result.failedCount });
+  } catch (error) {
+    console.error('Erreur sendMailingBcc:', error.message);
+    if (req.file) { const fs = require('fs'); fs.unlink(req.file.path, () => {}); }
+    return res.status(500).json({ error: error.message });
+  }
+}
+
 module.exports = {
   getMailingStructure,
   sendMailing,
   getMailingPreview,
+  getMailingRecipientsByCriteria,
+  sendMailingBcc,
 };
