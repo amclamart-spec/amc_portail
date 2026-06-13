@@ -26,6 +26,7 @@ import AdminClassDetails from './pages/admin/ClassDetails';
 import AdminTeachers from './pages/admin/Teachers';
 import AdminExports from './pages/admin/Exports';
 import AdminMailing from './pages/admin/Mailing';
+import AdminProfile from './pages/admin/Profile';
 import AdminPlanning from './pages/admin/Planning';
 import AdminChat from './pages/admin/Chat';
 import AdminPayments from './pages/admin/Payments';
@@ -77,6 +78,7 @@ function App() {
       <Route path="/admin/planning" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminPlanning /></Layout></PrivateRoute>} />
       <Route path="/admin/chat" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminChat /></Layout></PrivateRoute>} />
       <Route path="/admin/mailing" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminMailing /></Layout></PrivateRoute>} />
+      <Route path="/admin/profile" element={<PrivateRoute roles={['ADMIN', 'SUPER_ADMIN']}><Layout><AdminProfile /></Layout></PrivateRoute>} />
       <Route path="/admin/tableau-inscriptions" element={<Navigate to="/admin" replace />} />
 
       {/* Alias historiques */}

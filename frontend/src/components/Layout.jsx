@@ -27,6 +27,7 @@ const navSectionsByRole = {
       title: 'Mon espace',
       items: [
         { path: '/admin', icon: FiHome, label: 'Tableau de bord' },
+        { path: '/admin/profile', icon: FiUser, label: 'Mon profil' },
       ],
     },
     {
@@ -100,6 +101,7 @@ const navSectionsByRole = {
       title: 'Mon espace',
       items: [
         { path: '/admin', icon: FiHome, label: 'Tableau de bord' },
+        { path: '/admin/profile', icon: FiUser, label: 'Mon profil' },
       ],
     },
     {
