@@ -21,7 +21,7 @@ const emptyForm = {
   email: '',
   phone: '',
   specialties: [],
-  poleIds: [],
+  poleId: '',
   status: 'ACTIVE',
 };
 
@@ -109,7 +109,7 @@ export default function AdminTeachers() {
       email: teacher.email || '',
       phone: teacher.phone || '',
       specialties: teacher.specialties || [],
-      poleIds: teacher.poleIds || [],
+      poleId: teacher.poleId || teacher.pole?.id || '',
       status: teacher.status || 'ACTIVE',
     });
     setModalOpen(true);
@@ -121,15 +121,6 @@ export default function AdminTeachers() {
       specialties: prev.specialties.includes(specialty)
         ? prev.specialties.filter((item) => item !== specialty)
         : [...prev.specialties, specialty],
-    }));
-  };
-
-  const togglePole = (poleId) => {
-    setForm((prev) => ({
-      ...prev,
-      poleIds: prev.poleIds.includes(poleId)
-        ? prev.poleIds.filter((id) => id !== poleId)
-        : [...prev.poleIds, poleId],
     }));
   };
 
@@ -238,7 +229,7 @@ export default function AdminTeachers() {
                 <tr>
                   <th>Nom</th>
                   <th>Email</th>
-                  <th>Pôle(s)</th>
+                  <th>Pôle</th>
                   <th>Spécialités</th>
                   <th>Statut</th>
                   <th>Nb classes</th>
@@ -254,9 +245,7 @@ export default function AdminTeachers() {
                       <td style={{ fontWeight: 700 }}>{teacher.civility}. {teacher.lastName} {teacher.firstName}</td>
                       <td>{teacher.email}</td>
                       <td style={{ fontSize: 13 }}>
-                        {(teacher.poleIds || []).length > 0
-                          ? (teacher.poleIds || []).map((pid) => poles.find((p) => p.id === pid)?.name || pid).join(', ')
-                          : '-'}
+                        {teacher.pole?.name || (teacher.poleId ? poles.find((p) => p.id === teacher.poleId)?.name : null) || '-'}
                       </td>
                       <td>{(teacher.specialties || []).join(', ') || '-'}</td>
                       <td>
@@ -379,17 +368,19 @@ export default function AdminTeachers() {
                 </div>
               </div>
 
-              {isAdmin && poles.length > 0 && (
+              {poles.length > 0 && (
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Pôle(s) d'affectation</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                  <label>Pôle d'affectation *</label>
+                  <select
+                    className="form-control"
+                    value={form.poleId}
+                    onChange={(e) => setForm((prev) => ({ ...prev, poleId: e.target.value }))}
+                  >
+                    <option value="">— Aucun pôle —</option>
                     {poles.map((pole) => (
-                      <label key={pole.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <input type="checkbox" checked={form.poleIds.includes(pole.id)} onChange={() => togglePole(pole.id)} />
-                        {pole.name}
-                      </label>
+                      <option key={pole.id} value={pole.id}>{pole.name}</option>
                     ))}
-                  </div>
+                  </select>
                 </div>
               )}
 
