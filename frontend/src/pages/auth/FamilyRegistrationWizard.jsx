@@ -218,6 +218,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [courseFilterPoleId, setCourseFilterPoleId] = useState('');
   const [courseFilterDay, setCourseFilterDay] = useState('');
   const [schoolGradeByMember, setSchoolGradeByMember] = useState({});
+  const [soutienSelectedByMember, setSoutienSelectedByMember] = useState({});
   const [memberForm, setMemberForm] = useState(emptyMember);
   const [editingMemberIndex, setEditingMemberIndex] = useState(null);
   const [activeHealthMember, setActiveHealthMember] = useState(0);
@@ -1230,58 +1231,8 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                                 );
                               }
 
-                              // Soutien scolaire: grade-gated level selection
-                              const isSoutien = normStr(pole.name).includes('soutien');
-                              if (isSoutien) {
-                                const schoolGrade = schoolGradeByMember[memberIndex] || '';
-                                const matchingLevels = (pole.levels || []).filter((lvl) => matchSoutienLevel(lvl.name, schoolGrade, member.gender));
-                                return (
-                                  <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                                      <div>
-                                        <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name}</div>
-                                        <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Cours de soutien scolaire'}</div>
-                                      </div>
-                                    </div>
-                                    <div style={{ marginBottom: 12 }}>
-                                      <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Classe de l'élève *</label>
-                                      <select
-                                        className="form-control"
-                                        value={schoolGrade}
-                                        onChange={(e) => setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: e.target.value }))}
-                                        style={{ maxWidth: 240 }}
-                                      >
-                                        <option value="">— Sélectionner —</option>
-                                        {SCHOOL_GRADES.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-                                      </select>
-                                    </div>
-                                    {!schoolGrade ? (
-                                      <div style={{ padding: 12, borderRadius: 8, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E', fontSize: 13 }}>
-                                        Sélectionnez la classe de l'élève pour afficher les cours disponibles.
-                                      </div>
-                                    ) : matchingLevels.length === 0 ? (
-                                      <div style={{ padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13 }}>
-                                        Aucun cours de soutien disponible pour ce niveau.
-                                      </div>
-                                    ) : (
-                                      <div style={{ display: 'grid', gap: 12 }}>
-                                        {matchingLevels.map((level) => {
-                                          const levelSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.levelId === level.id);
-                                          return (
-                                            <label key={level.id} style={{ borderRadius: 14, border: '1px solid', borderColor: levelSelected ? '#2563EB' : '#E2E8F0', background: levelSelected ? '#EFF6FF' : '#FFFFFF', padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
-                                              <div>
-                                                <div style={{ fontSize: 14, fontWeight: 700 }}>{level.name}</div>
-                                                <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>{level.code || ''}</div>
-                                              </div>
-                                              <input type="checkbox" checked={levelSelected} onChange={() => toggleLevelSelection(memberIndex, pole.id, level.id)} />
-                                            </label>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              }
+                              // Soutien scolaire handled in unified section below
+                              if (normStr(pole.name).includes('soutien')) return null;
 
                               // Default: show levels for other poles
                                   const levelList = (pole.levels || []).filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
@@ -1362,7 +1313,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                               }),
                             };
                           })
-                          .filter((group) => group.classes.length > 0 || group.isSoutien); // keep soutien group even if empty (to show grade selector)
+                          .filter((group) => group.classes.length > 0 && !group.isSoutien);
                         const hasAnyClass = filteredGroups.some((group) => group.classes.length > 0);
                         const filtersSelected = Boolean(courseFilterPoleId || courseFilterDay);
                         return (
@@ -1463,42 +1414,6 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                                     );
                                   };
 
-                                  // Soutien scolaire group: show grade selector + filtered classes
-                                  if (group.isSoutien) {
-                                    return (
-                                      <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                                          <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
-                                        </div>
-                                        <div style={{ marginBottom: 12 }}>
-                                          <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Classe de l'élève *</label>
-                                          <select
-                                            className="form-control"
-                                            value={schoolGrade}
-                                            onChange={(e) => setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: e.target.value }))}
-                                            style={{ maxWidth: 240 }}
-                                          >
-                                            <option value="">— Sélectionner —</option>
-                                            {SCHOOL_GRADES.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-                                          </select>
-                                        </div>
-                                        {!schoolGrade ? (
-                                          <div style={{ padding: 12, borderRadius: 8, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E', fontSize: 13 }}>
-                                            Sélectionnez la classe de l'élève pour afficher les créneaux disponibles.
-                                          </div>
-                                        ) : group.classes.length === 0 ? (
-                                          <div style={{ padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13 }}>
-                                            Aucun cours disponible pour ce niveau.
-                                          </div>
-                                        ) : (
-                                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-                                            {group.classes.map(renderClassCard)}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  }
-
                                   // Normal group rendering
                                   return (
                                     <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
@@ -1520,6 +1435,109 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                         </div>
                         );
                       })() : null}
+
+                      {/* Unified soutien scolaire - always shown regardless of isOldStudent */}
+                      {(() => {
+                        const soutienPole = poles.find((p) => normStr(p.name).includes('soutien'));
+                        if (!soutienPole) return null;
+                        const soutienSelected = soutienSelectedByMember[memberIndex] || false;
+                        const schoolGrade = schoolGradeByMember[memberIndex] || '';
+                        const soutienClasses = allClasses.filter((cls) => {
+                          const clsPoleId = cls.poleId || cls.level?.poleId || cls.level?.pole?.id;
+                          if (clsPoleId !== soutienPole.id) return false;
+                          if (cls.status === 'CLOSED') return false;
+                          if (!schoolGrade) return false;
+                          return matchSoutienLevel(cls.level?.name, schoolGrade, member.gender);
+                        });
+                        return (
+                          <div style={{ marginTop: 16 }}>
+                            <div style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: soutienSelected ? 12 : 0 }}>
+                                <div>
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{soutienPole.name}</div>
+                                  <div style={{ color: '#64748B', fontSize: 13 }}>{soutienPole.description || 'Cours de soutien scolaire'}</div>
+                                </div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={soutienSelected}
+                                    onChange={(e) => {
+                                      setSoutienSelectedByMember((prev) => ({ ...prev, [memberIndex]: e.target.checked }));
+                                      if (!e.target.checked) {
+                                        setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: '' }));
+                                        setWizard((prev) => ({
+                                          ...prev,
+                                          courseSelections: prev.courseSelections.filter(
+                                            (s) => !(s.memberIndex === memberIndex && allClasses.find((c) => c.id === s.classId && (c.poleId === soutienPole.id || c.level?.poleId === soutienPole.id || c.level?.pole?.id === soutienPole.id)))
+                                          ),
+                                        }));
+                                      }
+                                    }}
+                                    style={{ cursor: 'pointer' }}
+                                  />
+                                  Sélectionner
+                                </label>
+                              </div>
+                              {soutienSelected && (
+                                <>
+                                  <div style={{ marginBottom: 12 }}>
+                                    <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Classe de l'élève *</label>
+                                    <select
+                                      className="form-control"
+                                      value={schoolGrade}
+                                      onChange={(e) => setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: e.target.value }))}
+                                      style={{ maxWidth: 240 }}
+                                    >
+                                      <option value="">— Sélectionner —</option>
+                                      {SCHOOL_GRADES.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+                                    </select>
+                                  </div>
+                                  {!schoolGrade ? (
+                                    <div style={{ padding: 12, borderRadius: 8, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E', fontSize: 13 }}>
+                                      Sélectionnez la classe de l'élève pour afficher les cours disponibles.
+                                    </div>
+                                  ) : soutienClasses.length === 0 ? (
+                                    <div style={{ padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13 }}>
+                                      Aucun cours de soutien disponible pour ce niveau.
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                                      {soutienClasses.map((cls) => {
+                                        const selected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.classId === cls.id);
+                                        const isWaitlist = cls.status === 'FULL';
+                                        return (
+                                          <label key={cls.id} style={{ borderRadius: 14, border: '1px solid', borderColor: selected ? '#2563EB' : isWaitlist ? '#F87171' : '#E2E8F0', background: selected ? '#EFF6FF' : isWaitlist ? '#FEF2F2' : '#FFFFFF', padding: 14, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', cursor: 'pointer', minHeight: 130 }}>
+                                            <div>
+                                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                                                <div>
+                                                  <div style={{ fontSize: 14, fontWeight: 700 }}>{cls.level?.name || 'Niveau'}</div>
+                                                  {(() => {
+                                                    const slots = cls.classTimeSlots?.map((cts) => cts.timeSlot) || [];
+                                                    return slots.length > 0
+                                                      ? slots.map((s, si) => <div key={si} style={{ fontSize: 12, color: '#475569', marginTop: si === 0 ? 2 : 1 }}>{s.dayOfWeek} {s.startTime} - {s.endTime}</div>)
+                                                      : <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{cls.dayOfWeek} {cls.startTime} - {cls.endTime}</div>;
+                                                  })()}
+                                                </div>
+                                                {selected && <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#DBEAFE', borderRadius: 999, padding: '4px 10px' }}>Sélectionné</span>}
+                                              </div>
+                                              <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>Salle {cls.room || '-'}</div>
+                                              {cls.teacherName ? <div style={{ fontSize: 12, color: '#475569' }}>Professeur : {cls.teacherName}</div> : null}
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                                              <span style={{ fontSize: 12, color: isWaitlist ? '#B91C1C' : '#334155' }}>{isWaitlist ? "Liste d'attente" : `${cls.enrolledCount}/${cls.capacity} inscrits`}</span>
+                                              <input type="checkbox" checked={selected} onChange={() => toggleCourseSelection(memberIndex, cls.id)} />
+                                            </div>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
