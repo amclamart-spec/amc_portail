@@ -2498,6 +2498,16 @@ async function updatePaymentDetails(req, res) {
     const isVirement = paymentMethod === 'VIREMENT';
     const metadata = payment.metadata || {};
     const updateData = {};
+    let payerNameUpdated = false;
+
+    if (updates.payerName !== undefined) {
+      const payerNameTrimmed = String(updates.payerName).trim();
+      await prisma.paymentTransaction.updateMany({
+        where: { paymentId },
+        data: { payerName: payerNameTrimmed },
+      });
+      payerNameUpdated = true;
+    }
 
     if (updates.totalAmount !== undefined) {
       const totalAmount = Number(updates.totalAmount);
@@ -2505,6 +2515,14 @@ async function updatePaymentDetails(req, res) {
         return res.status(400).json({ error: 'Le montant doit être supérieur à 0' });
       }
       updateData.totalAmount = toDecimal(totalAmount);
+    }
+
+    if (updates.paidAmount !== undefined) {
+      const paidAmount = Number(updates.paidAmount);
+      if (Number.isNaN(paidAmount) || paidAmount < 0) {
+        return res.status(400).json({ error: 'Le montant payé doit être positif ou nul' });
+      }
+      updateData.paidAmount = toDecimal(paidAmount);
     }
 
     // Update number of installments
@@ -2558,31 +2576,34 @@ async function updatePaymentDetails(req, res) {
       ...metadata,
     };
 
-    if (Object.keys(updateData).length === 0) {
+    if (!payerNameUpdated && Object.keys(updateData).length === 0) {
       return res.status(400).json({ error: 'Aucune modification à enregistrer' });
     }
 
     // Update payment
-    const updatedPayment = await prisma.payment.update({
-      where: { id: paymentId },
-      data: updateData,
-      include: { family: true, paymentPlan: true },
-    });
-
-    // Also update payment plan if it exists
-    if (payment.paymentPlan) {
-      await prisma.paymentPlan.update({
-        where: { id: payment.paymentPlan.id },
-        data: {
-          metadata: {
-            ...(payment.paymentPlan.metadata || {}),
-            ...metadata,
-          },
-        },
+    let updatedPayment = payment;
+    if (Object.keys(updateData).length > 0) {
+      updatedPayment = await prisma.payment.update({
+        where: { id: paymentId },
+        data: updateData,
+        include: { family: true, paymentPlan: true },
       });
-    }
 
-    deleteInvoiceFile(paymentId);
+      // Also update payment plan if it exists
+      if (payment.paymentPlan) {
+        await prisma.paymentPlan.update({
+          where: { id: payment.paymentPlan.id },
+          data: {
+            metadata: {
+              ...(payment.paymentPlan.metadata || {}),
+              ...metadata,
+            },
+          },
+        });
+      }
+
+      deleteInvoiceFile(paymentId);
+    }
 
     return res.json({
       success: true,

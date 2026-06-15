@@ -1176,6 +1176,8 @@ async function completeExistingFamilyRegistration(req, res) {
 
               emergencyContactPhone: m.emergencyContactPhone || null,
 
+              isReturningStudent: Boolean(m.isOldStudent),
+
             },
 
           });
@@ -3047,6 +3049,8 @@ async function completeFamilyRegistration(req, res) {
             emergencyContactName: m.emergencyContactName || null,
 
             emergencyContactPhone: m.emergencyContactPhone || null,
+
+            isReturningStudent: Boolean(m.isOldStudent),
 
           },
 

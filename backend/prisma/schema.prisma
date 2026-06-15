@@ -156,6 +156,7 @@ model Student {
   emergencyContactName  String?  @map("emergency_contact_name")
   emergencyContactPhone String?  @map("emergency_contact_phone")
   medicalCertUrl        String?  @map("medical_cert_url")
+  isReturningStudent    Boolean  @default(false) @map("is_returning_student")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
@@ -261,6 +262,7 @@ model Teacher {
   email       String        @unique
   phone       String?
   specialties String[]      @default([])
+  poleIds     String[]      @default([]) @map("pole_ids")
   status      TeacherStatus @default(ACTIVE)
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")

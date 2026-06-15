@@ -1574,6 +1574,7 @@ async function updateEnrollment(req, res) {
       if (student.gender !== undefined) studentUpdates.gender = student.gender;
       if (student.allergies !== undefined) studentUpdates.allergies = student.allergies;
       if (student.currentTreatments !== undefined) studentUpdates.currentTreatments = student.currentTreatments;
+      if (student.isReturningStudent !== undefined) studentUpdates.isReturningStudent = Boolean(student.isReturningStudent);
       if (student.photoBase64 !== undefined) {
         studentUpdates.photoUrl = student.photoBase64 ? savePhotoBase64(student.photoBase64) : null;
       }
@@ -2967,7 +2968,10 @@ async function getTeachers(req, res) {
   try {
     const scopedPoleId = await getScopedPoleId(req.user?.role);
     const where = scopedPoleId
-      ? { classes: { some: { poleId: scopedPoleId } } }
+      ? { OR: [
+          { poleIds: { has: scopedPoleId } },
+          { classes: { some: { poleId: scopedPoleId } } },
+        ] }
       : {};
 
     const teachers = await prisma.teacher.findMany({
@@ -3023,6 +3027,7 @@ async function createTeacher(req, res) {
       email,
       phone,
       specialties = [],
+      poleIds = [],
       status = 'ACTIVE',
     } = req.body;
 
@@ -3063,6 +3068,7 @@ async function createTeacher(req, res) {
           email,
           phone,
           specialties: Array.isArray(specialties) ? specialties : [],
+          poleIds: Array.isArray(poleIds) ? poleIds : [],
           status,
         },
         include: { user: true },
@@ -3101,6 +3107,7 @@ async function updateTeacher(req, res) {
       email,
       phone,
       specialties,
+      poleIds,
       status,
     } = req.body;
 
@@ -3114,6 +3121,7 @@ async function updateTeacher(req, res) {
           ...(email !== undefined ? { email: String(email).trim() } : {}),
           ...(phone !== undefined ? { phone } : {}),
           ...(specialties !== undefined ? { specialties: Array.isArray(specialties) ? specialties : [] } : {}),
+          ...(poleIds !== undefined ? { poleIds: Array.isArray(poleIds) ? poleIds : [] } : {}),
           ...(status !== undefined ? { status } : {}),
         },
       });
