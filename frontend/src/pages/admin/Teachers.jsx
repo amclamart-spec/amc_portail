@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { FiEdit2, FiTrash2 } from 'react-icons/fi';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
+import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
 
 const SPECIALTIES = [
   'Arabe débutant (Niv. 1-2)',
@@ -19,11 +21,15 @@ const emptyForm = {
   email: '',
   phone: '',
   specialties: [],
+  poleIds: [],
   status: 'ACTIVE',
 };
 
 export default function AdminTeachers() {
+  const { user } = useAuth();
+  const isAdmin = !RESPONSABLE_POLE_ROLES.includes(user?.role);
   const [teachers, setTeachers] = useState([]);
+  const [poles, setPoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [teacherSearch, setTeacherSearch] = useState('');
@@ -70,8 +76,12 @@ export default function AdminTeachers() {
   const fetchTeachers = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/admin/professeurs');
-      setTeachers(data.teachers || []);
+      const [teachersRes, polesRes] = await Promise.all([
+        api.get('/admin/professeurs'),
+        api.get('/admin/poles'),
+      ]);
+      setTeachers(teachersRes.data.teachers || []);
+      setPoles(polesRes.data.poles || []);
     } catch (error) {
       console.error(error);
       toast.error('Impossible de charger les professeurs');
@@ -99,6 +109,7 @@ export default function AdminTeachers() {
       email: teacher.email || '',
       phone: teacher.phone || '',
       specialties: teacher.specialties || [],
+      poleIds: teacher.poleIds || [],
       status: teacher.status || 'ACTIVE',
     });
     setModalOpen(true);
@@ -110,6 +121,15 @@ export default function AdminTeachers() {
       specialties: prev.specialties.includes(specialty)
         ? prev.specialties.filter((item) => item !== specialty)
         : [...prev.specialties, specialty],
+    }));
+  };
+
+  const togglePole = (poleId) => {
+    setForm((prev) => ({
+      ...prev,
+      poleIds: prev.poleIds.includes(poleId)
+        ? prev.poleIds.filter((id) => id !== poleId)
+        : [...prev.poleIds, poleId],
     }));
   };
 
@@ -218,6 +238,7 @@ export default function AdminTeachers() {
                 <tr>
                   <th>Nom</th>
                   <th>Email</th>
+                  <th>Pôle(s)</th>
                   <th>Spécialités</th>
                   <th>Statut</th>
                   <th>Nb classes</th>
@@ -226,12 +247,17 @@ export default function AdminTeachers() {
               </thead>
               <tbody>
                 {sortedTeachers.length === 0 ? (
-                  <tr><td colSpan="6" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun professeur</td></tr>
+                  <tr><td colSpan="7" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun professeur</td></tr>
                 ) : (
                   visibleTeachers.map((teacher) => (
                     <tr key={teacher.id}>
                       <td style={{ fontWeight: 700 }}>{teacher.civility}. {teacher.lastName} {teacher.firstName}</td>
                       <td>{teacher.email}</td>
+                      <td style={{ fontSize: 13 }}>
+                        {(teacher.poleIds || []).length > 0
+                          ? (teacher.poleIds || []).map((pid) => poles.find((p) => p.id === pid)?.name || pid).join(', ')
+                          : '-'}
+                      </td>
                       <td>{(teacher.specialties || []).join(', ') || '-'}</td>
                       <td>
                         <span className={`badge ${teacher.status === 'ACTIVE' ? 'badge-success' : 'badge-warning'}`}>
@@ -352,6 +378,20 @@ export default function AdminTeachers() {
                   ))}
                 </div>
               </div>
+
+              {isAdmin && poles.length > 0 && (
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Pôle(s) d'affectation</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                    {poles.map((pole) => (
+                      <label key={pole.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input type="checkbox" checked={form.poleIds.includes(pole.id)} onChange={() => togglePole(pole.id)} />
+                        {pole.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="form-group" style={{ margin: 0 }}>
                 <label>Statut</label>
