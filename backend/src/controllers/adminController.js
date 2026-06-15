@@ -440,6 +440,28 @@ const ROLE_POLE_KEYWORD = {
   RESPONSABLE_POLE_SCIENCE_IS:  'science',
 };
 
+// Specialties whose lowercase form contains the keyword → included in that pole's scope
+const POLE_KEYWORD_SPECIALTIES = {
+  arab:    ['Arabe débutant (Niv. 1-2)', 'Arabe intermédiaire (Niv. 3-5)', 'Arabe avancé (Niv. 6-8)'],
+  coran:   ['Coran'],
+  soutien: ['Soutien scolaire'],
+  science: ['Sciences islamiques'],
+};
+
+async function getAutoDetectedPoleId(specialties) {
+  if (!Array.isArray(specialties) || specialties.length === 0) return null;
+  const specialtiesLower = specialties.map((s) => String(s).toLowerCase());
+  const allPoles = await prisma.pole.findMany({ select: { id: true, name: true } });
+  for (const pole of allPoles) {
+    const poleLower = pole.name.toLowerCase();
+    const matched = Object.keys(POLE_KEYWORD_SPECIALTIES).some(
+      (kw) => poleLower.includes(kw) && specialtiesLower.some((s) => s.includes(kw))
+    );
+    if (matched) return pole.id;
+  }
+  return null;
+}
+
 async function getScopedPoleId(role) {
   const keyword = ROLE_POLE_KEYWORD[role];
   if (!keyword) return null;
@@ -2966,11 +2988,15 @@ async function sendMessageToClassFamilies(req, res) {
  */
 async function getTeachers(req, res) {
   try {
-    const scopedPoleId = await getScopedPoleId(req.user?.role);
+    const role = req.user?.role;
+    const scopedPoleId = await getScopedPoleId(role);
+    const keyword = ROLE_POLE_KEYWORD[role];
+    const scopedSpecialties = keyword ? (POLE_KEYWORD_SPECIALTIES[keyword] || []) : [];
     const where = scopedPoleId
       ? { OR: [
-          { poleIds: { has: scopedPoleId } },
+          { poleId: scopedPoleId },
           { classes: { some: { poleId: scopedPoleId } } },
+          ...(scopedSpecialties.length > 0 ? [{ specialties: { hasSome: scopedSpecialties } }] : []),
         ] }
       : {};
 
@@ -2978,6 +3004,7 @@ async function getTeachers(req, res) {
       where,
       include: {
         user: { select: { id: true, validationStatus: true, emailVerified: true, createdAt: true } },
+        pole: { select: { id: true, name: true } },
         _count: { select: { classes: true } },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
@@ -2997,6 +3024,7 @@ async function getTeacherById(req, res) {
       where: { id },
       include: {
         user: { select: { id: true, email: true, validationStatus: true, emailVerified: true } },
+        pole: { select: { id: true, name: true } },
         classes: {
           include: {
             schoolYear: true,
@@ -3027,7 +3055,7 @@ async function createTeacher(req, res) {
       email,
       phone,
       specialties = [],
-      poleIds = [],
+      poleId = null,
       status = 'ACTIVE',
     } = req.body;
 
@@ -3043,6 +3071,9 @@ async function createTeacher(req, res) {
     const temporaryPassword = `AMC-${uuidv4().slice(0, 10)}`;
     const passwordHash = await bcrypt.hash(temporaryPassword, 12);
     const emailVerifyToken = uuidv4();
+
+    // If no pole explicitly chosen, try to detect from specialties
+    const resolvedPoleId = poleId || await getAutoDetectedPoleId(Array.isArray(specialties) ? specialties : []);
 
     const teacher = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -3068,10 +3099,10 @@ async function createTeacher(req, res) {
           email,
           phone,
           specialties: Array.isArray(specialties) ? specialties : [],
-          poleIds: Array.isArray(poleIds) ? poleIds : [],
+          poleId: resolvedPoleId || null,
           status,
         },
-        include: { user: true },
+        include: { user: true, pole: { select: { id: true, name: true } } },
       });
     });
 
@@ -3107,9 +3138,18 @@ async function updateTeacher(req, res) {
       email,
       phone,
       specialties,
-      poleIds,
+      poleId,
       status,
     } = req.body;
+
+    // Resolve poleId: explicit value takes priority, then auto-detect from specialties, then keep existing
+    let resolvedPoleId = existing.poleId;
+    if (poleId !== undefined) {
+      resolvedPoleId = poleId || null;
+    } else if (specialties !== undefined) {
+      const auto = await getAutoDetectedPoleId(Array.isArray(specialties) ? specialties : []);
+      resolvedPoleId = auto || existing.poleId || null;
+    }
 
     const teacher = await prisma.$transaction(async (tx) => {
       const updatedTeacher = await tx.teacher.update({
@@ -3121,9 +3161,10 @@ async function updateTeacher(req, res) {
           ...(email !== undefined ? { email: String(email).trim() } : {}),
           ...(phone !== undefined ? { phone } : {}),
           ...(specialties !== undefined ? { specialties: Array.isArray(specialties) ? specialties : [] } : {}),
-          ...(poleIds !== undefined ? { poleIds: Array.isArray(poleIds) ? poleIds : [] } : {}),
+          poleId: resolvedPoleId,
           ...(status !== undefined ? { status } : {}),
         },
+        include: { pole: { select: { id: true, name: true } } },
       });
 
       await tx.user.update({

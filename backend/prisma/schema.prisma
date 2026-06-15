@@ -262,12 +262,13 @@ model Teacher {
   email       String        @unique
   phone       String?
   specialties String[]      @default([])
-  poleIds     String[]      @default([]) @map("pole_ids")
+  poleId      String?       @map("pole_id")
   status      TeacherStatus @default(ACTIVE)
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
   user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pole             Pole?             @relation(fields: [poleId], references: [id], onDelete: SetNull)
   classes          Class[]
   homeworkMessages HomeworkMessage[]
 
@@ -302,6 +303,7 @@ model Pole {
   levels     Level[]
   classes    Class[]
   timeSlots  TimeSlot[]
+  teachers   Teacher[]
 
   @@map("poles")
 }
