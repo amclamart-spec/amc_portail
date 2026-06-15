@@ -353,11 +353,17 @@ export default function AdminEnrollments() {
     .filter((cls) => cls.level && cls.level.name)
     .sort((a, b) => (a.level?.name || '').localeCompare(b.level?.name || ''));
 
+  const PROVISIONAL_MARKERS = ['AFFECTATION_PROVISOIRE', 'Classe fictive'];
+  const isProvisionalClass = (cls) => !cls ? false
+    : PROVISIONAL_MARKERS.includes(String(cls.teacherName || '').trim())
+      || PROVISIONAL_MARKERS.includes(String(cls.room || '').trim());
+
   const getEligibleEditClasses = (formState) => {
     if (!formState) return [];
     return classes
       .filter((cls) => {
         if (cls.status === 'CLOSED') return false;
+        if (isProvisionalClass(cls)) return false;
         if (formState.schoolYearId && cls.schoolYearId !== formState.schoolYearId) return false;
         const classPoleId = cls.level?.pole?.id || cls.poleId || '';
         if (formState.poleId && classPoleId !== formState.poleId) return false;
@@ -550,13 +556,14 @@ export default function AdminEnrollments() {
     const consent = getActiveConsent(enrollment) || {};
     setEditingEnrollment(enrollment);
     const enrollmentClass = classes.find((cls) => cls.id === enrollment.classId);
-    const defaultPoleId = enrollmentClass?.level?.pole?.id || enrollmentClass?.poleId || '';
-    const defaultCourseDay = enrollmentClass?.dayOfWeek || '';
+    const provisional = isProvisionalClass(enrollmentClass);
+    const defaultPoleId = provisional ? '' : (enrollmentClass?.level?.pole?.id || enrollmentClass?.poleId || '');
+    const defaultCourseDay = provisional ? '' : (enrollmentClass?.dayOfWeek || '');
     setEditForm({
       status: enrollment.status,
       isWaitlist: isEnrollmentWaitlist(enrollment),
       waitlistOrder: enrollment.waitlistOrder || '',
-      classId: enrollment.classId,
+      classId: provisional ? '' : enrollment.classId,
       poleId: defaultPoleId,
       courseDay: defaultCourseDay,
       schoolYearId: enrollment.schoolYearId,
@@ -569,6 +576,7 @@ export default function AdminEnrollments() {
         gender: enrollment.student?.gender || 'GARCON',
         allergies: enrollment.student?.allergies || '',
         currentTreatments: enrollment.student?.currentTreatments || '',
+        isReturningStudent: enrollment.student?.isReturningStudent || false,
         photoUrl: enrollment.student?.photoUrl || '',
         photoBase64: '',
       },
@@ -1114,6 +1122,7 @@ export default function AdminEnrollments() {
         gender: editForm.student.gender,
         allergies: editForm.student.allergies,
         currentTreatments: editForm.student.currentTreatments,
+        isReturningStudent: editForm.student.isReturningStudent,
       };
       if (editForm.student.dateOfBirth) studentPayload.dateOfBirth = editForm.student.dateOfBirth;
 
@@ -1638,8 +1647,9 @@ export default function AdminEnrollments() {
                 <div className="form-group" style={{ margin: 0, gridColumn: 'span 2' }}>
                   <label>Classe</label>
                   <select className="form-control" value={editForm.classId || ''} onChange={(event) => handleEditClassChange(event.target.value)}>
+                    {!editForm.classId && <option value="">— Sélectionner une classe —</option>}
                     {getEligibleEditClasses(editForm).length === 0 ? (
-                      <option value="">Aucune classe disponible</option>
+                      <option value="" disabled>Aucune classe disponible</option>
                     ) : (
                       getEligibleEditClasses(editForm).map((cls) => (
                         <option key={cls.id} value={cls.id}>{formatClassLabel(cls)}</option>
@@ -1846,6 +1856,16 @@ export default function AdminEnrollments() {
                     value={editForm.student.currentTreatments}
                     onChange={(event) => updateEditForm('student', 'currentTreatments', event.target.value)}
                   />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!editForm.student.isReturningStudent}
+                      onChange={(e) => updateEditForm('student', 'isReturningStudent', e.target.checked)}
+                    />
+                    Ancien élève
+                  </label>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Photo</label>

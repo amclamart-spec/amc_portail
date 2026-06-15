@@ -121,7 +121,10 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   const [refundCodeValidating, setRefundCodeValidating] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [localPayment, setLocalPayment] = useState(null);
+  const [localPayerName, setLocalPayerName] = useState('');
   const [editAmount, setEditAmount] = useState('');
+  const [editPaidAmount, setEditPaidAmount] = useState('');
+  const [editPayerName, setEditPayerName] = useState('');
   const [editNumberOfInstallments, setEditNumberOfInstallments] = useState('');
   const [editFirstPaymentDate, setEditFirstPaymentDate] = useState('');
   const [editBankDebitDay, setEditBankDebitDay] = useState('');
@@ -143,6 +146,7 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
     if (!isOpen) {
       setRefunds([]);
       setLocalPayment(null);
+      setLocalPayerName('');
       setRefundAccessCode('');
       setRefundCodeValidated(false);
       setRefundCodeValidating(false);
@@ -152,6 +156,8 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
       setError('');
       setEditMode(false);
       setEditAmount('');
+      setEditPaidAmount('');
+      setEditPayerName('');
       setEditNumberOfInstallments('');
       setEditFirstPaymentDate('');
       setEditBankDebitDay('');
@@ -161,6 +167,7 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
     }
 
     setLocalPayment(transaction?.payment || transaction || null);
+    setLocalPayerName(transaction?.payerName || '');
 
     if (paymentId) {
       loadRefunds();
@@ -261,6 +268,9 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   const startEditing = () => {
     const currentAmount = payment.totalAmount ?? transaction?.amount;
     setEditAmount(currentAmount !== undefined && currentAmount !== null ? String(Number(currentAmount)) : '');
+    const currentPaidAmount = payment.paidAmount;
+    setEditPaidAmount(currentPaidAmount !== undefined && currentPaidAmount !== null ? String(Number(currentPaidAmount)) : '');
+    setEditPayerName(localPayerName || transaction?.payerName || '');
     setEditNumberOfInstallments(String(bankDebitInstallmentsCount || ''));
     setEditFirstPaymentDate(bankDebitMetadata.firstPaymentDate ? bankDebitMetadata.firstPaymentDate.split('T')[0] : '');
     setEditBankDebitDay(String(bankDebitDay || ''));
@@ -272,6 +282,8 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
   const cancelEditing = () => {
     setEditMode(false);
     setEditAmount('');
+    setEditPaidAmount('');
+    setEditPayerName('');
     setEditNumberOfInstallments('');
     setEditFirstPaymentDate('');
     setEditBankDebitDay('');
@@ -291,6 +303,10 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
     const canEditSchedule = isVirement || isCheque;
     const updates = {};
 
+    if (editPayerName.trim() !== (localPayerName || transaction?.payerName || '')) {
+      updates.payerName = editPayerName.trim();
+    }
+
     if (editAmount !== '') {
       const nextAmount = Number(editAmount);
       if (Number.isNaN(nextAmount) || nextAmount <= 0) {
@@ -298,6 +314,15 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
         return;
       }
       updates.totalAmount = nextAmount;
+    }
+
+    if (editPaidAmount !== '') {
+      const nextPaidAmount = Number(editPaidAmount);
+      if (Number.isNaN(nextPaidAmount) || nextPaidAmount < 0) {
+        toast.error('Le montant payé doit être positif ou nul');
+        return;
+      }
+      updates.paidAmount = nextPaidAmount;
     }
 
     if (canEditSchedule && editNumberOfInstallments) {
@@ -351,6 +376,7 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
     try {
       const { data } = await api.patch(`/payments/${paymentId}`, updates);
       setLocalPayment(data?.payment || localPayment);
+      if (updates.payerName !== undefined) setLocalPayerName(updates.payerName);
       toast.success('Paiement modifié avec succès');
       setEditMode(false);
       if (typeof onRefundCreated === 'function') {
@@ -493,6 +519,10 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
                   <div style={{ fontWeight: 600 }}>{payment.family?.familyName || '-'}</div>
                 </div>
                 <div>
+                  <div style={{ color: '#64748b', marginBottom: 8 }}>Payeur</div>
+                  <div style={{ fontWeight: 600 }}>{localPayerName || transaction?.payerName || '-'}</div>
+                </div>
+                <div>
                   <div style={{ color: '#64748b', marginBottom: 8 }}>Méthode</div>
                   <div style={{ fontWeight: 600 }}>{formatPaymentMethodLabel(payment, transaction)}</div>
                 </div>
@@ -555,15 +585,39 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
           ) : (
             <div style={{ display: 'grid', gap: 12 }}>
               <div className="form-group" style={{ margin: 0 }}>
-                <label>Montant total</label>
+                <label>Nom payeur</label>
                 <input
-                  type="number"
+                  type="text"
                   className="form-control"
-                  step="0.01"
-                  min="0.01"
-                  value={editAmount}
-                  onChange={(e) => setEditAmount(e.target.value)}
+                  value={editPayerName}
+                  onChange={(e) => setEditPayerName(e.target.value)}
+                  placeholder="Nom et prénom du payeur"
                 />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Montant total</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    step="0.01"
+                    min="0.01"
+                    value={editAmount}
+                    onChange={(e) => setEditAmount(e.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Montant payé</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    step="0.01"
+                    min="0"
+                    value={editPaidAmount}
+                    onChange={(e) => setEditPaidAmount(e.target.value)}
+                  />
+                </div>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

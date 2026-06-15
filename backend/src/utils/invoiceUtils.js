@@ -414,6 +414,10 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
       const detailTransactions = transactionSource.filter((tx) => !isChequeOrDirectDebitTransaction(tx));
       const shouldShowTransactionTable = detailTransactions.length > 0;
       const scheduleRows = transactionSource
+        .filter((tx) => {
+          const status = String(tx.status || '').trim().toUpperCase();
+          return status !== 'CANCELLED' && status !== 'ANNULÉ' && status !== 'ANNULE';
+        })
         .map((tx) => ({ tx, record: getTransactionScheduleRecord(tx) }))
         .filter((item) => item.record);
 
