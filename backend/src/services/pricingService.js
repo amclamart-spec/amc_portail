@@ -173,7 +173,15 @@ function selectTieredTariffRow(rows, count) {
 
 function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = {}) {
   const { skipRegistrationFee = false, existingArabicCount = 0, totalFamilyEnrollmentsByPole = {} } = options;
-  const registrationFee = skipRegistrationFee ? 0 : toNumber(pricing.registrationFee, DEFAULT_PRICING.registrationFee);
+
+  // No registration fee when ALL selected courses have applyEnrollmentFee === false
+  // (also kept: when all courses belong to "soutien scolaire" for backward compatibility)
+  const allNoFee = Array.isArray(enrollments) && enrollments.length > 0
+    && enrollments.every((e) => e.applyEnrollmentFee === false);
+  const allSoutien = Array.isArray(enrollments) && enrollments.length > 0
+    && enrollments.every((e) => String(e.poleName || '').toLowerCase().includes('soutien'));
+
+  const registrationFee = (skipRegistrationFee || allNoFee || allSoutien) ? 0 : toNumber(pricing.registrationFee, DEFAULT_PRICING.registrationFee);
   const fraisPrelevement = toNumber(pricing.fraisPrelevement, DEFAULT_PRICING.fraisPrelevement);
   let totalFee = 0;
   let arabicFee = 0;
@@ -195,6 +203,7 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = 
       arabicCount: 0,
       coranCount: 0,
       sciencesCount: 0,
+      soutienOnly: false,
       appliedPricing: pricing,
     };
   }
@@ -290,6 +299,7 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = 
     arabicCount,
     coranCount,
     sciencesCount,
+    soutienOnly: allSoutien || allNoFee,
     appliedPricing: pricing,
   };
 }

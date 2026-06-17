@@ -174,6 +174,17 @@ export default function AdminLevels() {
     }
   };
 
+  const togglePoleBlocking = async (poleId, field, value) => {
+    setPoles((prev) => prev.map((p) => (p.id === poleId ? { ...p, [field]: value } : p)));
+    try {
+      await api.put(`/admin/poles/${poleId}`, { [field]: value });
+    } catch (error) {
+      console.error(error);
+      toast.error('Mise à jour impossible');
+      fetchData();
+    }
+  };
+
   return (
     <div>
       <h2 style={{ color: 'var(--amc-primary)', marginBottom: 16 }}>Gestion des niveaux par pôle</h2>
@@ -209,12 +220,32 @@ export default function AdminLevels() {
           <div style={{ display: 'grid', gap: 14 }}>
             {levelsByPole.map((pole) => (
               <div key={pole.id} style={{ border: '1px solid var(--amc-border)', borderRadius: 10, padding: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div>
                     <h4 style={{ margin: 0 }}>{pole.name}</h4>
                     <p style={{ margin: 0, color: '#6B7280' }}>{pole.description || 'Sans description'}</p>
+                    <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: pole.blockReenrollments ? '#B91C1C' : '#374151', userSelect: 'none' }}>
+                        <input
+                          type="checkbox"
+                          checked={pole.blockReenrollments || false}
+                          onChange={(e) => togglePoleBlocking(pole.id, 'blockReenrollments', e.target.checked)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        Bloquer les ré-inscriptions
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: pole.blockNewEnrollments ? '#B91C1C' : '#374151', userSelect: 'none' }}>
+                        <input
+                          type="checkbox"
+                          checked={pole.blockNewEnrollments || false}
+                          onChange={(e) => togglePoleBlocking(pole.id, 'blockNewEnrollments', e.target.checked)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        Bloquer les nouvelles inscriptions
+                      </label>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                     <button className="btn btn-icon btn-outline" title="Ajouter un niveau" onClick={() => openCreateLevel(pole.id)}>
                     <FiPlus size={16} />
                   </button>

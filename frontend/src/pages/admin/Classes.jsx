@@ -12,6 +12,9 @@ const emptyForm = {
   teacherId: '',
   capacity: '',
   status: 'OPEN',
+  validFrom: '',
+  validTo: '',
+  applyEnrollmentFee: true,
 };
 
 function slotLabel(slot) {
@@ -117,7 +120,8 @@ export default function AdminClasses() {
   };
 
   const openCreateModal = () => {
-    const defaultYear = schoolYears.find((year) => year.isCurrent)?.id || schoolYears[0]?.id || '';
+    const defaultYearObj = schoolYears.find((year) => year.isCurrent) || schoolYears[0];
+    const defaultYear = defaultYearObj?.id || '';
     const defaultPole = poles[0]?.id || '';
     setEditingClass(null);
     setForm({
@@ -126,16 +130,18 @@ export default function AdminClasses() {
       poleId: defaultPole,
       levelId: levels.find((level) => level.poleId === defaultPole)?.id || '',
       teacherId: teachers[0]?.id || '',
+      validFrom: defaultYearObj?.startDate ? new Date(defaultYearObj.startDate).toISOString().slice(0, 10) : '',
+      validTo: defaultYearObj?.endDate ? new Date(defaultYearObj.endDate).toISOString().slice(0, 10) : '',
     });
     setModalOpen(true);
   };
 
   const openEditModal = (cls) => {
     setEditingClass(cls);
-    // Populate timeSlotIds from classTimeSlots (new) or fallback to single timeSlotId
     const slotIds = cls.classTimeSlots?.length > 0
       ? cls.classTimeSlots.map((cts) => cts.timeSlotId)
       : (cls.timeSlotId ? [cls.timeSlotId] : []);
+    const yearObj = schoolYears.find((y) => y.id === cls.schoolYearId);
     setForm({
       schoolYearId: cls.schoolYearId,
       poleId: cls.poleId || cls.level?.poleId || '',
@@ -144,6 +150,9 @@ export default function AdminClasses() {
       teacherId: cls.teacherId || '',
       capacity: cls.capacity,
       status: cls.status,
+      validFrom: cls.validFrom ? new Date(cls.validFrom).toISOString().slice(0, 10) : (yearObj?.startDate ? new Date(yearObj.startDate).toISOString().slice(0, 10) : ''),
+      validTo: cls.validTo ? new Date(cls.validTo).toISOString().slice(0, 10) : (yearObj?.endDate ? new Date(yearObj.endDate).toISOString().slice(0, 10) : ''),
+      applyEnrollmentFee: cls.applyEnrollmentFee !== false,
     });
     setModalOpen(true);
   };
@@ -159,6 +168,9 @@ export default function AdminClasses() {
       teacherId: form.teacherId,
       capacity: Number(form.capacity || 0),
       status: form.status,
+      validFrom: form.validFrom || null,
+      validTo: form.validTo || null,
+      applyEnrollmentFee: form.applyEnrollmentFee !== false,
     };
 
     if (!payload.schoolYearId || !payload.poleId || !payload.levelId || payload.timeSlotIds.length === 0 || !payload.teacherId) {
@@ -290,12 +302,13 @@ export default function AdminClasses() {
                   <th>Professeur</th>
                   <th>Effectif</th>
                   <th>Statut</th>
+                  <th>Validité</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {classes.length === 0 ? (
-                  <tr><td colSpan="8" style={{ textAlign: 'center', color: '#6B7280' }}>Aucune classe</td></tr>
+                  <tr><td colSpan="9" style={{ textAlign: 'center', color: '#6B7280' }}>Aucune classe</td></tr>
                 ) : (
                   visibleClasses.map((cls) => {
                     const slots = cls.classTimeSlots?.map((cts) => cts.timeSlot) || [];
@@ -318,6 +331,11 @@ export default function AdminClasses() {
                         <td>{cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : '-'}</td>
                         <td>{indicator(cls)} {cls.enrolledCount}/{cls.capacity}</td>
                         <td><span className={`badge ${cls.status === 'OPEN' ? 'badge-success' : 'badge-warning'}`}>{statusLabel(cls.status)}</span></td>
+                        <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                          {cls.validFrom ? new Date(cls.validFrom).toLocaleDateString('fr-FR') : '—'}
+                          {' → '}
+                          {cls.validTo ? new Date(cls.validTo).toLocaleDateString('fr-FR') : '—'}
+                        </td>
                         <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                           <Link className="btn btn-outline btn-sm" to={`/admin/classes/${cls.id}`}>Détail</Link>
                           {Number(cls.enrolledCount || 0) > Number(cls.capacity || 0) && (
@@ -415,7 +433,19 @@ export default function AdminClasses() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Année scolaire *</label>
-                  <select className="form-control" value={form.schoolYearId} onChange={(e) => setForm((p) => ({ ...p, schoolYearId: e.target.value }))}>
+                  <select
+                    className="form-control"
+                    value={form.schoolYearId}
+                    onChange={(e) => {
+                      const yr = schoolYears.find((y) => y.id === e.target.value);
+                      setForm((p) => ({
+                        ...p,
+                        schoolYearId: e.target.value,
+                        validFrom: yr?.startDate ? new Date(yr.startDate).toISOString().slice(0, 10) : p.validFrom,
+                        validTo: yr?.endDate ? new Date(yr.endDate).toISOString().slice(0, 10) : p.validTo,
+                      }));
+                    }}
+                  >
                     <option value="">Sélectionner</option>
                     {schoolYears.map((year) => <option key={year.id} value={year.id}>{year.label}</option>)}
                   </select>
@@ -500,6 +530,39 @@ export default function AdminClasses() {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              {/* Frais d'inscription */}
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.applyEnrollmentFee !== false}
+                    onChange={(e) => setForm((p) => ({ ...p, applyEnrollmentFee: e.target.checked }))}
+                  />
+                  Appliquer frais d'inscription
+                  <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>
+                    (décocher = pas de frais d'inscription pour cette classe)
+                  </span>
+                </label>
+              </div>
+
+              {/* Période de validité */}
+              <div>
+                <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 6 }}>
+                  Période de validité{' '}
+                  <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>(laisser vide = toute l'année scolaire)</span>
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: 12 }}>Du</label>
+                    <input type="date" className="form-control" value={form.validFrom} onChange={(e) => setForm((p) => ({ ...p, validFrom: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: 12 }}>Au</label>
+                    <input type="date" className="form-control" value={form.validTo} onChange={(e) => setForm((p) => ({ ...p, validTo: e.target.value }))} />
+                  </div>
                 </div>
               </div>
 

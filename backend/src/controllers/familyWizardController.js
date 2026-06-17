@@ -245,7 +245,18 @@ async function getPricingPreview(req, res) {
 
     });
 
-
+    // Fetch apply_enrollment_fee via raw SQL (Prisma client may not know this field yet)
+    if (classIds.length > 0) {
+      const placeholders = classIds.map((_, i) => `$${i + 1}`).join(', ');
+      const feeRows = await prisma.$queryRawUnsafe(
+        `SELECT id, apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id IN (${placeholders})`,
+        ...classIds,
+      );
+      const feeMap = Object.fromEntries(feeRows.map((r) => [r.id, r.applyEnrollmentFee]));
+      for (const cls of classes) {
+        cls.applyEnrollmentFee = feeMap[cls.id] ?? true;
+      }
+    }
 
     const poles = await prisma.pole.findMany({
 
@@ -296,6 +307,8 @@ async function getPricingPreview(req, res) {
             levelId: cls.level?.id || '',
 
             levelCode: cls.level?.code || '',
+
+            applyEnrollmentFee: cls.applyEnrollmentFee !== false,
 
           };
 
@@ -568,81 +581,63 @@ async function createEnrollmentWithUniqueRegistrationCode(tx, enrollmentData, sc
 
   const prefix = `FAM-${registrationYearCode}-`;
 
+  // Use module-level prisma (not tx) for the sequence lookup.
+  // If a prior statement in the same tx failed (e.g. P2002), PostgreSQL marks the
+  // transaction aborted and every subsequent tx query returns 25P02.
+  // Using the global prisma here uses a separate connection unaffected by the tx state.
+  const [latestEnrollment] = await prisma.enrollment.findMany({
 
+    where: { schoolYearId, registrationCode: { startsWith: prefix } },
 
-  while (true) {
+    orderBy: { registrationCode: 'desc' },
 
-    const [latestEnrollment] = await tx.enrollment.findMany({
+    take: 1,
 
-      where: { schoolYearId, registrationCode: { startsWith: prefix } },
+    select: { registrationCode: true },
 
-      orderBy: { registrationCode: 'desc' },
-
-      take: 1,
-
-      select: { registrationCode: true },
-
-    });
-
-
-
-    const baseSequence = latestEnrollment
-
-      ? Number(latestEnrollment.registrationCode.slice(prefix.length))
-
-      : 0;
+  });
 
 
 
-    let nextSequence = baseSequence + 1;
+  const baseSequence = latestEnrollment
 
-    let registrationCode = `${prefix}${String(nextSequence).padStart(3, '0')}`;
+    ? Number(latestEnrollment.registrationCode.slice(prefix.length))
 
-
-
-    while (usedRegistrationCodes.has(registrationCode)) {
-
-      nextSequence += 1;
-
-      registrationCode = `${prefix}${String(nextSequence).padStart(3, '0')}`;
-
-    }
+    : 0;
 
 
 
-    usedRegistrationCodes.add(registrationCode);
+  let nextSequence = baseSequence + 1;
 
+  let registrationCode = `${prefix}${String(nextSequence).padStart(3, '0')}`;
 
+  // usedRegistrationCodes tracks codes already allocated within this request,
+  // compensating for in-transaction rows not visible to the global prisma lookup above.
+  while (usedRegistrationCodes.has(registrationCode)) {
 
-    try {
+    nextSequence += 1;
 
-      return await tx.enrollment.create({
-
-        data: {
-
-          ...enrollmentData,
-
-          registrationCode,
-
-        },
-
-      });
-
-    } catch (error) {
-
-      if (error?.code === 'P2002' && Array.isArray(error?.meta?.target) && error.meta.target.includes('registration_code')) {
-
-        usedRegistrationCodes.delete(registrationCode);
-
-        continue;
-
-      }
-
-      throw error;
-
-    }
+    registrationCode = `${prefix}${String(nextSequence).padStart(3, '0')}`;
 
   }
+
+
+
+  usedRegistrationCodes.add(registrationCode);
+
+
+
+  return await tx.enrollment.create({
+
+    data: {
+
+      ...enrollmentData,
+
+      registrationCode,
+
+    },
+
+  });
 
 }
 
@@ -814,6 +809,19 @@ async function completeExistingFamilyRegistration(req, res) {
 
     });
 
+    // Fetch apply_enrollment_fee via raw SQL (Prisma client may not know this field yet)
+    if (selectedClassIds.length > 0) {
+      const placeholders = selectedClassIds.map((_, i) => `$${i + 1}`).join(', ');
+      const feeRows = await prisma.$queryRawUnsafe(
+        `SELECT id, apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id IN (${placeholders})`,
+        ...selectedClassIds,
+      );
+      const feeMap = Object.fromEntries(feeRows.map((r) => [r.id, r.applyEnrollmentFee]));
+      for (const cls of classes) {
+        cls.applyEnrollmentFee = feeMap[cls.id] ?? true;
+      }
+    }
+
     const classById = new Map(classes.map((c) => [c.id, c]));
 
 
@@ -918,6 +926,8 @@ async function completeExistingFamilyRegistration(req, res) {
 
               levelCode: cls.level.code,
 
+              applyEnrollmentFee: cls.applyEnrollmentFee !== false,
+
             });
 
           }
@@ -933,6 +943,8 @@ async function completeExistingFamilyRegistration(req, res) {
               poleName: level.pole?.name || '',
 
               levelCode: level.code,
+
+              applyEnrollmentFee: true,
 
             });
 
@@ -951,6 +963,8 @@ async function completeExistingFamilyRegistration(req, res) {
               poleName: pole.name,
 
               levelCode: firstLevel?.code || '',
+
+              applyEnrollmentFee: true,
 
             });
 
@@ -2817,6 +2831,19 @@ async function completeFamilyRegistration(req, res) {
 
     });
 
+    // Fetch apply_enrollment_fee via raw SQL (Prisma client may not know this field yet)
+    if (selectedClassIds.length > 0) {
+      const placeholders = selectedClassIds.map((_, i) => `$${i + 1}`).join(', ');
+      const feeRows = await prisma.$queryRawUnsafe(
+        `SELECT id, apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id IN (${placeholders})`,
+        ...selectedClassIds,
+      );
+      const feeMap = Object.fromEntries(feeRows.map((r) => [r.id, r.applyEnrollmentFee]));
+      for (const cls of classes) {
+        cls.applyEnrollmentFee = feeMap[cls.id] ?? true;
+      }
+    }
+
     const poles = await prisma.pole.findMany({
 
       where: { id: { in: selectedPoleIds } },
@@ -2905,6 +2932,8 @@ async function completeFamilyRegistration(req, res) {
 
             levelCode: cls.level.code,
 
+            applyEnrollmentFee: cls.applyEnrollmentFee !== false,
+
           };
 
         } else if (selection.poleId) {
@@ -2924,6 +2953,8 @@ async function completeFamilyRegistration(req, res) {
             poleName: pole.name,
 
             levelCode: firstLevel?.code || '',
+
+            applyEnrollmentFee: true,
 
           };
 

@@ -58,6 +58,7 @@ export default function AdminPlanning() {
   const [teachers, setTeachers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [viewDate, setViewDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [filters, setFilters] = useState({
     type: 'global',
     poleId: '',
@@ -78,7 +79,13 @@ export default function AdminPlanning() {
   );
 
   const filteredClasses = useMemo(() => {
+    const ref = viewDate ? new Date(viewDate) : null;
     return classes.filter((cls) => {
+      // Filter by validity date range
+      if (ref) {
+        if (cls.validFrom && new Date(cls.validFrom) > ref) return false;
+        if (cls.validTo && new Date(cls.validTo) < ref) return false;
+      }
       if (filters.type === 'pole' && filters.poleId && cls.poleId !== filters.poleId) return false;
       if (filters.type === 'class' && filters.classId && cls.id !== filters.classId) return false;
       if (filters.type === 'teacher' && filters.teacherId && cls.teacherId !== filters.teacherId) return false;
@@ -87,7 +94,7 @@ export default function AdminPlanning() {
       if (filters.type === 'pole' && !filters.poleId) return false;
       return filters.type === 'global' ? (!filters.poleId || cls.poleId === filters.poleId) : true;
     });
-  }, [classes, filters]);
+  }, [classes, filters, viewDate]);
 
   const periods = useMemo(() => {
     const periodsMap = new Map();
@@ -301,6 +308,18 @@ export default function AdminPlanning() {
               </select>
             </div>
           )}
+
+          <div className="form-group" style={{ margin: 0 }}>
+            <label style={{ fontSize: 13 }}>Date de référence</label>
+            <input
+              type="date"
+              className="form-control"
+              style={{ fontSize: 13, padding: '8px 10px' }}
+              value={viewDate}
+              onChange={(e) => setViewDate(e.target.value)}
+              title="Seules les classes valides à cette date sont affichées"
+            />
+          </div>
         </div>
       </div>
 
