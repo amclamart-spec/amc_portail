@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react';
+import { FiEdit2 } from 'react-icons/fi';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
+
+function getDefaultSchoolYearDates() {
+  const now = new Date();
+  const month = now.getMonth(); // 0=Jan, 8=Sept
+  const startYear = month >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return {
+    startDate: `${startYear}-09-01`,
+    endDate: `${startYear + 1}-06-30`,
+  };
+}
 
 const defaultPricing = {
   registrationFee: 10,
@@ -33,7 +44,9 @@ const PRICING_ROW_DEFINITIONS = [
 export default function AdminSettings() {
   const [schoolYears, setSchoolYears] = useState([]);
   const [poles, setPoles] = useState([]);
-  const [newYear, setNewYear] = useState({ label: '', startDate: '', endDate: '', period: 'ANNUEL', isCurrent: false });
+  const { startDate: defaultStart, endDate: defaultEnd } = getDefaultSchoolYearDates();
+  const [newYear, setNewYear] = useState({ label: '', startDate: defaultStart, endDate: defaultEnd, period: 'ANNUEL', isCurrent: false });
+  const [editYear, setEditYear] = useState(null);
   const [pricing, setPricing] = useState(defaultPricing);
   const [pricingRows, setPricingRows] = useState([]);
 
@@ -167,11 +180,31 @@ export default function AdminSettings() {
     try {
       await api.post('/admin/school-years', newYear);
       toast.success('Année scolaire créée');
-      setNewYear({ label: '', startDate: '', endDate: '', period: 'ANNUEL', isCurrent: false });
+      const { startDate: ds, endDate: de } = getDefaultSchoolYearDates();
+      setNewYear({ label: '', startDate: ds, endDate: de, period: 'ANNUEL', isCurrent: false });
       const { data } = await api.get('/admin/school-years');
       setSchoolYears(data.schoolYears);
     } catch {
       toast.error('Erreur');
+    }
+  };
+
+  const handleUpdateYear = async (e) => {
+    e.preventDefault();
+    if (!editYear) return;
+    try {
+      await api.put(`/admin/school-years/${editYear.id}`, {
+        label: editYear.label,
+        startDate: editYear.startDate,
+        endDate: editYear.endDate,
+        isCurrent: editYear.isCurrent,
+      });
+      toast.success('Année scolaire mise à jour');
+      setEditYear(null);
+      const { data } = await api.get('/admin/school-years');
+      setSchoolYears(data.schoolYears);
+    } catch {
+      toast.error('Erreur mise à jour');
     }
   };
 
@@ -206,7 +239,7 @@ export default function AdminSettings() {
         <div className="table-container mb-2">
           <table>
             <thead>
-              <tr><th>Label</th><th>Début</th><th>Fin</th><th>Période</th><th>Active</th></tr>
+              <tr><th>Label</th><th>Début</th><th>Fin</th><th>Période</th><th>Active</th><th></th></tr>
             </thead>
             <tbody>
               {schoolYears.map((y) => (
@@ -216,6 +249,21 @@ export default function AdminSettings() {
                   <td>{new Date(y.endDate).toLocaleDateString('fr-FR')}</td>
                   <td>{y.period === 'MENSUEL' ? 'Mensuel' : y.period === 'TRIMESTRIEL' ? 'Trimestriel' : y.period === 'SEMESTRIEL' ? 'Semestriel' : 'Annuel'}</td>
                   <td>{y.isCurrent ? <span className="badge badge-success">Active</span> : <span className="badge badge-gray">Non</span>}</td>
+                  <td>
+                    <button
+                      className="btn btn-icon btn-outline"
+                      title="Modifier"
+                      onClick={() => setEditYear({
+                        id: y.id,
+                        label: y.label,
+                        startDate: y.startDate ? new Date(y.startDate).toISOString().slice(0, 10) : '',
+                        endDate: y.endDate ? new Date(y.endDate).toISOString().slice(0, 10) : '',
+                        isCurrent: y.isCurrent,
+                      })}
+                    >
+                      <FiEdit2 size={14} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -395,6 +443,39 @@ export default function AdminSettings() {
           </div>
         ))}
       </div>
+
+      {/* Modale édition année scolaire */}
+      {editYear && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
+          <div className="card" style={{ width: 480, maxWidth: '95vw' }}>
+            <h3 style={{ marginBottom: 16 }}>Modifier l'année scolaire</h3>
+            <form onSubmit={handleUpdateYear} style={{ display: 'grid', gap: 12 }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Label</label>
+                <input className="form-control" value={editYear.label} onChange={(e) => setEditYear((p) => ({ ...p, label: e.target.value }))} required />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Date de début</label>
+                  <input type="date" className="form-control" value={editYear.startDate} onChange={(e) => setEditYear((p) => ({ ...p, startDate: e.target.value }))} required />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Date de fin</label>
+                  <input type="date" className="form-control" value={editYear.endDate} onChange={(e) => setEditYear((p) => ({ ...p, endDate: e.target.value }))} required />
+                </div>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
+                <input type="checkbox" checked={editYear.isCurrent} onChange={(e) => setEditYear((p) => ({ ...p, isCurrent: e.target.checked }))} />
+                Année active (courante)
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                <button type="button" className="btn btn-outline" onClick={() => setEditYear(null)}>Annuler</button>
+                <button type="submit" className="btn btn-primary">Enregistrer</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -219,6 +219,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [courseFilterDay, setCourseFilterDay] = useState('');
   const [schoolGradeByMember, setSchoolGradeByMember] = useState({});
   const [soutienSelectedByMember, setSoutienSelectedByMember] = useState({});
+  const [isOldStudentByMemberPole, setIsOldStudentByMemberPole] = useState({});
   const [memberForm, setMemberForm] = useState(emptyMember);
   const [editingMemberIndex, setEditingMemberIndex] = useState(null);
   const [activeHealthMember, setActiveHealthMember] = useState(0);
@@ -412,10 +413,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     );
   }, [poles]);
 
-  const sciencePole = useMemo(() => poles.find((p) => String(p.name || '').toLowerCase().includes('sciences')), [poles]);
-  const coranPole = useMemo(() => poles.find((p) => String(p.name || '').toLowerCase().includes('coran')), [poles]);
-
-  const selectedEnrollmentsLabel = useMemo(() => {
+const selectedEnrollmentsLabel = useMemo(() => {
     return wizard.courseSelections.map((selection) => {
       const member = wizard.members[selection.memberIndex];
       if (!member) return null;
@@ -600,16 +598,12 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     }
 
     if ((existingFamily && step === 1) || (!existingFamily && step === 2)) {
-      const oldMemberIndices = wizard.members
-        .map((member, idx) => member.isOldStudent ? idx : -1)
-        .filter((idx) => idx !== -1);
-      if (oldMemberIndices.length > 0) {
-        const selectedOldMembers = new Set(wizard.courseSelections.map((s) => s.memberIndex));
-        const missingSelection = oldMemberIndices.some((idx) => !selectedOldMembers.has(idx));
-        if (missingSelection) {
-          toast.error('Veuillez sélectionner un cours pour chaque ancien élève');
-          return false;
-        }
+      const membersWithoutSelection = wizard.members
+        .map((_, idx) => idx)
+        .filter((idx) => !wizard.courseSelections.some((s) => s.memberIndex === idx));
+      if (membersWithoutSelection.length > 0) {
+        toast.error('Veuillez sélectionner au moins un cours pour chaque élève');
+        return false;
       }
     }
 
@@ -870,6 +864,35 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
     });
   };
 
+  const getIsOldStudentForPole = (memberIndex, poleId) => {
+    const key = `${memberIndex}_${poleId}`;
+    const explicit = isOldStudentByMemberPole[key];
+    if (explicit !== undefined) return explicit;
+    return wizard.members[memberIndex]?.isOldStudent || false;
+  };
+
+  const toggleOldStudentPole = (memberIndex, poleId, value) => {
+    const key = `${memberIndex}_${poleId}`;
+    setIsOldStudentByMemberPole((prev) => ({ ...prev, [key]: value }));
+    setWizard((prev) => ({
+      ...prev,
+      courseSelections: prev.courseSelections.filter((s) => {
+        if (s.memberIndex !== memberIndex) return true;
+        if (s.poleId === poleId && !s.classId && !s.levelId) return false;
+        if (s.levelId) {
+          const lvl = levelsById.get(s.levelId);
+          if (lvl?.poleId === poleId) return false;
+        }
+        if (s.classId) {
+          const cls = allClasses.find((c) => c.id === s.classId);
+          const cPoleId = cls?.poleId || cls?.level?.poleId || cls?.level?.pole?.id;
+          if (cPoleId === poleId) return false;
+        }
+        return true;
+      }),
+    }));
+  };
+
   const activeHealthForm = wizard.healthForms[activeHealthMember] || emptyHealthForm;
 
   const updateActiveHealthForm = (partial) => {
@@ -1073,10 +1096,6 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                   <span style={{ fontSize: 13, color: '#334155', fontWeight: 600 }}>Photo</span>
                   <input type="file" accept="image/*" className="form-control" onChange={handleMemberPhotoChange} style={{ padding: 2, minWidth: 0, width: 'auto' }} />
                 </label>
-                <label style={{ margin: 0, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', border: '1px solid #CBD5E1', borderRadius: 10, background: '#F8FAFC' }} className="member-inline-legacy">
-                  <input type="checkbox" checked={memberForm.isOldStudent || false} onChange={(e) => setMemberForm((p) => ({ ...p, isOldStudent: e.target.checked }))} />
-                  <span style={{ fontSize: 13, color: '#334155' }}>Ancien élève</span>
-                </label>
                 <button className="btn btn-primary btn-sm" onClick={addOrUpdateMember} style={{ whiteSpace: 'nowrap', padding: '10px 14px' }}>{editingMemberIndex !== null ? 'Mettre à jour' : 'Ajouter'}</button>
               </div>
               {memberForm.photoBase64 && (
@@ -1111,335 +1130,186 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
             {loadingClasses ? <p>Chargement des créneaux...</p> : (
               <>
                 {wizard.members.map((member, memberIndex) => {
-                  const isOldStudent = Boolean(member.isOldStudent);
                   const memberAge = getAgeFromDate(member.dateOfBirth);
                   return (
                     <div key={`${member.firstName}-${memberIndex}`} style={{ marginBottom: 20, border: '1px solid #E2E8F0', borderRadius: 12, padding: 16, background: '#ffffff' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
                         <h4 style={{ margin: 0 }}>{member.firstName} {member.lastName}</h4>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
-                          <input type="checkbox" checked={isOldStudent} onChange={(e) => {
-                            const checked = e.target.checked;
-                            setWizard((prev) => ({
-                              ...prev,
-                              members: prev.members.map((m, idx) => idx === memberIndex ? { ...m, isOldStudent: checked } : m),
-                              courseSelections: checked ? prev.courseSelections : prev.courseSelections.filter((s) => s.memberIndex !== memberIndex),
-                            }));
-                          }} /> Ancien élève
-                        </label>
                       </div>
-                      {!isOldStudent ? (
-                        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', marginBottom: 16 }}>
-                          <strong>Nouveau cours :</strong> Sélectionnez les pôles et cours disponibles. Un test de niveau sera organisé avec le secrétariat.
-                        </div>
-                      ) : null}
-                      {!isOldStudent && poles.length > 0 ? (
-                        <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
-                          {poles.map((pole) => {
-                              // If science levels are merged into coran block, skip rendering the standalone science pole
-                              if (sciencePole && coranPole && pole.id === sciencePole.id) return null;
+                      <div style={{ display: 'grid', gap: 16 }}>
+                        {poles.map((pole) => {
+                          if (normStr(pole.name).includes('soutien')) return null;
 
-                              const isArabic = String(pole.name || '').toLowerCase().includes('arabe');
-                              const isCoran = String(pole.name || '').toLowerCase().includes('coran');
+                          const isOldForPole = getIsOldStudentForPole(memberIndex, pole.id);
+                          const isArabic = String(pole.name || '').toLowerCase().includes('arabe');
+                          const isCoran = String(pole.name || '').toLowerCase().includes('coran');
 
-                              // Arabic: simple checkbox for the pole
-                              if (isArabic) {
-                                const poleSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId);
-                                return (
-                                  <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                                      <div>
-                                        <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name}</div>
-                                        <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Cours de langue arabe'}</div>
-                                      </div>
-                                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                                        <input
-                                          type="checkbox"
-                                          checked={poleSelected}
-                                          onChange={() => {
-                                            setWizard((prev) => {
-                                              const exists = prev.courseSelections.some((s) => s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId);
-                                              const nextSelections = exists
-                                                ? prev.courseSelections.filter((s) => !(s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId))
-                                                : [...prev.courseSelections, { memberIndex, poleId: pole.id }];
-                                              return { ...prev, courseSelections: nextSelections };
-                                            });
-                                          }}
-                                          style={{ cursor: 'pointer' }}
-                                        />
-                                        Sélectionner
-                                      </label>
-                                    </div>
-                                  </div>
-                                );
-                              }
+                          const poleClasses = allClasses.filter((cls) => {
+                            const cPoleId = cls.poleId || cls.level?.pole?.id;
+                            if (cPoleId !== pole.id) return false;
+                            return isClassAllowedForAge(cls, memberAge);
+                          });
 
-                              // Coran: show Coran levels plus Sciences levels merged
-                              if (isCoran) {
-                                const scienceLevels = (sciencePole && sciencePole.levels) || [];
-                                const mergedLevels = [...(pole.levels || []).map((l) => ({ ...l, poleId: pole.id })), ...scienceLevels.map((l) => ({ ...l, poleId: sciencePole?.id }))]
-                                  .filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
+                          const allPoleClasses = poleClasses;
 
-                                return (
-                                  <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                                      <div>
-                                        <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name} & Sciences islamiques</div>
-                                        <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Choisissez un ou plusieurs niveaux'}</div>
-                                      </div>
-                                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
-                                        {mergedLevels.length} niveau(s)
-                                      </div>
-                                    </div>
-
-                                    {mergedLevels.length > 0 ? (
-                                      <div style={{ display: 'grid', gap: 12 }}>
-                                        {mergedLevels.map((level) => {
-                                          const levelSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.levelId === level.id);
-                                          return (
-                                            <label
-                                              key={level.id}
-                                              style={{
-                                                borderRadius: 14,
-                                                border: '1px solid',
-                                                borderColor: levelSelected ? '#2563EB' : '#E2E8F0',
-                                                background: levelSelected ? '#EFF6FF' : '#FFFFFF',
-                                                padding: 14,
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center',
-                                                cursor: 'pointer',
-                                              }}
-                                            >
-                                              <div>
-                                                <div style={{ fontSize: 14, fontWeight: 700 }}>{level.name}</div>
-                                                <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>{level.code || 'Niveau'}</div>
-                                              </div>
-                                              <input
-                                                type="checkbox"
-                                                checked={levelSelected}
-                                                onChange={() => toggleLevelSelection(memberIndex, level.poleId, level.id)}
-                                              />
-                                            </label>
-                                          );
-                                        })}
-                                      </div>
-                                    ) : (
-                                      <div style={{ fontSize: 13, color: '#64748B', padding: '12px 0' }}>Aucun niveau disponible pour ce pôle.</div>
-                                    )}
-                                  </div>
-                                );
-                              }
-
-                              // Soutien scolaire handled in unified section below
-                              if (normStr(pole.name).includes('soutien')) return null;
-
-                              // Default: show levels for other poles
-                                  const levelList = (pole.levels || []).filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
-                              return (
-                                <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                          const renderClassCard = (cls) => {
+                            const selected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.classId === cls.id);
+                            const isWaitlist = cls.status === 'FULL';
+                            return (
+                              <label key={cls.id} style={{ borderRadius: 14, border: '1px solid', borderColor: selected ? '#2563EB' : isWaitlist ? '#F87171' : '#E2E8F0', background: selected ? '#EFF6FF' : isWaitlist ? '#FEF2F2' : '#FFFFFF', padding: 14, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', cursor: 'pointer', minHeight: 130 }}>
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
                                     <div>
-                                      <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{pole.name}</div>
-                                      <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description || 'Sélectionnez un niveau pour ce pôle'}</div>
+                                      <div style={{ fontSize: 14, fontWeight: 700 }}>{cls.level?.name || 'Niveau'}</div>
+                                      {(() => {
+                                        const slots = cls.classTimeSlots?.map((cts) => cts.timeSlot) || [];
+                                        return slots.length > 0
+                                          ? slots.map((s, si) => <div key={si} style={{ fontSize: 12, color: '#475569', marginTop: si === 0 ? 2 : 1 }}>{s.dayOfWeek} {s.startTime} - {s.endTime}</div>)
+                                          : <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{cls.dayOfWeek} {cls.startTime} - {cls.endTime}</div>;
+                                      })()}
                                     </div>
-                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
-                                      {levelList.length} niveau(s)
-                                    </div>
+                                    {selected && <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#DBEAFE', borderRadius: 999, padding: '4px 10px' }}>Sélectionné</span>}
                                   </div>
+                                  <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>Salle {cls.room || '-'}</div>
+                                  {cls.teacherName ? <div style={{ fontSize: 12, color: '#475569' }}>Professeur : {cls.teacherName}</div> : null}
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                                  <span style={{ fontSize: 12, color: isWaitlist ? '#B91C1C' : '#334155' }}>{isWaitlist ? "Liste d'attente" : `${cls.enrolledCount}/${cls.capacity} inscrits`}</span>
+                                  <input type="checkbox" checked={selected} onChange={() => toggleCourseSelection(memberIndex, cls.id)} />
+                                </div>
+                              </label>
+                            );
+                          };
 
-                                      {levelList.length > 0 ? (
-                                    <div style={{ display: 'grid', gap: 12 }}>
-                                      {levelList.map((level) => {
+                          const blockBoth = pole.blockReenrollments && pole.blockNewEnrollments;
+                          const blockOnlyNew = pole.blockNewEnrollments && !pole.blockReenrollments;
+                          const blockOnlyReenroll = pole.blockReenrollments && !pole.blockNewEnrollments;
+                          const effectiveIsOldForPole = blockOnlyNew ? true : (blockOnlyReenroll ? false : isOldForPole);
+
+                          return (
+                            <div key={pole.id} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                <div>
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>
+                                    {pole.name}
+                                  </div>
+                                  {pole.description && <div style={{ color: '#64748B', fontSize: 13 }}>{pole.description}</div>}
+                                  <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: pole.blockReenrollments ? '#FEF2F2' : '#F0FDF4', color: pole.blockReenrollments ? '#B91C1C' : '#15803D', border: `1px solid ${pole.blockReenrollments ? '#FECACA' : '#BBF7D0'}` }}>
+                                      Ré-inscriptions : {pole.blockReenrollments ? 'fermées' : 'ouvertes'}
+                                    </span>
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: pole.blockNewEnrollments ? '#FEF2F2' : '#F0FDF4', color: pole.blockNewEnrollments ? '#B91C1C' : '#15803D', border: `1px solid ${pole.blockNewEnrollments ? '#FECACA' : '#BBF7D0'}` }}>
+                                      Nouvelles inscriptions : {pole.blockNewEnrollments ? 'fermées' : 'ouvertes'}
+                                    </span>
+                                  </div>
+                                </div>
+                                {!blockBoth && !blockOnlyReenroll && (
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: blockOnlyNew ? '#6B7280' : '#2563EB', fontSize: 12, fontWeight: 700, cursor: blockOnlyNew ? 'default' : 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={effectiveIsOldForPole}
+                                      disabled={blockOnlyNew}
+                                      onChange={(e) => !blockOnlyNew && toggleOldStudentPole(memberIndex, pole.id, e.target.checked)}
+                                      style={{ cursor: blockOnlyNew ? 'default' : 'pointer' }}
+                                    />
+                                    Ancien élève
+                                  </label>
+                                )}
+                              </div>
+
+                              {blockBoth ? (
+                                <div style={{ padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13 }}>
+                                  Les inscriptions pour ce pôle ne sont pas ouvertes actuellement.
+                                </div>
+                              ) : effectiveIsOldForPole ? (
+                                allPoleClasses.length === 0 ? (
+                                  <div style={{ padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13 }}>
+                                    Aucun cours disponible pour ce pôle.
+                                  </div>
+                                ) : (
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                                    {allPoleClasses.map(renderClassCard)}
+                                  </div>
+                                )
+                              ) : isArabic ? (
+                                (() => {
+                                  const poleSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId);
+                                  return (
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, padding: '6px 12px', borderRadius: 999, background: poleSelected ? '#DBEAFE' : '#F8FAFC', color: poleSelected ? '#1D4ED8' : '#475569', fontSize: 13, cursor: 'pointer', width: 'fit-content' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={poleSelected}
+                                        onChange={() => {
+                                          setWizard((prev) => {
+                                            const exists = prev.courseSelections.some((s) => s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId);
+                                            return {
+                                              ...prev,
+                                              courseSelections: exists
+                                                ? prev.courseSelections.filter((s) => !(s.memberIndex === memberIndex && s.poleId === pole.id && !s.classId && !s.levelId))
+                                                : [...prev.courseSelections, { memberIndex, poleId: pole.id }],
+                                            };
+                                          });
+                                        }}
+                                      />
+                                      Sélectionner pour ce pôle
+                                    </label>
+                                  );
+                                })()
+                              ) : isCoran ? (
+                                (() => {
+                                  const coranLevels = (pole.levels || []).filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
+                                  return coranLevels.length === 0 ? (
+                                    <div style={{ fontSize: 13, color: '#64748B', padding: '8px 0' }}>Aucun niveau disponible pour cet âge.</div>
+                                  ) : (
+                                    <div style={{ display: 'grid', gap: 8 }}>
+                                      {coranLevels.map((level) => {
                                         const levelSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.levelId === level.id);
                                         return (
-                                          <label
-                                            key={level.id}
-                                            style={{
-                                              borderRadius: 14,
-                                              border: '1px solid',
-                                              borderColor: levelSelected ? '#2563EB' : '#E2E8F0',
-                                              background: levelSelected ? '#EFF6FF' : '#FFFFFF',
-                                              padding: 14,
-                                              display: 'flex',
-                                              justifyContent: 'space-between',
-                                              alignItems: 'center',
-                                              cursor: 'pointer',
-                                            }}
-                                          >
+                                          <label key={level.id} style={{ borderRadius: 12, border: '1px solid', borderColor: levelSelected ? '#2563EB' : '#E2E8F0', background: levelSelected ? '#EFF6FF' : '#FFFFFF', padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                                             <div>
                                               <div style={{ fontSize: 14, fontWeight: 700 }}>{level.name}</div>
-                                              <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>{level.code || 'Niveau'}</div>
+                                              <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{level.code || ''}</div>
                                             </div>
-                                            <input
-                                              type="checkbox"
-                                              checked={levelSelected}
-                                              onChange={() => toggleLevelSelection(memberIndex, pole.id, level.id)}
-                                            />
+                                            <input type="checkbox" checked={levelSelected} onChange={() => toggleLevelSelection(memberIndex, pole.id, level.id)} />
                                           </label>
                                         );
                                       })}
                                     </div>
+                                  );
+                                })()
+                              ) : (
+                                (() => {
+                                  const levelList = (pole.levels || []).filter((lvl) => isLevelAllowedForAge(lvl, memberAge));
+                                  return levelList.length === 0 ? (
+                                    <div style={{ fontSize: 13, color: '#64748B', padding: '8px 0' }}>Aucun niveau disponible pour ce pôle.</div>
                                   ) : (
-                                    <div style={{ fontSize: 13, color: '#64748B', padding: '12px 0' }}>Aucun niveau disponible pour ce pôle.</div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                      ) : null}
-                      {isOldStudent && classesGroupedByPole.length > 0 ? (() => {
-                        const schoolGrade = schoolGradeByMember[memberIndex] || '';
-                        const filteredGroups = classesGroupedByPole
-                          .map((group) => {
-                            const isSoutienGroup = normStr(group.poleName).includes('soutien');
-                            return {
-                              ...group,
-                              isSoutien: isSoutienGroup,
-                              classes: group.classes.filter((cls) => {
-                                if (!isClassAllowedForAge(cls, memberAge)) return false;
-                                if (courseFilterPoleId && group.poleId !== courseFilterPoleId) return false;
-                                if (courseFilterDay) {
-                                  const slots = cls.classTimeSlots?.map((cts) => cts.timeSlot) || [];
-                                  const days = slots.length > 0 ? slots.map((s) => s.dayOfWeek) : [cls.dayOfWeek];
-                                  if (!days.includes(courseFilterDay)) return false;
-                                }
-                                // Soutien scolaire: hide classes until grade is selected and level matches
-                                if (isSoutienGroup) {
-                                  if (!schoolGrade) return false;
-                                  if (!matchSoutienLevel(cls.level?.name, schoolGrade, member.gender)) return false;
-                                }
-                                return true;
-                              }),
-                            };
-                          })
-                          .filter((group) => group.classes.length > 0 && !group.isSoutien);
-                        const hasAnyClass = filteredGroups.some((group) => group.classes.length > 0);
-                        const filtersSelected = Boolean(courseFilterPoleId || courseFilterDay);
-                        return (
-                          <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, padding: 16, borderRadius: 18, background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 10px 30px rgba(15, 23, 42, 0.05)' }}>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 180, maxWidth: 240, flex: 1 }}>
-                                <label style={{ fontWeight: 700, fontSize: 12, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Pôle</label>
-                                <select
-                                  value={courseFilterPoleId}
-                                  onChange={(e) => setCourseFilterPoleId(e.target.value)}
-                                  style={{ border: '1px solid #CBD5E1', borderRadius: 14, padding: '12px 14px', background: '#F8FAFC', color: '#0F172A', outline: 'none', boxShadow: 'inset 0 1px 2px rgba(15, 23, 42, 0.06)' }}
-                                >
-                                  <option value="">Choisir</option>
-                                  {poles.map((pole) => (
-                                    <option key={pole.id} value={pole.id}>{pole.name}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 180, maxWidth: 240, flex: 1 }}>
-                                <label style={{ fontWeight: 700, fontSize: 12, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Jour</label>
-                                <select
-                                  value={courseFilterDay}
-                                  onChange={(e) => setCourseFilterDay(e.target.value)}
-                                  style={{ border: '1px solid #CBD5E1', borderRadius: 14, padding: '12px 14px', background: '#F8FAFC', color: '#0F172A', outline: 'none', boxShadow: 'inset 0 1px 2px rgba(15, 23, 42, 0.06)' }}
-                                >
-                                  <option value="">Choisir</option>
-                                  {WEEK_DAYS.map((day) => (
-                                    <option key={day} value={day}>{day}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                            {!filtersSelected ? (
-                              <div style={{ padding: 16, borderRadius: 12, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E' }}>
-                                Veuillez sélectionner au moins un Pôle ou un Jour pour afficher les cours disponibles.
-                              </div>
-                            ) : (
-                              <>
-                                <div style={{ borderRadius: 16, background: '#F8FAFC', border: '1px solid #E2E8F0', padding: 16 }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                                    <div>
-                                      <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>Niveaux disponibles par pôle</div>
-                                      <div style={{ color: '#64748B', fontSize: 13 }}>Affichage des niveaux par pôle en plus des cours Arabe et Coran.</div>
-                                    </div>
-                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>
-                                      {filteredGroups.length} pôles
-                                    </div>
-                                  </div>
-                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                                    {filteredGroups.map((group) => {
-                                      const uniqueLevels = Array.from(new Set(group.classes.map((cls) => cls.level?.name).filter(Boolean)));
-                                      return (
-                                        <div key={`${group.poleId}-levels`} style={{ borderRadius: 14, background: '#FFFFFF', border: '1px solid #E2E8F0', padding: 12 }}>
-                                          <div style={{ fontSize: 14, fontWeight: 700, color: '#1D4ED8', marginBottom: 8 }}>{group.poleName}</div>
-                                          <div style={{ fontSize: 12, color: '#475569', minHeight: 32 }}>
-                                            {uniqueLevels.length > 0 ? uniqueLevels.join(', ') : 'Aucun niveau défini'}
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-
-                                {!hasAnyClass ? (
-                                  <div style={{ padding: 16, borderRadius: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' }}>
-                                    Aucun cours disponible pour cet âge ou les filtres sélectionnés ({memberAge !== null ? `${memberAge} ans` : 'date de naissance invalide'}).
-                                  </div>
-                                ) : null}
-
-                                {filteredGroups.map((group) => {
-                                  // Render a reusable class card
-                                  const renderClassCard = (cls) => {
-                                    const selected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.classId === cls.id);
-                                    const isWaitlist = cls.status === 'FULL';
-                                    return (
-                                      <label key={cls.id} style={{ borderRadius: 14, border: '1px solid', borderColor: selected ? '#2563EB' : isWaitlist ? '#F87171' : '#E2E8F0', background: selected ? '#EFF6FF' : isWaitlist ? '#FEF2F2' : '#FFFFFF', padding: 14, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', cursor: 'pointer', minHeight: 130, transition: 'transform 0.15s ease, box-shadow 0.15s ease', boxShadow: selected ? '0 10px 30px rgba(37,99,235,0.08)' : '0 0 0 rgba(0,0,0,0)' }}>
-                                        <div>
-                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                                    <div style={{ display: 'grid', gap: 8 }}>
+                                      {levelList.map((level) => {
+                                        const levelSelected = wizard.courseSelections.some((s) => s.memberIndex === memberIndex && s.levelId === level.id);
+                                        return (
+                                          <label key={level.id} style={{ borderRadius: 12, border: '1px solid', borderColor: levelSelected ? '#2563EB' : '#E2E8F0', background: levelSelected ? '#EFF6FF' : '#FFFFFF', padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                                             <div>
-                                              <div style={{ fontSize: 14, fontWeight: 700 }}>{cls.level?.name || cls.pole?.name || 'Niveau'}</div>
-                                              {(() => {
-                                                const slots = cls.classTimeSlots?.map((cts) => cts.timeSlot) || [];
-                                                return slots.length > 0
-                                                  ? slots.map((s, si) => <div key={si} style={{ fontSize: 12, color: '#475569', marginTop: si === 0 ? 2 : 1 }}>{s.dayOfWeek} {s.startTime} - {s.endTime}</div>)
-                                                  : <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{cls.dayOfWeek} {cls.startTime} - {cls.endTime}</div>;
-                                              })()}
+                                              <div style={{ fontSize: 14, fontWeight: 700 }}>{level.name}</div>
+                                              <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{level.code || ''}</div>
                                             </div>
-                                            {selected && <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#DBEAFE', borderRadius: 999, padding: '4px 10px' }}>Sélectionné</span>}
-                                          </div>
-                                          <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>Salle {cls.room || '-'}</div>
-                                          {cls.teacherName ? <div style={{ fontSize: 12, color: '#475569' }}>Professeur : {cls.teacherName}</div> : null}
-                                        </div>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-                                          <span style={{ fontSize: 12, color: isWaitlist ? '#B91C1C' : '#334155' }}>{isWaitlist ? 'Liste d\'attente' : `${cls.enrolledCount}/${cls.capacity} inscrits`}</span>
-                                          <input type="checkbox" checked={selected} onChange={() => toggleCourseSelection(memberIndex, cls.id)} />
-                                        </div>
-                                      </label>
-                                    );
-                                  };
-
-                                  // Normal group rendering
-                                  return (
-                                    <div key={group.poleId} style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-                                        <div>
-                                          <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{group.poleName}</div>
-                                          <div style={{ color: '#64748B', fontSize: 13 }}>{group.classes.length} cours disponibles</div>
-                                        </div>
-                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700 }}>Par pôle</div>
-                                      </div>
-                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-                                        {group.classes.map(renderClassCard)}
-                                      </div>
+                                            <input type="checkbox" checked={levelSelected} onChange={() => toggleLevelSelection(memberIndex, pole.id, level.id)} />
+                                          </label>
+                                        );
+                                      })}
                                     </div>
                                   );
-                                })}
-                                </>
+                                })()
                               )}
-                        </div>
-                        );
-                      })() : null}
+                            </div>
+                          );
+                        })}
+                      </div>
 
                       {/* Unified soutien scolaire - always shown regardless of isOldStudent */}
                       {(() => {
                         const soutienPole = poles.find((p) => normStr(p.name).includes('soutien'));
                         if (!soutienPole) return null;
+                        const soutienBlockBoth = soutienPole.blockReenrollments && soutienPole.blockNewEnrollments;
                         const soutienSelected = soutienSelectedByMember[memberIndex] || false;
                         const schoolGrade = schoolGradeByMember[memberIndex] || '';
                         const soutienClasses = allClasses.filter((cls) => {
@@ -1452,33 +1322,48 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                         return (
                           <div style={{ marginTop: 16 }}>
                             <div style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: soutienSelected ? 12 : 0 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: soutienSelected && !soutienBlockBoth ? 12 : 0 }}>
                                 <div>
                                   <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8' }}>{soutienPole.name}</div>
                                   <div style={{ color: '#64748B', fontSize: 13 }}>{soutienPole.description || 'Cours de soutien scolaire'}</div>
+                                  <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: soutienPole.blockReenrollments ? '#FEF2F2' : '#F0FDF4', color: soutienPole.blockReenrollments ? '#B91C1C' : '#15803D', border: `1px solid ${soutienPole.blockReenrollments ? '#FECACA' : '#BBF7D0'}` }}>
+                                      Ré-inscriptions : {soutienPole.blockReenrollments ? 'fermées' : 'ouvertes'}
+                                    </span>
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: soutienPole.blockNewEnrollments ? '#FEF2F2' : '#F0FDF4', color: soutienPole.blockNewEnrollments ? '#B91C1C' : '#15803D', border: `1px solid ${soutienPole.blockNewEnrollments ? '#FECACA' : '#BBF7D0'}` }}>
+                                      Nouvelles inscriptions : {soutienPole.blockNewEnrollments ? 'fermées' : 'ouvertes'}
+                                    </span>
+                                  </div>
                                 </div>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={soutienSelected}
-                                    onChange={(e) => {
-                                      setSoutienSelectedByMember((prev) => ({ ...prev, [memberIndex]: e.target.checked }));
-                                      if (!e.target.checked) {
-                                        setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: '' }));
-                                        setWizard((prev) => ({
-                                          ...prev,
-                                          courseSelections: prev.courseSelections.filter(
-                                            (s) => !(s.memberIndex === memberIndex && allClasses.find((c) => c.id === s.classId && (c.poleId === soutienPole.id || c.level?.poleId === soutienPole.id || c.level?.pole?.id === soutienPole.id)))
-                                          ),
-                                        }));
-                                      }
-                                    }}
-                                    style={{ cursor: 'pointer' }}
-                                  />
-                                  Sélectionner
-                                </label>
+                                {!soutienBlockBoth && (
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, padding: '6px 12px', borderRadius: 999, background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={soutienSelected}
+                                      onChange={(e) => {
+                                        setSoutienSelectedByMember((prev) => ({ ...prev, [memberIndex]: e.target.checked }));
+                                        if (!e.target.checked) {
+                                          setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: '' }));
+                                          setWizard((prev) => ({
+                                            ...prev,
+                                            courseSelections: prev.courseSelections.filter(
+                                              (s) => !(s.memberIndex === memberIndex && allClasses.find((c) => c.id === s.classId && (c.poleId === soutienPole.id || c.level?.poleId === soutienPole.id || c.level?.pole?.id === soutienPole.id)))
+                                            ),
+                                          }));
+                                        }
+                                      }}
+                                      style={{ cursor: 'pointer' }}
+                                    />
+                                    Sélectionner
+                                  </label>
+                                )}
                               </div>
-                              {soutienSelected && (
+                              {soutienBlockBoth && (
+                                <div style={{ padding: 12, borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13 }}>
+                                  Les inscriptions pour ce pôle ne sont pas ouvertes actuellement.
+                                </div>
+                              )}
+                              {!soutienBlockBoth && soutienSelected && (
                                 <>
                                   <div style={{ marginBottom: 12 }}>
                                     <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Classe de l'élève *</label>
@@ -1547,8 +1432,14 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
                 {pricingPreview && (
                   <div className="card" style={{ marginTop: 16, background: '#EEF2FF' }}>
                     <strong>Récap tarifaire</strong>
-                    <div>Frais inscription (1 fois par famille): {Number(pricingPreview.registrationFee).toFixed(2)} €</div>
-                    <div style={{ fontSize: 12, color: '#475569', marginBottom: 12 }}>Ce montant est facturé une seule fois, quel que soit le nombre d'enfants inscrits.</div>
+                    {pricingPreview.registrationFee === 0 ? (
+                      <div style={{ fontSize: 12, color: '#059669', marginBottom: 4 }}>Frais d'inscription : non applicables pour cette inscription</div>
+                    ) : (
+                      <>
+                        <div>Frais inscription (1 fois par famille): {Number(pricingPreview.registrationFee).toFixed(2)} €</div>
+                        <div style={{ fontSize: 12, color: '#475569', marginBottom: 12 }}>Ce montant est facturé une seule fois, quel que soit le nombre d'enfants inscrits.</div>
+                      </>
+                    )}
                     <div>Arabe ({pricingPreview.arabicCount} élève(s)): {Number(pricingPreview.arabicFee).toFixed(2)} €</div>
                     <div>Coran: {Number(pricingPreview.coranFee ?? pricingPreview.coranScienceFee).toFixed(2)} €</div>
                     <div>Sciences islamiques: {Number(pricingPreview.sciencesFee || 0).toFixed(2)} €</div>

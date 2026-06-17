@@ -6,9 +6,17 @@ import AdminEnrollmentWizard from './AdminEnrollmentWizard';
 import { useAuth } from '../../context/AuthContext';
 import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
 
+const ROLE_POLE_KEYWORD = {
+  RESPONSABLE_POLE_CORAN: 'coran',
+  RESPONSABLE_POLE_ARABE: 'arabe',
+  RESPONSABLE_POLE_SOUTIEN_SCO: 'soutien',
+  RESPONSABLE_POLE_SCIENCE_IS: 'science',
+};
+
 export default function AdminEnrollments() {
   const { user } = useAuth();
-  const canManagePayments = !RESPONSABLE_POLE_ROLES.includes(user?.role);
+  const isResponsable = RESPONSABLE_POLE_ROLES.includes(user?.role);
+  const canManagePayments = !isResponsable;
   const [enrollments, setEnrollments] = useState([]);
   const [statusUpdates, setStatusUpdates] = useState({});
   const [classes, setClasses] = useState([]);
@@ -58,6 +66,8 @@ export default function AdminEnrollments() {
   const [expandedFamilies, setExpandedFamilies] = useState({});
   const [registrationsBlocked, setRegistrationsBlocked] = useState(false);
   const [registrationBlockLoading, setRegistrationBlockLoading] = useState(true);
+  const [poles, setPoles] = useState([]);
+  const [poleBlockLoading, setPoleBlockLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [enrollmentsRefreshKey, setEnrollmentsRefreshKey] = useState(0);
 
@@ -147,6 +157,32 @@ export default function AdminEnrollments() {
     loadStatus();
     return () => { isMounted = false; };
   }, []);
+
+  // Fetch poles (needed for responsable pole blocking)
+  useEffect(() => {
+    api.get('/admin/poles').then(({ data }) => setPoles(data.poles || [])).catch(() => {});
+  }, []);
+
+  // Find the pole managed by the current responsable
+  const myPole = useMemo(() => {
+    if (!isResponsable) return null;
+    const keyword = ROLE_POLE_KEYWORD[user?.role] || '';
+    return poles.find((p) => String(p.name || '').toLowerCase().includes(keyword)) || null;
+  }, [poles, user?.role, isResponsable]);
+
+  const togglePoleBlocking = async (field, value) => {
+    if (!myPole) return;
+    setPoleBlockLoading(true);
+    try {
+      await api.put(`/admin/poles/${myPole.id}`, { [field]: value });
+      setPoles((prev) => prev.map((p) => p.id === myPole.id ? { ...p, [field]: value } : p));
+      toast.success('Paramètre mis à jour');
+    } catch {
+      toast.error('Impossible de mettre à jour le paramètre');
+    } finally {
+      setPoleBlockLoading(false);
+    }
+  };
 
   const statusBadge = (status, isWaitlist = false) => {
     if (status === 'PENDING' && isWaitlist) {
@@ -1265,20 +1301,59 @@ export default function AdminEnrollments() {
           </div>
         </div>
 
-        <div style={{ background: '#ffffff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#111827', fontWeight: 600 }}>
-            <input
-              type="checkbox"
-              checked={registrationsBlocked}
-              disabled={registrationBlockLoading}
-              onChange={toggleRegistrationBlock}
-            />
-            Bloquer les inscriptions
-          </label>
-          <div style={{ color: registrationsBlocked ? '#B91C1C' : '#047857', fontWeight: 600 }}>
-            {registrationBlockLoading ? 'Chargement...' : registrationsBlocked ? 'Les inscriptions sont bloquées' : 'Les inscriptions sont ouvertes'}
+        {/* Contrôle de blocage : global pour admin, par pôle pour les responsables */}
+        {!isResponsable && (
+          <div style={{ background: '#ffffff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#111827', fontWeight: 600 }}>
+              <input
+                type="checkbox"
+                checked={registrationsBlocked}
+                disabled={registrationBlockLoading}
+                onChange={toggleRegistrationBlock}
+              />
+              Bloquer les inscriptions
+            </label>
+            <div style={{ color: registrationsBlocked ? '#B91C1C' : '#047857', fontWeight: 600 }}>
+              {registrationBlockLoading ? 'Chargement...' : registrationsBlocked ? 'Les inscriptions sont bloquées' : 'Les inscriptions sont ouvertes'}
+            </div>
           </div>
-        </div>
+        )}
+        {isResponsable && myPole && (
+          <div style={{ background: '#ffffff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, color: '#1D4ED8' }}>
+              Gestion des inscriptions — {myPole.name}
+            </div>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: poleBlockLoading ? 'not-allowed' : 'pointer', color: myPole.blockReenrollments ? '#B91C1C' : '#374151', fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={myPole.blockReenrollments || false}
+                  disabled={poleBlockLoading}
+                  onChange={(e) => togglePoleBlocking('blockReenrollments', e.target.checked)}
+                />
+                Bloquer les ré-inscriptions
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: poleBlockLoading ? 'not-allowed' : 'pointer', color: myPole.blockNewEnrollments ? '#B91C1C' : '#374151', fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={myPole.blockNewEnrollments || false}
+                  disabled={poleBlockLoading}
+                  onChange={(e) => togglePoleBlocking('blockNewEnrollments', e.target.checked)}
+                />
+                Bloquer les nouvelles inscriptions
+              </label>
+            </div>
+            {(myPole.blockReenrollments || myPole.blockNewEnrollments) && (
+              <div style={{ marginTop: 10, color: '#B91C1C', fontSize: 13 }}>
+                {myPole.blockReenrollments && myPole.blockNewEnrollments
+                  ? 'Toutes les inscriptions sont bloquées pour ce pôle.'
+                  : myPole.blockReenrollments
+                    ? 'Les ré-inscriptions sont bloquées pour ce pôle.'
+                    : 'Les nouvelles inscriptions sont bloquées pour ce pôle.'}
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', alignItems: 'end' }}>
           <div>

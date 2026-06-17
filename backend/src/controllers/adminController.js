@@ -103,42 +103,45 @@ async function validateTimeSlotOverlap({ dayOfWeek, startTime, endTime, roomId, 
   return null;
 }
 
-async function validateClassConflicts({ classId, schoolYearId, teacherId, roomId, dayOfWeek, startTime, endTime }) {
+function dateRangesOverlap(fromA, toA, fromB, toB) {
+  const start = fromA && fromB ? Math.max(new Date(fromA).getTime(), new Date(fromB).getTime()) : 0;
+  const end = toA && toB ? Math.min(new Date(toA).getTime(), new Date(toB).getTime()) : Infinity;
+  return start <= end;
+}
+
+// Uses raw SQL to avoid dependency on Prisma client having validFrom/validTo in its schema
+async function validateClassConflicts({ classId, schoolYearId, teacherId, roomId, dayOfWeek, startTime, endTime, validFrom, validTo }) {
   const start = parseTimeToMinutes(startTime);
   const end = parseTimeToMinutes(endTime);
 
-  const whereBase = {
-    schoolYearId,
-    dayOfWeek,
-    ...(classId ? { NOT: { id: classId } } : {}),
-  };
-
   if (roomId) {
-    const roomClasses = await prisma.class.findMany({
-      where: { ...whereBase, roomId },
-      select: { id: true, startTime: true, endTime: true },
-    });
+    const roomClasses = classId
+      ? await prisma.$queryRaw`SELECT id, start_time as "startTime", end_time as "endTime", valid_from as "validFrom", valid_to as "validTo" FROM classes WHERE school_year_id = ${schoolYearId} AND day_of_week = ${dayOfWeek} AND room_id = ${roomId} AND id != ${classId}`
+      : await prisma.$queryRaw`SELECT id, start_time as "startTime", end_time as "endTime", valid_from as "validFrom", valid_to as "validTo" FROM classes WHERE school_year_id = ${schoolYearId} AND day_of_week = ${dayOfWeek} AND room_id = ${roomId}`;
 
     for (const cls of roomClasses) {
       const clsStart = parseTimeToMinutes(cls.startTime);
       const clsEnd = parseTimeToMinutes(cls.endTime);
       if (clsStart !== null && clsEnd !== null && overlaps(start, end, clsStart, clsEnd)) {
-        return 'Chevauchement détecté : la salle est déjà utilisée pour ce créneau';
+        if (dateRangesOverlap(validFrom, validTo, cls.validFrom, cls.validTo)) {
+          return 'Chevauchement détecté : la salle est déjà utilisée pour ce créneau sur cette période';
+        }
       }
     }
   }
 
   if (teacherId) {
-    const teacherClasses = await prisma.class.findMany({
-      where: { ...whereBase, teacherId },
-      select: { id: true, startTime: true, endTime: true },
-    });
+    const teacherClasses = classId
+      ? await prisma.$queryRaw`SELECT id, start_time as "startTime", end_time as "endTime", valid_from as "validFrom", valid_to as "validTo" FROM classes WHERE school_year_id = ${schoolYearId} AND day_of_week = ${dayOfWeek} AND teacher_id = ${teacherId} AND id != ${classId}`
+      : await prisma.$queryRaw`SELECT id, start_time as "startTime", end_time as "endTime", valid_from as "validFrom", valid_to as "validTo" FROM classes WHERE school_year_id = ${schoolYearId} AND day_of_week = ${dayOfWeek} AND teacher_id = ${teacherId}`;
 
     for (const cls of teacherClasses) {
       const clsStart = parseTimeToMinutes(cls.startTime);
       const clsEnd = parseTimeToMinutes(cls.endTime);
       if (clsStart !== null && clsEnd !== null && overlaps(start, end, clsStart, clsEnd)) {
-        return 'Chevauchement détecté : le professeur est déjà affecté à ce créneau';
+        if (dateRangesOverlap(validFrom, validTo, cls.validFrom, cls.validTo)) {
+          return 'Chevauchement détecté : le professeur est déjà affecté à ce créneau sur cette période';
+        }
       }
     }
   }
@@ -1945,6 +1948,34 @@ async function createSchoolYear(req, res) {
   }
 }
 
+async function updateSchoolYear(req, res) {
+  try {
+    const { id } = req.params;
+    const { label, startDate, endDate, isCurrent } = req.body;
+
+    const existing = await prisma.schoolYear.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Année scolaire introuvable' });
+
+    if (isCurrent) {
+      await prisma.schoolYear.updateMany({ where: { id: { not: id } }, data: { isCurrent: false } });
+    }
+
+    const year = await prisma.schoolYear.update({
+      where: { id },
+      data: {
+        ...(label !== undefined ? { label: String(label).trim() } : {}),
+        ...(startDate !== undefined ? { startDate: new Date(startDate) } : {}),
+        ...(endDate !== undefined ? { endDate: new Date(endDate) } : {}),
+        ...(isCurrent !== undefined ? { isCurrent: !!isCurrent } : {}),
+      },
+    });
+    res.json({ schoolYear: year });
+  } catch (error) {
+    console.error('Erreur updateSchoolYear:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 /**
  * CRUD Poles
  */
@@ -1980,7 +2011,7 @@ async function createPole(req, res) {
 async function updatePole(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, sortOrder } = req.body;
+    const { name, description, sortOrder, blockReenrollments, blockNewEnrollments } = req.body;
 
     const pole = await prisma.pole.update({
       where: { id },
@@ -1988,6 +2019,8 @@ async function updatePole(req, res) {
         ...(name !== undefined ? { name: String(name).trim() } : {}),
         ...(description !== undefined ? { description } : {}),
         ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
+        ...(blockReenrollments !== undefined ? { blockReenrollments: Boolean(blockReenrollments) } : {}),
+        ...(blockNewEnrollments !== undefined ? { blockNewEnrollments: Boolean(blockNewEnrollments) } : {}),
       },
     });
 
@@ -2377,6 +2410,18 @@ async function getClasses(req, res) {
       orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
     });
 
+    // Fetch raw fields (valid_from/valid_to/apply_enrollment_fee) via raw SQL (Prisma client may not have these fields yet)
+    let rawFieldsMap = {};
+    if (classes.length > 0) {
+      const ids = classes.map((c) => c.id);
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+      const rawRows = await prisma.$queryRawUnsafe(
+        `SELECT id, valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id IN (${placeholders})`,
+        ...ids,
+      );
+      rawFieldsMap = Object.fromEntries(rawRows.map((r) => [r.id, { validFrom: r.validFrom, validTo: r.validTo, applyEnrollmentFee: r.applyEnrollmentFee }]));
+    }
+
     const formatted = classes.map((cls) => {
       const enrolledCount = cls._count?.enrollments || 0;
       const computedStatus = cls.status === 'CLOSED'
@@ -2387,6 +2432,9 @@ async function getClasses(req, res) {
         enrolledCount,
         status: computedStatus,
         fillIndicator: classFillIndicator(enrolledCount, cls.capacity),
+        validFrom: rawFieldsMap[cls.id]?.validFrom ?? null,
+        validTo: rawFieldsMap[cls.id]?.validTo ?? null,
+        applyEnrollmentFee: rawFieldsMap[cls.id]?.applyEnrollmentFee ?? true,
       };
     });
 
@@ -2430,6 +2478,8 @@ async function getClassDetails(req, res) {
 
     if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
 
+    const [rawFields] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id = ${id}`;
+
     res.json({
       class: {
         ...cls,
@@ -2439,6 +2489,9 @@ async function getClassDetails(req, res) {
             ? 'CLOSED'
             : (cls.enrollments.length > cls.capacity ? 'FULL' : 'OPEN'),
         fillIndicator: classFillIndicator(cls.enrollments.length, cls.capacity),
+        validFrom: rawFields?.validFrom ?? null,
+        validTo: rawFields?.validTo ?? null,
+        applyEnrollmentFee: rawFields?.applyEnrollmentFee ?? true,
       },
     });
   } catch (error) {
@@ -2518,6 +2571,9 @@ async function createClass(req, res) {
       teacherId,
       capacity,
       status = 'OPEN',
+      validFrom,
+      validTo,
+      applyEnrollmentFee = true,
     } = req.body;
 
     // Support both timeSlotIds[] (new) and timeSlotId (legacy single)
@@ -2559,7 +2615,10 @@ async function createClass(req, res) {
     const primaryRoom = primarySlot.room;
     const classCapacity = Number(capacity ?? primaryRoom.capacity);
 
-    // Validate conflicts for each slot
+    const classValidFrom = validFrom ? new Date(validFrom) : year.startDate;
+    const classValidTo = validTo ? new Date(validTo) : year.endDate;
+
+    // Validate conflicts for each slot, taking date range into account
     for (const slot of timeSlots) {
       const conflictError = await validateClassConflicts({
         schoolYearId,
@@ -2568,6 +2627,8 @@ async function createClass(req, res) {
         dayOfWeek: slot.dayOfWeek,
         startTime: slot.startTime,
         endTime: slot.endTime,
+        validFrom: classValidFrom,
+        validTo: classValidTo,
       });
       if (conflictError) return res.status(400).json({ error: `Créneau ${slot.dayOfWeek} ${slot.startTime}-${slot.endTime}: ${conflictError}` });
     }
@@ -2596,6 +2657,10 @@ async function createClass(req, res) {
         data: timeSlotIds.map((tsId, idx) => ({ classId: created.id, timeSlotId: tsId, sortOrder: idx })),
       });
 
+      // Set validFrom/validTo/applyEnrollmentFee via raw SQL (Prisma client may not know these fields yet)
+      const applyFee = applyEnrollmentFee !== false;
+      await tx.$executeRaw`UPDATE classes SET valid_from = ${classValidFrom}, valid_to = ${classValidTo}, apply_enrollment_fee = ${applyFee} WHERE id = ${created.id}`;
+
       return created;
     });
 
@@ -2612,7 +2677,7 @@ async function createClass(req, res) {
       },
     });
 
-    res.status(201).json({ class: { ...fullClass, fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
+    res.status(201).json({ class: { ...fullClass, validFrom: classValidFrom, validTo: classValidTo, applyEnrollmentFee: applyEnrollmentFee !== false, fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
   } catch (error) {
     console.error('Erreur createClass:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -2624,6 +2689,9 @@ async function updateClass(req, res) {
     const { id } = req.params;
     const existing = await prisma.class.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Classe non trouvée' });
+
+    // Fetch raw fields from SQL since Prisma client may not know them yet
+    const [existingRaw] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id = ${id}`;
 
     // Support timeSlotIds[] (new) or single timeSlotId (legacy)
     const rawIds = req.body.timeSlotIds;
@@ -2638,6 +2706,9 @@ async function updateClass(req, res) {
       teacherId: req.body.teacherId ?? existing.teacherId,
       capacity: req.body.capacity !== undefined ? Number(req.body.capacity) : existing.capacity,
       status: req.body.status ?? existing.status,
+      validFrom: req.body.validFrom !== undefined ? (req.body.validFrom ? new Date(req.body.validFrom) : null) : (existingRaw?.validFrom ?? null),
+      validTo: req.body.validTo !== undefined ? (req.body.validTo ? new Date(req.body.validTo) : null) : (existingRaw?.validTo ?? null),
+      applyEnrollmentFee: req.body.applyEnrollmentFee !== undefined ? req.body.applyEnrollmentFee !== false : (existingRaw?.applyEnrollmentFee ?? true),
     };
 
     const [level, teacher] = await Promise.all([
@@ -2671,6 +2742,8 @@ async function updateClass(req, res) {
           dayOfWeek: slot.dayOfWeek,
           startTime: slot.startTime,
           endTime: slot.endTime,
+          validFrom: next.validFrom,
+          validTo: next.validTo,
         });
         if (conflictError) return res.status(400).json({ error: `Créneau ${slot.dayOfWeek} ${slot.startTime}-${slot.endTime}: ${conflictError}` });
       }
@@ -2684,6 +2757,8 @@ async function updateClass(req, res) {
         dayOfWeek: existing.dayOfWeek,
         startTime: existing.startTime,
         endTime: existing.endTime,
+        validFrom: next.validFrom,
+        validTo: next.validTo,
       });
       if (conflictError) return res.status(400).json({ error: conflictError });
     }
@@ -2698,7 +2773,7 @@ async function updateClass(req, res) {
         });
       }
 
-      return tx.class.update({
+      const updatedClass = await tx.class.update({
         where: { id },
         data: {
           schoolYearId: next.schoolYearId,
@@ -2728,6 +2803,11 @@ async function updateClass(req, res) {
           classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
         },
       });
+
+      // Set raw fields via SQL (Prisma client may not know these fields yet)
+      await tx.$executeRaw`UPDATE classes SET valid_from = ${next.validFrom}, valid_to = ${next.validTo}, apply_enrollment_fee = ${next.applyEnrollmentFee} WHERE id = ${id}`;
+
+      return { ...updatedClass, validFrom: next.validFrom, validTo: next.validTo, applyEnrollmentFee: next.applyEnrollmentFee };
     });
 
     res.json({ class: { ...updated, fillIndicator: classFillIndicator(updated.enrolledCount, updated.capacity) } });
@@ -3290,6 +3370,7 @@ module.exports = {
   getEnrollments,
   getSchoolYears,
   createSchoolYear,
+  updateSchoolYear,
 
   getPoles,
   createPole,
