@@ -109,33 +109,12 @@ async function generateInvoiceForPayment(paymentId) {
       return null;
     }
 
-    // Get enrolled students for this family
-    let enrollmentIds = payment.metadata?.enrollmentIds || [];
-    if (!Array.isArray(enrollmentIds) || enrollmentIds.length === 0) {
-      console.warn(`Aucun enrollmentIds dans metadata pour paiement ${paymentId}, recherche d'inscriptions alternatives`);
-      // Fallback: find enrollments for this family in the same school year
-      const fallbackEnrollments = await prisma.enrollment.findMany({
-        where: {
-          schoolYearId: payment.schoolYearId,
-          status: { in: ['PENDING', 'CONFIRMED'] },
-          student: { familyId: payment.familyId },
-        },
-        include: {
-          class: {
-            include: {
-              level: { include: { pole: true } },
-              schoolYear: true,
-            },
-          },
-        },
-      });
-      enrollmentIds = fallbackEnrollments.map(e => e.id);
-      console.log(`Fallback trouvé ${enrollmentIds.length} inscriptions pour ${paymentId}`);
-    }
-
+    // Load ALL active enrollments for the family in this school year (all poles)
     const enrollments = await prisma.enrollment.findMany({
       where: {
-        id: { in: enrollmentIds },
+        student: { familyId: payment.familyId },
+        schoolYearId: payment.schoolYearId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
       },
       include: {
         class: {
@@ -146,6 +125,7 @@ async function generateInvoiceForPayment(paymentId) {
         },
         student: true,
       },
+      orderBy: [{ student: { lastName: 'asc' } }, { createdAt: 'asc' }],
     });
 
     console.log(`Génération facture pour ${paymentId} avec ${enrollments.length} inscriptions`);

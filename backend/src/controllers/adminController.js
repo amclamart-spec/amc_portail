@@ -992,49 +992,18 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
         .filter(([studentId]) => Boolean(studentId)),
     );
 
-    let enrollmentRows = [];
-    const paymentEnrollmentIds = Array.isArray(payment.metadata?.enrollmentIds)
-      ? payment.metadata.enrollmentIds.map((id) => normalizeId(id)).filter(Boolean)
-      : [];
-
-    if (paymentEnrollmentIds.length > 0) {
-      enrollmentRows = await prisma.enrollment.findMany({
-        where: {
-          id: { in: paymentEnrollmentIds },
-          student: { familyId: payment.familyId },
-        },
-        include: {
-          class: { include: { level: { include: { pole: true } } } },
-          student: true,
-        },
-      });
-    }
-
-    if (enrollmentRows.length === 0) {
-      enrollmentRows = await prisma.enrollment.findMany({
-        where: {
-          student: { familyId: payment.familyId },
-          schoolYearId: payment.schoolYearId,
-        },
-        include: {
-          class: { include: { level: { include: { pole: true } } } },
-          student: true,
-        },
-      });
-    }
-
-    if (enrollmentRows.length === 0 && enrollmentId) {
-      const singleEnrollment = await prisma.enrollment.findUnique({
-        where: { id: normalizeId(enrollmentId) },
-        include: {
-          class: { include: { level: { include: { pole: true } } } },
-          student: true,
-        },
-      });
-      if (singleEnrollment && singleEnrollment.student?.familyId === payment.familyId) {
-        enrollmentRows = [singleEnrollment];
-      }
-    }
+    let enrollmentRows = await prisma.enrollment.findMany({
+      where: {
+        student: { familyId: payment.familyId },
+        schoolYearId: payment.schoolYearId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      },
+      include: {
+        class: { include: { level: { include: { pole: true } } } },
+        student: true,
+      },
+      orderBy: [{ student: { lastName: 'asc' } }, { createdAt: 'asc' }],
+    });
 
     const missingStudentIds = [...new Set(
       enrollmentRows
