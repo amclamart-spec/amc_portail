@@ -14,6 +14,7 @@ const {
   getStudentAcademicRecord,
   getSchoolYears,
   createSchoolYear,
+  updateSchoolYear,
 
   getPoles,
   createPole,
@@ -142,6 +143,7 @@ router.get('/payments/:paymentId/receipt/download', authorizePermission(PERMISSI
 
 router.get('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getSchoolYears);
 router.post('/school-years', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createSchoolYear);
+router.put('/school-years/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updateSchoolYear);
 router.get('/pricing', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getPricingConfig);
 router.put('/pricing', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updatePricingConfig);
 

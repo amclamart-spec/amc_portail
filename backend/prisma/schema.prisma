@@ -293,12 +293,14 @@ model ChatMessage {
 }
 
 model Pole {
-  id          String           @id @default(uuid())
-  name        String           @unique
-  description String?
-  period      SchoolYearPeriod @default(ANNUEL)
-  sortOrder   Int              @default(0) @map("sort_order")
-  createdAt   DateTime         @default(now()) @map("created_at")
+  id                  String           @id @default(uuid())
+  name                String           @unique
+  description         String?
+  period              SchoolYearPeriod @default(ANNUEL)
+  sortOrder           Int              @default(0) @map("sort_order")
+  blockReenrollments  Boolean          @default(false) @map("block_reenrollments")
+  blockNewEnrollments Boolean          @default(false) @map("block_new_enrollments")
+  createdAt           DateTime         @default(now()) @map("created_at")
 
   levels     Level[]
   classes    Class[]
@@ -349,7 +351,10 @@ model Class {
   capacity      Int         @default(20)
   enrolledCount Int         @default(0) @map("enrolled_count")
   status        ClassStatus @default(OPEN)
-  createdAt     DateTime    @default(now()) @map("created_at")
+  validFrom            DateTime? @map("valid_from")
+  validTo              DateTime? @map("valid_to")
+  applyEnrollmentFee   Boolean   @default(true) @map("apply_enrollment_fee")
+  createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
 
   schoolYear       SchoolYear        @relation(fields: [schoolYearId], references: [id])
