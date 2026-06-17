@@ -585,25 +585,17 @@ async function createEnrollmentWithUniqueRegistrationCode(tx, enrollmentData, sc
   // If a prior statement in the same tx failed (e.g. P2002), PostgreSQL marks the
   // transaction aborted and every subsequent tx query returns 25P02.
   // Using the global prisma here uses a separate connection unaffected by the tx state.
-  const [latestEnrollment] = await prisma.enrollment.findMany({
+  //
+  // MAX(CAST(SPLIT_PART(..., '-', 3) AS INTEGER)) instead of ORDER BY registration_code DESC:
+  // lexicographic ordering breaks at 1000 ('999' > '1000' as strings).
+  const prefixPattern = `${prefix}%`;
+  const [maxResult] = await prisma.$queryRaw`
+    SELECT COALESCE(MAX(CAST(SPLIT_PART(registration_code, '-', 3) AS INTEGER)), 0) AS max_seq
+    FROM enrollments
+    WHERE registration_code LIKE ${prefixPattern}
+  `;
 
-    where: { schoolYearId, registrationCode: { startsWith: prefix } },
-
-    orderBy: { registrationCode: 'desc' },
-
-    take: 1,
-
-    select: { registrationCode: true },
-
-  });
-
-
-
-  const baseSequence = latestEnrollment
-
-    ? Number(latestEnrollment.registrationCode.slice(prefix.length))
-
-    : 0;
+  const baseSequence = Number(maxResult?.max_seq ?? 0);
 
 
 
