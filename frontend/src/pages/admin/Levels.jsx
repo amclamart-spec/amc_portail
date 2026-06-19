@@ -3,6 +3,14 @@ import { FiEdit2, FiTrash2, FiPlus } from 'react-icons/fi';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 
+const CURSUS_OPTIONS = [
+  { value: 'primaire', label: 'Primaire' },
+  { value: 'college', label: 'Collège' },
+  { value: 'lycee', label: 'Lycée' },
+];
+
+const isSoutienPoleName = (name) => String(name || '').toLowerCase().includes('soutien');
+
 const emptyLevelForm = {
   id: null,
   poleId: '',
@@ -12,6 +20,7 @@ const emptyLevelForm = {
   sortOrder: 0,
   minAge: '',
   maxAge: '',
+  cursus: '',
 };
 
 export default function AdminLevels() {
@@ -123,6 +132,7 @@ export default function AdminLevels() {
       sortOrder: level.sortOrder || 0,
       minAge: level.minAge || '',
       maxAge: level.maxAge || '',
+      cursus: level.cursus || '',
     });
     setModalOpen(true);
   };
@@ -143,6 +153,7 @@ export default function AdminLevels() {
         sortOrder: Number(levelForm.sortOrder || 0),
         minAge: levelForm.minAge ? Number(levelForm.minAge) : null,
         maxAge: levelForm.maxAge ? Number(levelForm.maxAge) : null,
+        cursus: levelForm.cursus || null,
       };
 
       if (levelForm.id) {
@@ -285,13 +296,14 @@ export default function AdminLevels() {
                               <th>Description</th>
                               <th>Âge Min</th>
                               <th>Âge Max</th>
+                              {isSoutienPoleName(pole.name) && <th>Cursus</th>}
                               <th>Classes</th>
                               <th>Actions</th>
                             </tr>
                           </thead>
                           <tbody>
                             {pageLevels.length === 0 ? (
-                              <tr><td colSpan="8" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun niveau</td></tr>
+                              <tr><td colSpan={isSoutienPoleName(pole.name) ? 9 : 8} style={{ textAlign: 'center', color: '#6B7280' }}>Aucun niveau</td></tr>
                             ) : (
                               pageLevels.map((level) => (
                                 <tr key={level.id}>
@@ -301,6 +313,9 @@ export default function AdminLevels() {
                                   <td>{level.description || '-'}</td>
                                   <td>{level.minAge || '-'}</td>
                                   <td>{level.maxAge || '-'}</td>
+                                  {isSoutienPoleName(pole.name) && (
+                                    <td>{CURSUS_OPTIONS.find((o) => o.value === level.cursus)?.label || '-'}</td>
+                                  )}
                                   <td>{level._count?.classes || 0}</td>
                                   <td style={{ display: 'flex', gap: 8 }}>
                                     <button className="btn btn-icon btn-outline" title="Modifier" onClick={() => openEditLevel(level)}>
@@ -354,11 +369,21 @@ export default function AdminLevels() {
             <form onSubmit={saveLevel} style={{ display: 'grid', gap: 10 }}>
               <div className="form-group" style={{ margin: 0 }}>
                 <label>Pôle *</label>
-                <select className="form-control" value={levelForm.poleId} onChange={(e) => setLevelForm((prev) => ({ ...prev, poleId: e.target.value }))}>
+                <select className="form-control" value={levelForm.poleId} onChange={(e) => setLevelForm((prev) => ({ ...prev, poleId: e.target.value, cursus: '' }))}>
                   <option value="">Sélectionner</option>
                   {poles.map((pole) => <option key={pole.id} value={pole.id}>{pole.name}</option>)}
                 </select>
               </div>
+
+              {isSoutienPoleName(poles.find((p) => p.id === levelForm.poleId)?.name) && (
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Cursus</label>
+                  <select className="form-control" value={levelForm.cursus} onChange={(e) => setLevelForm((prev) => ({ ...prev, cursus: e.target.value }))}>
+                    <option value="">— Non défini —</option>
+                    {CURSUS_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                </div>
+              )}
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
                 <div className="form-group" style={{ margin: 0 }}>
