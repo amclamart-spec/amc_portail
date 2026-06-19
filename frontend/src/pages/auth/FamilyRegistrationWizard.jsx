@@ -25,7 +25,14 @@ const emptyMember = {
   gender: 'GARCON',
   photoBase64: '',
   isOldStudent: false,
+  schoolGrade: '',
 };
+
+const CURSUS_OPTIONS = [
+  { value: 'primaire', label: 'Primaire' },
+  { value: 'college', label: 'Collège' },
+  { value: 'lycee', label: 'Lycée' },
+];
 
 const emptyHealthForm = {
   hasChronicDisease: false,
@@ -65,6 +72,9 @@ const SCHOOL_GRADES = [
   { value: 'Premiere', label: 'Première', category: 'lycee' },
   { value: 'Terminale', label: 'Terminale', category: 'lycee' },
 ];
+
+// Niveaux pour lesquels on affiche les classes "Préparation examen"
+const EXAM_PREP_GRADES = ['3eme', 'Premiere', 'Terminale'];
 
 function normStr(s) {
   return String(s || '').toLowerCase()
@@ -217,7 +227,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [pricingPreview, setPricingPreview] = useState(null);
   const [courseFilterPoleId, setCourseFilterPoleId] = useState('');
   const [courseFilterDay, setCourseFilterDay] = useState('');
-  const [schoolGradeByMember, setSchoolGradeByMember] = useState({});
+  const [curriculumByMember, setCurriculumByMember] = useState({});
   const [soutienSelectedByMember, setSoutienSelectedByMember] = useState({});
   const [isOldStudentByMemberPole, setIsOldStudentByMemberPole] = useState({});
   const [memberForm, setMemberForm] = useState(emptyMember);
@@ -376,6 +386,18 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
     passwordRef.current = wizard.account.password;
   }, [wizard.account.password]);
+
+  // Derive curriculumByMember from existing wizard draft on mount
+  useEffect(() => {
+    const derived = {};
+    wizard.members.forEach((m, idx) => {
+      if (m.schoolGrade) {
+        const gradeObj = SCHOOL_GRADES.find((g) => g.value === m.schoolGrade);
+        if (gradeObj) derived[idx] = gradeObj.category;
+      }
+    });
+    if (Object.keys(derived).length > 0) setCurriculumByMember(derived);
+  }, []);
 
   useEffect(() => {
     api.get('/enrollments/poles').then(({ data }) => setPoles(data.poles || [])).catch(() => {});
@@ -1311,13 +1333,20 @@ const selectedEnrollmentsLabel = useMemo(() => {
                         if (!soutienPole) return null;
                         const soutienBlockBoth = soutienPole.blockReenrollments && soutienPole.blockNewEnrollments;
                         const soutienSelected = soutienSelectedByMember[memberIndex] || false;
-                        const schoolGrade = schoolGradeByMember[memberIndex] || '';
+                        const schoolGrade = wizard.members[memberIndex]?.schoolGrade || '';
+                        const curriculum = curriculumByMember[memberIndex] || '';
+                        const filteredGrades = curriculum ? SCHOOL_GRADES.filter((g) => g.category === curriculum) : [];
+                        const isExamGrade = EXAM_PREP_GRADES.includes(schoolGrade);
                         const soutienClasses = allClasses.filter((cls) => {
                           const clsPoleId = cls.poleId || cls.level?.poleId || cls.level?.pole?.id;
                           if (clsPoleId !== soutienPole.id) return false;
                           if (cls.status === 'CLOSED') return false;
-                          if (!schoolGrade) return false;
-                          return matchSoutienLevel(cls.level?.name, schoolGrade, member.gender);
+                          if (!schoolGrade || !curriculum) return false;
+                          if (isExamGrade) {
+                            // 3ème → prépa examen + classes collège ; Première/Terminale → prépa examen + classes lycée
+                            return cls.examPreparation === true || cls.level?.cursus === curriculum;
+                          }
+                          return cls.level?.cursus === curriculum && !cls.examPreparation;
                         });
                         return (
                           <div style={{ marginTop: 16 }}>
@@ -1343,13 +1372,18 @@ const selectedEnrollmentsLabel = useMemo(() => {
                                       onChange={(e) => {
                                         setSoutienSelectedByMember((prev) => ({ ...prev, [memberIndex]: e.target.checked }));
                                         if (!e.target.checked) {
-                                          setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: '' }));
-                                          setWizard((prev) => ({
-                                            ...prev,
-                                            courseSelections: prev.courseSelections.filter(
-                                              (s) => !(s.memberIndex === memberIndex && allClasses.find((c) => c.id === s.classId && (c.poleId === soutienPole.id || c.level?.poleId === soutienPole.id || c.level?.pole?.id === soutienPole.id)))
-                                            ),
-                                          }));
+                                          setCurriculumByMember((prev) => ({ ...prev, [memberIndex]: '' }));
+                                          setWizard((prev) => {
+                                            const members = [...prev.members];
+                                            members[memberIndex] = { ...members[memberIndex], schoolGrade: '' };
+                                            return {
+                                              ...prev,
+                                              members,
+                                              courseSelections: prev.courseSelections.filter(
+                                                (s) => !(s.memberIndex === memberIndex && allClasses.find((c) => c.id === s.classId && (c.poleId === soutienPole.id || c.level?.poleId === soutienPole.id || c.level?.pole?.id === soutienPole.id)))
+                                              ),
+                                            };
+                                          });
                                         }
                                       }}
                                       style={{ cursor: 'pointer' }}
@@ -1365,19 +1399,55 @@ const selectedEnrollmentsLabel = useMemo(() => {
                               )}
                               {!soutienBlockBoth && soutienSelected && (
                                 <>
-                                  <div style={{ marginBottom: 12 }}>
-                                    <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Classe de l'élève *</label>
-                                    <select
-                                      className="form-control"
-                                      value={schoolGrade}
-                                      onChange={(e) => setSchoolGradeByMember((prev) => ({ ...prev, [memberIndex]: e.target.value }))}
-                                      style={{ maxWidth: 240 }}
-                                    >
-                                      <option value="">— Sélectionner —</option>
-                                      {SCHOOL_GRADES.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-                                    </select>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                                    <div>
+                                      <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Cursus *</label>
+                                      <select
+                                        className="form-control"
+                                        value={curriculum}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setCurriculumByMember((prev) => ({ ...prev, [memberIndex]: val }));
+                                          const soutienIds = new Set(allClasses.filter((c) => (c.poleId || c.level?.pole?.id) === soutienPole.id).map((c) => c.id));
+                                          setWizard((prev) => {
+                                            const members = [...prev.members];
+                                            members[memberIndex] = { ...members[memberIndex], schoolGrade: '' };
+                                            const courseSelections = prev.courseSelections.filter((s) => !(s.memberIndex === memberIndex && soutienIds.has(s.classId)));
+                                            return { ...prev, members, courseSelections };
+                                          });
+                                        }}
+                                      >
+                                        <option value="">— Sélectionner —</option>
+                                        {CURSUS_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 4 }}>Classe de l'élève *</label>
+                                      <select
+                                        className="form-control"
+                                        value={schoolGrade}
+                                        disabled={!curriculum}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          const soutienIds = new Set(allClasses.filter((c) => (c.poleId || c.level?.pole?.id) === soutienPole.id).map((c) => c.id));
+                                          setWizard((prev) => {
+                                            const members = [...prev.members];
+                                            members[memberIndex] = { ...members[memberIndex], schoolGrade: val };
+                                            const courseSelections = prev.courseSelections.filter((s) => !(s.memberIndex === memberIndex && soutienIds.has(s.classId)));
+                                            return { ...prev, members, courseSelections };
+                                          });
+                                        }}
+                                      >
+                                        <option value="">— Sélectionner —</option>
+                                        {filteredGrades.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+                                      </select>
+                                    </div>
                                   </div>
-                                  {!schoolGrade ? (
+                                  {!curriculum ? (
+                                    <div style={{ padding: 12, borderRadius: 8, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E', fontSize: 13 }}>
+                                      Sélectionnez le cursus de l'élève pour afficher les classes disponibles.
+                                    </div>
+                                  ) : !schoolGrade ? (
                                     <div style={{ padding: 12, borderRadius: 8, background: '#FEF3C7', border: '1px solid #FBBF24', color: '#92400E', fontSize: 13 }}>
                                       Sélectionnez la classe de l'élève pour afficher les cours disponibles.
                                     </div>
@@ -1443,6 +1513,9 @@ const selectedEnrollmentsLabel = useMemo(() => {
                     <div>Arabe ({pricingPreview.arabicCount} élève(s)): {Number(pricingPreview.arabicFee).toFixed(2)} €</div>
                     <div>Coran: {Number(pricingPreview.coranFee ?? pricingPreview.coranScienceFee).toFixed(2)} €</div>
                     <div>Sciences islamiques: {Number(pricingPreview.sciencesFee || 0).toFixed(2)} €</div>
+                    {(pricingPreview.soutienFee || 0) > 0 && (
+                      <div>Soutien scolaire: {Number(pricingPreview.soutienFee).toFixed(2)} €</div>
+                    )}
                     {(wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') && pricingPreview.fraisPrelevement > 0 && (
                       <div>Frais prélèvement: {Number(pricingPreview.fraisPrelevement).toFixed(2)} €</div>
                     )}

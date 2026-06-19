@@ -300,6 +300,8 @@ async function getPricingPreview(req, res) {
 
           return {
 
+            memberIndex: selection.memberIndex,
+
             poleId: cls.level?.pole?.id || cls.pole?.id || '',
 
             poleName: cls.level?.pole?.name || cls.pole?.name || '',
@@ -320,6 +322,8 @@ async function getPricingPreview(req, res) {
 
           return {
 
+            memberIndex: selection.memberIndex,
+
             poleId: level.pole?.id || '',
 
             poleName: level.pole?.name || '',
@@ -338,11 +342,13 @@ async function getPricingPreview(req, res) {
 
           if (!pole) return null;
 
-          
+
 
           const firstLevel = pole.levels && pole.levels[0];
 
           return {
+
+            memberIndex: selection.memberIndex,
 
             poleId: pole.id,
 
@@ -914,6 +920,10 @@ async function completeExistingFamilyRegistration(req, res) {
 
             result.push({
 
+              memberIndex: selection.memberIndex,
+
+              poleId: cls.level?.pole?.id || '',
+
               poleName: cls.level.pole.name,
 
               levelCode: cls.level.code,
@@ -931,6 +941,10 @@ async function completeExistingFamilyRegistration(req, res) {
           if (level) {
 
             result.push({
+
+              memberIndex: selection.memberIndex,
+
+              poleId: level.pole?.id || '',
 
               poleName: level.pole?.name || '',
 
@@ -951,6 +965,10 @@ async function completeExistingFamilyRegistration(req, res) {
             const firstLevel = pole.levels && pole.levels[0];
 
             result.push({
+
+              memberIndex: selection.memberIndex,
+
+              poleId: pole.id,
 
               poleName: pole.name,
 
@@ -1183,6 +1201,8 @@ async function completeExistingFamilyRegistration(req, res) {
               emergencyContactPhone: m.emergencyContactPhone || null,
 
               isReturningStudent: Boolean(m.isOldStudent),
+
+              schoolGrade: m.schoolGrade || null,
 
             },
 
@@ -2916,6 +2936,8 @@ async function completeFamilyRegistration(req, res) {
 
           return {
 
+            memberIndex: selection.memberIndex,
+
             poleId: cls.level.pole.id,
 
             levelId: cls.level.id,
@@ -2937,6 +2959,8 @@ async function completeFamilyRegistration(req, res) {
           const firstLevel = pole.levels && pole.levels[0];
 
           return {
+
+            memberIndex: selection.memberIndex,
 
             poleId: pole.id,
 
@@ -3074,6 +3098,8 @@ async function completeFamilyRegistration(req, res) {
             emergencyContactPhone: m.emergencyContactPhone || null,
 
             isReturningStudent: Boolean(m.isOldStudent),
+
+            schoolGrade: m.schoolGrade || null,
 
           },
 

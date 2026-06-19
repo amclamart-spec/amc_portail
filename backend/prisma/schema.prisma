@@ -157,6 +157,7 @@ model Student {
   emergencyContactPhone String?  @map("emergency_contact_phone")
   medicalCertUrl        String?  @map("medical_cert_url")
   isReturningStudent    Boolean  @default(false) @map("is_returning_student")
+  schoolGrade           String?  @map("school_grade")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
@@ -319,6 +320,7 @@ model Level {
   sortOrder   Int      @default(0) @map("sort_order")
   minAge      Int?     @map("min_age")
   maxAge      Int?     @map("max_age")
+  cursus      String?  @map("cursus")
   createdAt   DateTime @default(now()) @map("created_at")
 
   pole    Pole    @relation(fields: [poleId], references: [id], onDelete: Cascade)
@@ -354,6 +356,7 @@ model Class {
   validFrom            DateTime? @map("valid_from")
   validTo              DateTime? @map("valid_to")
   applyEnrollmentFee   Boolean   @default(true) @map("apply_enrollment_fee")
+  examPreparation      Boolean   @default(false) @map("exam_preparation")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
 

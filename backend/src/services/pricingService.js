@@ -187,6 +187,7 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = 
   let arabicFee = 0;
   let coranFee = 0;
   let sciencesFee = 0;
+  let soutienFee = 0;
 
   const rows = Array.isArray(pricing.tariffRows) ? pricing.tariffRows : [];
   const hasCustomTariffRows = rows.length > 0 && rows.some((row) => row.price && Number(row.price) > 0);
@@ -199,6 +200,7 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = 
       arabicFee: 0,
       coranFee: 0,
       sciencesFee: 0,
+      soutienFee: 0,
       total,
       arabicCount: 0,
       coranCount: 0,
@@ -221,11 +223,33 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = 
   const coranCount = enrollments.filter((e) => String(e.poleName || '').toLowerCase().includes('coran')).length;
   const sciencesCount = enrollments.filter((e) => String(e.poleName || '').toLowerCase().includes('sciences') || String(e.poleName || '').toLowerCase().includes('science')).length;
 
+  const isSoutienPoleName = (name) => String(name || '').toLowerCase().includes('soutien');
+
   // If we have custom tariff rows, use the grid with family total counts
   if (hasCustomTariffRows) {
     for (const [poleKey, group] of enrollmentsByPole.entries()) {
       const sampleEnrollment = group[0];
       const matchingRows = getMatchingTariffRows(sampleEnrollment, pricing);
+
+      // Soutien scolaire: price per student based on number of séances selected
+      if (isSoutienPoleName(sampleEnrollment.poleName)) {
+        const byMember = new Map();
+        for (const e of group) {
+          const key = e.memberIndex !== undefined && e.memberIndex !== null ? e.memberIndex : '_';
+          const bucket = byMember.get(key) || [];
+          bucket.push(e);
+          byMember.set(key, bucket);
+        }
+        for (const [, memberGroup] of byMember.entries()) {
+          const count = Math.min(memberGroup.length, 3);
+          const seanceLevelId = `seances-${count}`;
+          const seanceRow = matchingRows.find((row) => row.levelId === seanceLevelId) || matchingRows[0];
+          if (seanceRow && Number(seanceRow.price) > 0) {
+            soutienFee += toNumber(seanceRow.price, 0);
+          }
+        }
+        continue;
+      }
 
       // Get the TOTAL count for this pole (existing + new)
       const totalCountForPole = (totalFamilyEnrollmentsByPole[poleKey] || 0) + group.length;
@@ -288,13 +312,14 @@ function calculateFamilyTotal(enrollments, pricing = DEFAULT_PRICING, options = 
     arabicFee = calculateArabicFee(arabicCount, pricing);
   }
 
-  const total = registrationFee + arabicFee + coranFee + sciencesFee + totalFee;
+  const total = registrationFee + arabicFee + coranFee + sciencesFee + soutienFee + totalFee;
   return {
     registrationFee,
     fraisPrelevement,
     arabicFee,
     coranFee,
     sciencesFee,
+    soutienFee,
     total,
     arabicCount,
     coranCount,
