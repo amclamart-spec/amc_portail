@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { FiCheckCircle, FiDownload, FiEye, FiXCircle } from 'react-icons/fi';
@@ -17,6 +17,7 @@ export default function AdminPayments() {
   const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 1 });
   const [selectedTransaction, setSelectedTransaction] = useState(null);
+  const [expandedFamilies, setExpandedFamilies] = useState({});
 
   const buildQueryParams = (values) => {
     return Object.entries(values).reduce((params, [key, value]) => {
@@ -125,6 +126,27 @@ export default function AdminPayments() {
     }
   };
 
+  const groupedTransactions = useMemo(() => {
+    const groups = new Map();
+    for (const tx of transactions) {
+      const familyId = tx.payment?.familyId || tx.familyId || tx.paymentId || 'unknown';
+      const familyName = tx.familyName || tx.payment?.family?.familyName || '-';
+      if (!groups.has(familyId)) {
+        groups.set(familyId, { familyId, familyName, transactions: [], totalAmount: 0 });
+      }
+      const g = groups.get(familyId);
+      g.transactions.push(tx);
+      g.totalAmount += Number(tx.amount) || 0;
+    }
+    return [...groups.values()].sort((a, b) => a.familyName.localeCompare(b.familyName, 'fr'));
+  }, [transactions]);
+
+  const toggleFamily = (familyId) => {
+    setExpandedFamilies((prev) => ({ ...prev, [familyId]: prev[familyId] === false ? true : false }));
+  };
+
+  const isFamilyExpanded = (familyId) => expandedFamilies[familyId] !== false;
+
   return (
     <div>
       <h2 style={{ color: 'var(--amc-primary)' }}>Paiements (Administration)</h2>
@@ -186,77 +208,102 @@ export default function AdminPayments() {
               </tr>
             </thead>
             <tbody>
-              {transactions.length === 0 ? (
+              {groupedTransactions.length === 0 ? (
                 <tr>
                   <td colSpan="8" style={{ textAlign: 'center', padding: '24px 0', color: '#6B7280' }}>
                     Aucune transaction trouvée
                   </td>
                 </tr>
               ) : (
-                transactions.map((t) => (
-                  <tr key={t.id}>
-                    <td>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
-                    <td>{t.familyName || (t.payment?.family?.familyName) || '-'}</td>
-                    <td>{t.payerName || '-'}</td>
-                    <td>{formatPaymentMethodLabel(t)}</td>
-                    <td>{Number(t.amount).toFixed(2)} €</td>
-                    <td>{txStatusLabel(t.status)}</td>
-                    <td>
-                      <button
-                        className="btn btn-outline btn-sm"
-                        onClick={async () => {
-                          try {
-                            const response = await api.get(`/finance/payments/${t.paymentId}/receipt/download`, { responseType: 'blob' });
-                            const url = window.URL.createObjectURL(new Blob([response.data]));
-                            const link = document.createElement('a');
-                            link.href = url;
-                            link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
-                            document.body.appendChild(link);
-                            link.click();
-                            link.remove();
-                            window.URL.revokeObjectURL(url);
-                          } catch (error) {
-                            console.error('Erreur téléchargement reçu', error);
-                            toast.error('Impossible de télécharger le reçu de paiement');
-                          }
-                        }}
-                      >
-                        <FiDownload size={16} /> Reçu
-                      </button>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
-                        {String(t.status) === 'INITIATED' && (
-                          <>
+                groupedTransactions.map((group) => (
+                  <Fragment key={group.familyId}>
+                    {/* Ligne en-tête famille */}
+                    <tr
+                      onClick={() => toggleFamily(group.familyId)}
+                      style={{ background: '#EFF6FF', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <td colSpan="8" style={{ padding: '9px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ fontSize: 11, color: '#3B82F6', minWidth: 10 }}>
+                            {isFamilyExpanded(group.familyId) ? '▼' : '▶'}
+                          </span>
+                          <strong style={{ fontSize: 14, color: '#1E3A5F' }}>{group.familyName}</strong>
+                          <span style={{ fontSize: 11, fontWeight: 600, background: '#DBEAFE', color: '#1D4ED8', borderRadius: 999, padding: '2px 8px' }}>
+                            {group.transactions.length} paiement{group.transactions.length > 1 ? 's' : ''}
+                          </span>
+                          <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 13, color: '#1E3A5F' }}>
+                            Total : {group.totalAmount.toFixed(2)} €
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                    {/* Lignes transactions */}
+                    {isFamilyExpanded(group.familyId) && group.transactions.map((t) => (
+                      <tr key={t.id} style={{ background: '#fff' }}>
+                        <td style={{ paddingLeft: 28 }}>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
+                        <td style={{ color: '#6B7280', fontSize: 12 }}>—</td>
+                        <td>{t.payerName || '-'}</td>
+                        <td>{formatPaymentMethodLabel(t)}</td>
+                        <td>{Number(t.amount).toFixed(2)} €</td>
+                        <td>{txStatusLabel(t.status)}</td>
+                        <td>
+                          <button
+                            className="btn btn-outline btn-sm"
+                            onClick={async () => {
+                              try {
+                                const response = await api.get(`/finance/payments/${t.paymentId}/receipt/download`, { responseType: 'blob' });
+                                const url = window.URL.createObjectURL(new Blob([response.data]));
+                                const link = document.createElement('a');
+                                link.href = url;
+                                link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
+                                document.body.appendChild(link);
+                                link.click();
+                                link.remove();
+                                window.URL.revokeObjectURL(url);
+                              } catch (error) {
+                                console.error('Erreur téléchargement reçu', error);
+                                toast.error('Impossible de télécharger le reçu de paiement');
+                              }
+                            }}
+                          >
+                            <FiDownload size={16} /> Reçu
+                          </button>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
+                            {String(t.status) === 'INITIATED' && (
+                              <>
+                                <button
+                                  className="btn btn-success btn-sm"
+                                  title="Valider"
+                                  onClick={() => handleTransactionAction(t, 'SUCCEEDED')}
+                                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                                >
+                                  <FiCheckCircle size={14} />
+                                </button>
+                                <button
+                                  className="btn btn-danger btn-sm"
+                                  title="Annuler"
+                                  onClick={() => handleTransactionAction(t, 'CANCELLED')}
+                                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                                >
+                                  <FiXCircle size={14} />
+                                </button>
+                              </>
+                            )}
                             <button
-                              className="btn btn-success btn-sm"
-                              title="Valider"
-                              onClick={() => handleTransactionAction(t, 'SUCCEEDED')}
+                              className="btn btn-outline btn-sm"
+                              title="Détail"
+                              onClick={() => openDetailModal(t)}
                               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
                             >
-                              <FiCheckCircle size={14} />
+                              <FiEye size={14} />
                             </button>
-                            <button
-                              className="btn btn-danger btn-sm"
-                              title="Annuler"
-                              onClick={() => handleTransactionAction(t, 'CANCELLED')}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
-                            >
-                              <FiXCircle size={14} />
-                            </button>
-                          </>
-                        )}
-                        <button
-                          className="btn btn-outline btn-sm"
-                          title="Détail"
-                          onClick={() => openDetailModal(t)}
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
-                        >
-                          <FiEye size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
                 ))
               )}
             </tbody>

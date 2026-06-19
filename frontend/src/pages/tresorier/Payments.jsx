@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { FiDownload, FiEye, FiPlus, FiXCircle } from 'react-icons/fi';
@@ -19,8 +19,6 @@ const transactionStatusOptions = [
   { value: 'CANCELLED', label: 'Annulé' },
 ];
 
-const TRANSACTIONS_PER_PAGE = 20;
-
 export default function TresorierPayments({ scope = 'all' }) {
   const [transactions, setTransactions] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -40,9 +38,10 @@ export default function TresorierPayments({ scope = 'all' }) {
     numberOfInstallments: '1',
   });
   const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
+  const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 1 });
+  const [expandedFamilies, setExpandedFamilies] = useState({});
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [selectedChequePlan, setSelectedChequePlan] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
   const [generatingCode, setGeneratingCode] = useState(false);
   const [securityCode, setSecurityCode] = useState(null);
   const [codeExpiration, setCodeExpiration] = useState(null);
@@ -56,52 +55,27 @@ export default function TresorierPayments({ scope = 'all' }) {
     }, {});
   };
 
-  const applyClientFilters = (txList, activeFilters = {}) => {
-    const payerNeedle = String(activeFilters.payerName || '').trim().toLowerCase();
-    const statusNeedle = String(activeFilters.status || '').trim();
-    const minAmount = activeFilters.minAmount !== '' && activeFilters.minAmount !== undefined && activeFilters.minAmount !== null
-      ? Number(activeFilters.minAmount)
-      : null;
-    const maxAmount = activeFilters.maxAmount !== '' && activeFilters.maxAmount !== undefined && activeFilters.maxAmount !== null
-      ? Number(activeFilters.maxAmount)
-      : null;
-    const startDate = activeFilters.startDate ? new Date(`${activeFilters.startDate}T00:00:00`) : null;
-    const endDate = activeFilters.endDate ? new Date(`${activeFilters.endDate}T23:59:59`) : null;
-
-    return txList.filter((tx) => {
-      if (payerNeedle) {
-        const payer = String(tx.payerName || tx.payment?.family?.familyName || '').toLowerCase();
-        if (!payer.includes(payerNeedle)) return false;
-      }
-      if (statusNeedle && String(tx.status) !== statusNeedle) return false;
-
-      const createdAt = tx.createdAt ? new Date(tx.createdAt) : null;
-      if (startDate && createdAt && createdAt < startDate) return false;
-      if (endDate && createdAt && createdAt > endDate) return false;
-
-      const amount = Number(tx.amount || 0);
-      if (Number.isFinite(minAmount) && amount < minAmount) return false;
-      if (Number.isFinite(maxAmount) && amount > maxAmount) return false;
-
-      return true;
-    });
-  };
-
-  const load = async (queryFilters = filters) => {
+  const load = async (queryFilters = filters, page = pagination.page, limit = pagination.limit) => {
     try {
+      const params = { ...buildQueryParams(queryFilters), page, limit };
       const [txRes, plansRes] = await Promise.all([
-        api.get('/payments/transactions', { params: buildQueryParams(queryFilters) }),
+        api.get('/payments/transactions', { params }),
         api.get('/payments/cheques/plans'),
       ]);
       const txList = txRes.data.transactions || [];
-      const filteredTxList = applyClientFilters(txList, queryFilters);
       const scopedTransactions = scope === 'plans'
-        ? filteredTxList.filter((tx) => String(tx.method || tx.payment?.paymentMethod || '').toUpperCase() === 'CHEQUE')
+        ? txList.filter((tx) => String(tx.method || tx.payment?.paymentMethod || '').toUpperCase() === 'CHEQUE')
         : scope === 'debits'
-          ? filteredTxList.filter((tx) => ['VIREMENT', 'PRELEVEMENT_BANCAIRE', 'SEPA'].includes(String(tx.method || tx.payment?.paymentMethod || '').toUpperCase()))
-          : filteredTxList;
-
+          ? txList.filter((tx) => ['VIREMENT', 'PRELEVEMENT_BANCAIRE', 'SEPA'].includes(String(tx.method || tx.payment?.paymentMethod || '').toUpperCase()))
+          : txList;
       setTransactions(scopedTransactions);
+      setPagination((prev) => ({
+        ...prev,
+        total: txRes.data.total || 0,
+        totalPages: txRes.data.totalPages || 1,
+        page: txRes.data.page || page,
+        limit: txRes.data.limit || limit,
+      }));
       setPlans(plansRes.data.plans || []);
     } catch {
       toast.error('Impossible de charger les transactions');
@@ -184,17 +158,25 @@ export default function TresorierPayments({ scope = 'all' }) {
     setSelectedChequePlan(null);
   };
 
-  useEffect(() => { load(); setCurrentPage(1); }, [scope]);
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    load(filters, 1, pagination.limit);
+  }, [scope]);
+
+  useEffect(() => {
+    load(filters, pagination.page, pagination.limit);
+  }, [pagination.page, pagination.limit]);
 
   const applyFilters = () => {
-    setCurrentPage(1);
-    load(filters);
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    load(filters, 1, pagination.limit);
   };
+
   const resetFilters = () => {
     const reset = { familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
     setFilters(reset);
-    setCurrentPage(1);
-    load(reset);
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    load(reset, 1, pagination.limit);
   };
 
   const exportPayments = async () => {
@@ -321,18 +303,26 @@ export default function TresorierPayments({ scope = 'all' }) {
     }
   };
 
-  const totalPages = Math.max(1, Math.ceil(transactions.length / TRANSACTIONS_PER_PAGE));
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const paginatedTransactions = transactions.slice(
-    (safeCurrentPage - 1) * TRANSACTIONS_PER_PAGE,
-    safeCurrentPage * TRANSACTIONS_PER_PAGE,
-  );
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
+  const groupedTransactions = useMemo(() => {
+    const groups = new Map();
+    for (const tx of transactions) {
+      const familyId = tx.payment?.familyId || tx.familyId || tx.paymentId || 'unknown';
+      const familyName = tx.familyName || tx.payment?.family?.familyName || '-';
+      if (!groups.has(familyId)) {
+        groups.set(familyId, { familyId, familyName, transactions: [], totalAmount: 0 });
+      }
+      const g = groups.get(familyId);
+      g.transactions.push(tx);
+      g.totalAmount += Number(tx.amount) || 0;
     }
-  }, [currentPage, totalPages]);
+    return [...groups.values()].sort((a, b) => a.familyName.localeCompare(b.familyName, 'fr'));
+  }, [transactions]);
+
+  const toggleFamily = (familyId) => {
+    setExpandedFamilies((prev) => ({ ...prev, [familyId]: prev[familyId] === false ? true : false }));
+  };
+
+  const isFamilyExpanded = (familyId) => expandedFamilies[familyId] !== false;
 
   return (
     <div>
@@ -457,107 +447,138 @@ export default function TresorierPayments({ scope = 'all' }) {
               </tr>
             </thead>
             <tbody>
-              {paginatedTransactions.map((t) => (
-                <tr key={t.id}>
-                  <td>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
-                  <td>{t.familyName || t.payment?.family?.familyName || '-'}</td>
-                  <td>{t.payerName || '-'}</td>
-                  <td>{formatPaymentMethodLabel(t)}</td>
-                  <td>{Number(t.amount).toFixed(2)} €</td>
-                  <td>{txStatusLabel(t.status)}</td>
-                  <td>
-                    <button
-                      className="btn btn-outline btn-sm"
-                      onClick={async () => {
-                        try {
-                          const response = await api.get(`/finance/payments/${t.paymentId}/receipt/download`, { responseType: 'blob' });
-                          const url = window.URL.createObjectURL(new Blob([response.data]));
-                          const link = document.createElement('a');
-                          link.href = url;
-                          link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
-                          document.body.appendChild(link);
-                          link.click();
-                          link.remove();
-                          window.URL.revokeObjectURL(url);
-                        } catch (error) {
-                          toast.error('Impossible de télécharger le reçu de paiement');
-                        }
-                      }}
-                    >
-                      <FiDownload size={16} /> Reçu
-                    </button>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
-                      {scope !== 'plans' && String(t.status) !== 'CANCELLED' && (
-                        <button
-                          className="btn btn-danger btn-sm"
-                          title="Annuler"
-                          onClick={() => handleTransactionAction(t, 'CANCELLED')}
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
-                        >
-                          <FiXCircle size={14} />
-                        </button>
-                      )}
-                      <button
-                        className="btn btn-outline btn-sm"
-                        title="Détail"
-                        onClick={() => openDetailModal(t)}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
-                      >
-                        <FiEye size={14} />
-                      </button>
-                      {scope === 'plans' && (
-                        <button
-                          className="btn btn-outline btn-sm"
-                          type="button"
-                          onClick={() => {
-                            const matchingPlan = plans.find((plan) => plan.paymentId === t.paymentId);
-                            if (!matchingPlan) {
-                              toast.error('Aucun échéancier trouvé pour ce paiement');
-                              return;
-                            }
-                            openChequePlanModal(matchingPlan);
-                          }}
-                        >
-                          Échéances
-                        </button>
-                      )}
-                    </div>
+              {groupedTransactions.length === 0 ? (
+                <tr>
+                  <td colSpan="8" style={{ textAlign: 'center', padding: '24px 0', color: '#6B7280' }}>
+                    Aucune transaction trouvée
                   </td>
                 </tr>
-              ))}
+              ) : (
+                groupedTransactions.map((group) => (
+                  <Fragment key={group.familyId}>
+                    {/* Ligne en-tête famille */}
+                    <tr
+                      onClick={() => toggleFamily(group.familyId)}
+                      style={{ background: '#EFF6FF', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <td colSpan="8" style={{ padding: '9px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ fontSize: 11, color: '#3B82F6', minWidth: 10 }}>
+                            {isFamilyExpanded(group.familyId) ? '▼' : '▶'}
+                          </span>
+                          <strong style={{ fontSize: 14, color: '#1E3A5F' }}>{group.familyName}</strong>
+                          <span style={{ fontSize: 11, fontWeight: 600, background: '#DBEAFE', color: '#1D4ED8', borderRadius: 999, padding: '2px 8px' }}>
+                            {group.transactions.length} paiement{group.transactions.length > 1 ? 's' : ''}
+                          </span>
+                          <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 13, color: '#1E3A5F' }}>
+                            Total : {group.totalAmount.toFixed(2)} €
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                    {/* Lignes transactions */}
+                    {isFamilyExpanded(group.familyId) && group.transactions.map((t) => (
+                      <tr key={t.id} style={{ background: '#fff' }}>
+                        <td style={{ paddingLeft: 28 }}>{new Date(t.createdAt).toLocaleString('fr-FR')}</td>
+                        <td style={{ color: '#6B7280', fontSize: 12 }}>—</td>
+                        <td>{t.payerName || '-'}</td>
+                        <td>{formatPaymentMethodLabel(t)}</td>
+                        <td>{Number(t.amount).toFixed(2)} €</td>
+                        <td>{txStatusLabel(t.status)}</td>
+                        <td>
+                          <button
+                            className="btn btn-outline btn-sm"
+                            onClick={async () => {
+                              try {
+                                const response = await api.get(`/finance/payments/${t.paymentId}/receipt/download`, { responseType: 'blob' });
+                                const url = window.URL.createObjectURL(new Blob([response.data]));
+                                const link = document.createElement('a');
+                                link.href = url;
+                                link.setAttribute('download', `recu-${t.paymentId.substring(0, 8)}.pdf`);
+                                document.body.appendChild(link);
+                                link.click();
+                                link.remove();
+                                window.URL.revokeObjectURL(url);
+                              } catch {
+                                toast.error('Impossible de télécharger le reçu de paiement');
+                              }
+                            }}
+                          >
+                            <FiDownload size={16} /> Reçu
+                          </button>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
+                            {scope !== 'plans' && String(t.status) !== 'CANCELLED' && (
+                              <button
+                                className="btn btn-danger btn-sm"
+                                title="Annuler"
+                                onClick={() => handleTransactionAction(t, 'CANCELLED')}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                              >
+                                <FiXCircle size={14} />
+                              </button>
+                            )}
+                            <button
+                              className="btn btn-outline btn-sm"
+                              title="Détail"
+                              onClick={() => openDetailModal(t)}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', width: 30, height: 30, lineHeight: 0 }}
+                            >
+                              <FiEye size={14} />
+                            </button>
+                            {scope === 'plans' && (
+                              <button
+                                className="btn btn-outline btn-sm"
+                                type="button"
+                                onClick={() => {
+                                  const matchingPlan = plans.find((plan) => plan.paymentId === t.paymentId);
+                                  if (!matchingPlan) {
+                                    toast.error('Aucun échéancier trouvé pour ce paiement');
+                                    return;
+                                  }
+                                  openChequePlanModal(matchingPlan);
+                                }}
+                              >
+                                Échéances
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))
+              )}
             </tbody>
           </table>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13, color: '#64748B' }}>
-            {transactions.length === 0
-              ? '0 résultat'
-              : `${(safeCurrentPage - 1) * TRANSACTIONS_PER_PAGE + 1}-${Math.min(safeCurrentPage * TRANSACTIONS_PER_PAGE, transactions.length)} sur ${transactions.length}`}
+        {pagination.totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, color: '#64748B' }}>
+              {transactions.length} affichés / {pagination.total} au total • Page {pagination.page} / {pagination.totalPages}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={pagination.page <= 1}
+                onClick={() => setPagination((prev) => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
+              >
+                Précédent
+              </button>
+              <span style={{ fontSize: 13 }}>Page {pagination.page} / {pagination.totalPages}</span>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={pagination.page >= pagination.totalPages}
+                onClick={() => setPagination((prev) => ({ ...prev, page: Math.min(prev.totalPages, prev.page + 1) }))}
+              >
+                Suivant
+              </button>
+            </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button
-              type="button"
-              className="btn btn-outline btn-sm"
-              disabled={safeCurrentPage <= 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            >
-              Précédent
-            </button>
-            <span style={{ fontSize: 13 }}>
-              Page {safeCurrentPage} / {totalPages}
-            </span>
-            <button
-              type="button"
-              className="btn btn-outline btn-sm"
-              disabled={safeCurrentPage >= totalPages}
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Suivant
-            </button>
-          </div>
-        </div>
+        )}
       </div>
       {showOfflineModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
