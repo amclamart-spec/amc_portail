@@ -1039,11 +1039,18 @@ async function recalculatePaymentAggregate(paymentId) {
     return sum;
   }, new Prisma.Decimal(0));
 
+  const hasActiveTransaction = payment.transactions.some(
+    (tx) => String(tx.status) === 'INITIATED' || String(tx.status) === 'SUCCEEDED',
+  );
+
   let status = 'PENDING';
   if (paidAmount.greaterThanOrEqualTo(payment.totalAmount)) {
     status = 'COMPLETED';
   } else if (paidAmount.greaterThan(0)) {
     status = 'PARTIAL';
+  } else if (payment.transactions.length > 0 && !hasActiveTransaction) {
+    // All transactions are CANCELLED or FAILED — no active payment exists
+    status = 'CANCELLED';
   }
 
   await prisma.payment.update({
