@@ -28,6 +28,14 @@ const defaultPricing = {
   sciencesIslamiques: 300,
 };
 
+const SOUTIEN_SEANCES = [
+  { value: 'seances-1', label: '1 séance' },
+  { value: 'seances-2', label: '2 séances' },
+  { value: 'seances-3', label: '3 séances' },
+];
+
+const isSoutienPoleName = (name) => String(name || '').toLowerCase().includes('soutien');
+
 const PRICING_ROW_DEFINITIONS = [
   { id: 'arabic-1', label: 'Arabe - 1 élève', defaultPoleKeyword: 'arabe', defaultLevelMatch: '', peopleCount: 1, pricingKey: 'arabicTier1' },
   { id: 'arabic-2', label: 'Arabe - 2 élèves', defaultPoleKeyword: 'arabe', defaultLevelMatch: '', peopleCount: 2, pricingKey: 'arabicTier2' },
@@ -49,6 +57,7 @@ export default function AdminSettings() {
   const [editYear, setEditYear] = useState(null);
   const [pricing, setPricing] = useState(defaultPricing);
   const [pricingRows, setPricingRows] = useState([]);
+  const [filterPoleId, setFilterPoleId] = useState('');
 
   const getPoleByKeyword = (keyword) => poles.find((pole) => String(pole.name || '').toLowerCase().includes(keyword));
   const getDefaultLevelId = (pole, match) => {
@@ -71,16 +80,19 @@ export default function AdminSettings() {
   });
   const buildPricingRows = (raw, poleList) => {
     if (Array.isArray(raw.tariffRows) && raw.tariffRows.length > 0) {
-      return raw.tariffRows.map((row) => ({
-        id: row.id || `row-${Math.random().toString(36).slice(2, 6)}`,
-        label: row.label || 'Ligne de tarif',
-        poleId: row.poleId || '',
-        poleName: row.poleName || '',
-        levelId: row.levelId || 'ALL',
-        levelCode: row.levelCode || '',
-        peopleCount: Number(row.peopleCount) || 0,
-        price: Number(row.price) || 0,
-      }));
+      return raw.tariffRows.map((row) => {
+        const seance = SOUTIEN_SEANCES.find((s) => s.value === row.levelId);
+        return {
+          id: row.id || `row-${Math.random().toString(36).slice(2, 6)}`,
+          label: row.label || 'Ligne de tarif',
+          poleId: row.poleId || '',
+          poleName: row.poleName || '',
+          levelId: row.levelId || 'ALL',
+          levelCode: seance ? seance.label : (row.levelCode || ''),
+          peopleCount: Number(row.peopleCount) || 0,
+          price: Number(row.price) || 0,
+        };
+      });
     }
 
     return PRICING_ROW_DEFINITIONS.map((definition) => {
@@ -112,13 +124,23 @@ export default function AdminSettings() {
         nextRow.poleId = value;
         const pole = poles.find((p) => p.id === value);
         nextRow.poleName = pole?.name || '';
-        nextRow.levelId = getDefaultLevelId(pole, '');
-        nextRow.levelCode = '';
+        if (isSoutienPoleName(pole?.name)) {
+          nextRow.levelId = 'seances-1';
+          nextRow.levelCode = '1 séance';
+        } else {
+          nextRow.levelId = getDefaultLevelId(pole, '');
+          nextRow.levelCode = '';
+        }
       } else if (field === 'levelId') {
         nextRow.levelId = value;
         const pole = poles.find((p) => p.id === row.poleId);
-        const level = pole?.levels?.find((l) => l.id === value);
-        nextRow.levelCode = level?.code || '';
+        if (isSoutienPoleName(pole?.name)) {
+          const seance = SOUTIEN_SEANCES.find((s) => s.value === value);
+          nextRow.levelCode = seance?.label || '';
+        } else {
+          const level = pole?.levels?.find((l) => l.id === value);
+          nextRow.levelCode = level?.code || '';
+        }
       } else if (field === 'peopleCount') {
         nextRow.peopleCount = Number(value) || 0;
       } else if (field === 'price') {
@@ -326,6 +348,38 @@ export default function AdminSettings() {
               />
             </div>
           </div>
+          {/* Filtre par pôle */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>Filtrer par pôle :</span>
+            <button
+              type="button"
+              onClick={() => setFilterPoleId('')}
+              style={{
+                padding: '4px 14px', borderRadius: 999, border: '1px solid', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                background: filterPoleId === '' ? 'var(--amc-primary)' : '#fff',
+                color: filterPoleId === '' ? '#fff' : '#374151',
+                borderColor: filterPoleId === '' ? 'var(--amc-primary)' : '#D1D5DB',
+              }}
+            >
+              Tous
+            </button>
+            {poles.map((pole) => (
+              <button
+                key={pole.id}
+                type="button"
+                onClick={() => setFilterPoleId(pole.id)}
+                style={{
+                  padding: '4px 14px', borderRadius: 999, border: '1px solid', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                  background: filterPoleId === pole.id ? 'var(--amc-primary)' : '#fff',
+                  color: filterPoleId === pole.id ? '#fff' : '#374151',
+                  borderColor: filterPoleId === pole.id ? 'var(--amc-primary)' : '#D1D5DB',
+                }}
+              >
+                {pole.name}
+              </button>
+            ))}
+          </div>
+
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, minWidth: 720, background: '#FFFFFF', borderRadius: 16, overflow: 'hidden' }}>
               <thead style={{ background: '#F1F5F9' }}>
@@ -337,9 +391,10 @@ export default function AdminSettings() {
                 </tr>
               </thead>
               <tbody>
-                {pricingRows.map((row) => {
+                {pricingRows.filter((row) => !filterPoleId || row.poleId === filterPoleId).map((row) => {
                   const selectedPole = poles.find((pole) => pole.id === row.poleId);
                   const levelOptions = selectedPole?.levels || [];
+                  const isSoutien = isSoutienPoleName(selectedPole?.name);
                   return (
                     <tr key={row.id} style={{ borderTop: '1px solid #E2E8F0' }}>
                       <td style={{ padding: '14px 16px', verticalAlign: 'middle' }}>
@@ -356,7 +411,18 @@ export default function AdminSettings() {
                         </select>
                       </td>
                       <td style={{ padding: '14px 16px', verticalAlign: 'middle' }}>
-                        {levelOptions.length > 0 ? (
+                        {isSoutien ? (
+                          <select
+                            className="form-control"
+                            value={SOUTIEN_SEANCES.some((s) => s.value === row.levelId) ? row.levelId : 'seances-1'}
+                            onChange={(e) => handlePricingRowChange(row.id, 'levelId', e.target.value)}
+                            style={{ width: '100%', borderRadius: 12, minHeight: 44 }}
+                          >
+                            {SOUTIEN_SEANCES.map((s) => (
+                              <option key={s.value} value={s.value}>{s.label}</option>
+                            ))}
+                          </select>
+                        ) : levelOptions.length > 0 ? (
                           <select
                             className="form-control"
                             value={row.levelId}

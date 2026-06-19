@@ -15,6 +15,7 @@ const emptyForm = {
   validFrom: '',
   validTo: '',
   applyEnrollmentFee: true,
+  examPreparation: false,
 };
 
 function slotLabel(slot) {
@@ -153,6 +154,7 @@ export default function AdminClasses() {
       validFrom: cls.validFrom ? new Date(cls.validFrom).toISOString().slice(0, 10) : (yearObj?.startDate ? new Date(yearObj.startDate).toISOString().slice(0, 10) : ''),
       validTo: cls.validTo ? new Date(cls.validTo).toISOString().slice(0, 10) : (yearObj?.endDate ? new Date(yearObj.endDate).toISOString().slice(0, 10) : ''),
       applyEnrollmentFee: cls.applyEnrollmentFee !== false,
+      examPreparation: cls.examPreparation ?? false,
     });
     setModalOpen(true);
   };
@@ -171,6 +173,7 @@ export default function AdminClasses() {
       validFrom: form.validFrom || null,
       validTo: form.validTo || null,
       applyEnrollmentFee: form.applyEnrollmentFee !== false,
+      examPreparation: form.examPreparation === true,
     };
 
     if (!payload.schoolYearId || !payload.poleId || !payload.levelId || payload.timeSlotIds.length === 0 || !payload.teacherId) {
@@ -547,6 +550,23 @@ export default function AdminClasses() {
                   </span>
                 </label>
               </div>
+
+              {/* Préparation examen — soutien scolaire uniquement */}
+              {String(poles.find((p) => p.id === form.poleId)?.name || '').toLowerCase().includes('soutien') && (
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={form.examPreparation === true}
+                      onChange={(e) => setForm((p) => ({ ...p, examPreparation: e.target.checked }))}
+                    />
+                    Préparation examen
+                    <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>
+                      (classe dédiée à la préparation du brevet / bac)
+                    </span>
+                  </label>
+                </div>
+              )}
 
               {/* Période de validité */}
               <div>

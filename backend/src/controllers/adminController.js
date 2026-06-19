@@ -2038,7 +2038,7 @@ async function getLevels(req, res) {
 
 async function createLevel(req, res) {
   try {
-    const { poleId, code, name, description, sortOrder = 0, minAge, maxAge } = req.body;
+    const { poleId, code, name, description, sortOrder = 0, minAge, maxAge, cursus } = req.body;
     if (!poleId || !name) {
       return res.status(400).json({ error: 'poleId et name sont requis' });
     }
@@ -2066,6 +2066,7 @@ async function createLevel(req, res) {
         sortOrder: Number(sortOrder),
         minAge: minAgeNum,
         maxAge: maxAgeNum,
+        cursus: cursus || null,
       },
     });
 
@@ -2079,7 +2080,7 @@ async function createLevel(req, res) {
 async function updateLevel(req, res) {
   try {
     const { id } = req.params;
-    const { poleId, code, name, description, sortOrder, minAge, maxAge } = req.body;
+    const { poleId, code, name, description, sortOrder, minAge, maxAge, cursus } = req.body;
 
     const minAgeNum = minAge !== undefined ? (minAge === '' || minAge === null ? null : Number(minAge)) : undefined;
     const maxAgeNum = maxAge !== undefined ? (maxAge === '' || maxAge === null ? null : Number(maxAge)) : undefined;
@@ -2101,6 +2102,7 @@ async function updateLevel(req, res) {
         ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
         ...(minAgeNum !== undefined ? { minAge: minAgeNum } : {}),
         ...(maxAgeNum !== undefined ? { maxAge: maxAgeNum } : {}),
+        ...(cursus !== undefined ? { cursus: cursus || null } : {}),
       },
       include: { pole: true },
     });
@@ -2447,7 +2449,7 @@ async function getClassDetails(req, res) {
 
     if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
 
-    const [rawFields] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id = ${id}`;
+    const [rawFields] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee", exam_preparation as "examPreparation" FROM classes WHERE id = ${id}`;
 
     res.json({
       class: {
@@ -2461,6 +2463,7 @@ async function getClassDetails(req, res) {
         validFrom: rawFields?.validFrom ?? null,
         validTo: rawFields?.validTo ?? null,
         applyEnrollmentFee: rawFields?.applyEnrollmentFee ?? true,
+        examPreparation: rawFields?.examPreparation ?? false,
       },
     });
   } catch (error) {
@@ -2543,6 +2546,7 @@ async function createClass(req, res) {
       validFrom,
       validTo,
       applyEnrollmentFee = true,
+      examPreparation = false,
     } = req.body;
 
     // Support both timeSlotIds[] (new) and timeSlotId (legacy single)
@@ -2626,9 +2630,10 @@ async function createClass(req, res) {
         data: timeSlotIds.map((tsId, idx) => ({ classId: created.id, timeSlotId: tsId, sortOrder: idx })),
       });
 
-      // Set validFrom/validTo/applyEnrollmentFee via raw SQL (Prisma client may not know these fields yet)
+      // Set validFrom/validTo/applyEnrollmentFee/examPreparation via raw SQL (Prisma client may not know these fields yet)
       const applyFee = applyEnrollmentFee !== false;
-      await tx.$executeRaw`UPDATE classes SET valid_from = ${classValidFrom}, valid_to = ${classValidTo}, apply_enrollment_fee = ${applyFee} WHERE id = ${created.id}`;
+      const examPrep = Boolean(examPreparation);
+      await tx.$executeRaw`UPDATE classes SET valid_from = ${classValidFrom}, valid_to = ${classValidTo}, apply_enrollment_fee = ${applyFee}, exam_preparation = ${examPrep} WHERE id = ${created.id}`;
 
       return created;
     });
@@ -2646,7 +2651,7 @@ async function createClass(req, res) {
       },
     });
 
-    res.status(201).json({ class: { ...fullClass, validFrom: classValidFrom, validTo: classValidTo, applyEnrollmentFee: applyEnrollmentFee !== false, fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
+    res.status(201).json({ class: { ...fullClass, validFrom: classValidFrom, validTo: classValidTo, applyEnrollmentFee: applyEnrollmentFee !== false, examPreparation: Boolean(examPreparation), fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
   } catch (error) {
     console.error('Erreur createClass:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -2660,7 +2665,7 @@ async function updateClass(req, res) {
     if (!existing) return res.status(404).json({ error: 'Classe non trouvée' });
 
     // Fetch raw fields from SQL since Prisma client may not know them yet
-    const [existingRaw] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id = ${id}`;
+    const [existingRaw] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee", exam_preparation as "examPreparation" FROM classes WHERE id = ${id}`;
 
     // Support timeSlotIds[] (new) or single timeSlotId (legacy)
     const rawIds = req.body.timeSlotIds;
@@ -2678,6 +2683,7 @@ async function updateClass(req, res) {
       validFrom: req.body.validFrom !== undefined ? (req.body.validFrom ? new Date(req.body.validFrom) : null) : (existingRaw?.validFrom ?? null),
       validTo: req.body.validTo !== undefined ? (req.body.validTo ? new Date(req.body.validTo) : null) : (existingRaw?.validTo ?? null),
       applyEnrollmentFee: req.body.applyEnrollmentFee !== undefined ? req.body.applyEnrollmentFee !== false : (existingRaw?.applyEnrollmentFee ?? true),
+      examPreparation: req.body.examPreparation !== undefined ? Boolean(req.body.examPreparation) : (existingRaw?.examPreparation ?? false),
     };
 
     const [level, teacher] = await Promise.all([
@@ -2774,9 +2780,9 @@ async function updateClass(req, res) {
       });
 
       // Set raw fields via SQL (Prisma client may not know these fields yet)
-      await tx.$executeRaw`UPDATE classes SET valid_from = ${next.validFrom}, valid_to = ${next.validTo}, apply_enrollment_fee = ${next.applyEnrollmentFee} WHERE id = ${id}`;
+      await tx.$executeRaw`UPDATE classes SET valid_from = ${next.validFrom}, valid_to = ${next.validTo}, apply_enrollment_fee = ${next.applyEnrollmentFee}, exam_preparation = ${next.examPreparation} WHERE id = ${id}`;
 
-      return { ...updatedClass, validFrom: next.validFrom, validTo: next.validTo, applyEnrollmentFee: next.applyEnrollmentFee };
+      return { ...updatedClass, validFrom: next.validFrom, validTo: next.validTo, applyEnrollmentFee: next.applyEnrollmentFee, examPreparation: next.examPreparation };
     });
 
     res.json({ class: { ...updated, fillIndicator: classFillIndicator(updated.enrolledCount, updated.capacity) } });

@@ -129,7 +129,7 @@ export default function AdminClassDetails() {
     }
   };
 
-  if (loading) return <p>Chargement...</p>;
+if (loading) return <p>Chargement...</p>;
   if (!classData) return <p>Classe introuvable.</p>;
 
   const teacherName = classData.teacher ? `${classData.teacher.firstName} ${classData.teacher.lastName}` : '-';
