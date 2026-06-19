@@ -387,6 +387,7 @@ export default function AdminEnrollments() {
 
   const getClassOptions = () => classes
     .filter((cls) => cls.level && cls.level.name)
+    .filter((cls) => !selectedPole || cls.level?.pole?.id === selectedPole)
     .sort((a, b) => (a.level?.name || '').localeCompare(b.level?.name || ''));
 
   const PROVISIONAL_MARKERS = ['AFFECTATION_PROVISOIRE', 'Classe fictive'];
@@ -1381,7 +1382,10 @@ export default function AdminEnrollments() {
             <select
               className="form-control"
               value={selectedPole}
-              onChange={(e) => setSelectedPole(e.target.value)}
+              onChange={(e) => {
+                setSelectedPole(e.target.value);
+                setSelectedClassId('');
+              }}
             >
               <option value="">Tous les pôles</option>
               {getPoleOptions().map((pole) => (

@@ -127,9 +127,17 @@ export default function FamilyPayments() {
                   <td>{Number(p.totalAmount).toFixed(2)} €</td>
                   <td>{Number(p.paidAmount).toFixed(2)} €</td>
                   <td>
-                    <span className={`badge badge-${p.status === "COMPLETED" ? "success" : "info"}`}>
-                      {p.status === "COMPLETED" ? "Payé" : p.status}
-                    </span>
+                    {(() => {
+                      const statusMap = {
+                        COMPLETED: { label: 'Payé', cls: 'success' },
+                        PARTIAL:   { label: 'Partiel', cls: 'warning' },
+                        PENDING:   { label: 'En attente', cls: 'info' },
+                        CANCELLED: { label: 'Annulé', cls: 'danger' },
+                        FAILED:    { label: 'Échoué', cls: 'danger' },
+                      };
+                      const s = statusMap[p.status] || { label: p.status || '—', cls: 'info' };
+                      return <span className={`badge badge-${s.cls}`}>{s.label}</span>;
+                    })()}
                   </td>
                   <td>{formatPaymentMethod(p)}</td>
                   <td>
