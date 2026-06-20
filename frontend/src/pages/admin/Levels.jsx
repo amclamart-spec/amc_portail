@@ -105,6 +105,18 @@ export default function AdminLevels() {
     }
   };
 
+  const cleanupFictiveLevels = async () => {
+    if (!window.confirm('Supprimer tous les niveaux fictifs (code FICTIF_…) ? Les inscriptions concernées seront déplacées vers la classe fictive globale.')) return;
+    try {
+      const { data } = await api.delete('/admin/niveaux/fictifs');
+      toast.success(data.message || 'Niveaux fictifs supprimés');
+      fetchData();
+    } catch (error) {
+      console.error(error);
+      toast.error(error?.response?.data?.error || 'Erreur suppression niveaux fictifs');
+    }
+  };
+
   const deletePole = async (pole) => {
     if (!window.confirm(`Supprimer le pôle ${pole.name} ?`)) return;
     try {
@@ -222,7 +234,10 @@ export default function AdminLevels() {
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <h3>Niveaux d'enseignement</h3>
-          <button className="btn btn-primary" onClick={() => openCreateLevel()}>+ Ajouter un niveau</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-danger btn-sm" onClick={cleanupFictiveLevels}>Supprimer niveaux fictifs</button>
+            <button className="btn btn-primary" onClick={() => openCreateLevel()}>+ Ajouter un niveau</button>
+          </div>
         </div>
 
         {loading ? (
