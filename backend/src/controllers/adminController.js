@@ -7,7 +7,7 @@ const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendEnrollmentApprov
 const { finalizeStripePayment, cancelStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { saveBase64File } = require('../utils/fileUtils');
-const { isProvisionalClass, getProvisionalClassFilter } = require('../utils/provisionalClassUtils');
+const { isProvisionalClass, getProvisionalClassFilter, PROVISIONAL_CLASS_NAME } = require('../utils/provisionalClassUtils');
 const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
 const { getReceiptInfo } = require('../utils/receiptUtils');
 const { generateInvoicePDF } = require('../utils/invoiceUtils');
@@ -2547,6 +2547,7 @@ async function createClass(req, res) {
       validTo,
       applyEnrollmentFee = true,
       examPreparation = false,
+      isProvisional = false,
     } = req.body;
 
     // Support both timeSlotIds[] (new) and timeSlotId (legacy single)
@@ -2555,39 +2556,54 @@ async function createClass(req, res) {
       ? rawIds
       : (req.body.timeSlotId ? [req.body.timeSlotId] : []);
 
-    if (!schoolYearId || !poleId || !levelId || timeSlotIds.length === 0 || !teacherId) {
+    const isProvisionalBool = Boolean(isProvisional);
+
+    if (!schoolYearId || !poleId) {
+      return res.status(400).json({ error: 'schoolYearId et poleId sont requis' });
+    }
+    if (!isProvisionalBool && (!levelId || timeSlotIds.length === 0 || !teacherId)) {
       return res.status(400).json({ error: 'schoolYearId, poleId, levelId, au moins un timeSlotId et teacherId sont requis' });
     }
 
-    const [year, pole, level, teacher] = await Promise.all([
+    const [year, pole, teacher] = await Promise.all([
       prisma.schoolYear.findUnique({ where: { id: schoolYearId } }),
       prisma.pole.findUnique({ where: { id: poleId } }),
-      prisma.level.findUnique({ where: { id: levelId } }),
-      prisma.teacher.findUnique({ where: { id: teacherId }, include: { user: true } }),
+      teacherId ? prisma.teacher.findUnique({ where: { id: teacherId }, include: { user: true } }) : Promise.resolve(null),
     ]);
 
-    if (!year || !pole || !level || !teacher) {
-      return res.status(404).json({ error: 'Référence invalide (année/pôle/niveau/professeur)' });
+    if (!year || !pole) {
+      return res.status(404).json({ error: 'Référence invalide (année/pôle)' });
+    }
+    if (!isProvisionalBool && !teacher) {
+      return res.status(404).json({ error: 'Professeur introuvable' });
+    }
+
+    // Resolve level: required for non-provisional; for provisional, fall back to first level of the pole
+    let level = levelId ? await prisma.level.findUnique({ where: { id: levelId } }) : null;
+    if (!level) {
+      if (!isProvisionalBool) return res.status(404).json({ error: 'Niveau invalide' });
+      level = await prisma.level.findFirst({ where: { poleId } });
+      if (!level) return res.status(400).json({ error: 'Aucun niveau disponible pour ce pôle' });
     }
 
     if (level.poleId !== poleId) {
       return res.status(400).json({ error: 'Le niveau sélectionné ne correspond pas au pôle choisi' });
     }
 
-    const timeSlots = await prisma.timeSlot.findMany({
-      where: { id: { in: timeSlotIds } },
-      include: { room: true },
-    });
+    let timeSlots = [];
+    let primarySlot = null;
+    let primaryRoom = null;
 
-    if (timeSlots.length !== timeSlotIds.length) {
-      return res.status(404).json({ error: 'Un ou plusieurs créneaux sont introuvables' });
+    if (timeSlotIds.length > 0) {
+      timeSlots = await prisma.timeSlot.findMany({ where: { id: { in: timeSlotIds } }, include: { room: true } });
+      if (timeSlots.length !== timeSlotIds.length) {
+        return res.status(404).json({ error: 'Un ou plusieurs créneaux sont introuvables' });
+      }
+      primarySlot = timeSlots.find((s) => s.id === timeSlotIds[0]) || timeSlots[0];
+      primaryRoom = primarySlot.room;
     }
 
-    // Use primary slot (first) for denormalized class fields
-    const primarySlot = timeSlots.find((s) => s.id === timeSlotIds[0]) || timeSlots[0];
-    const primaryRoom = primarySlot.room;
-    const classCapacity = Number(capacity ?? primaryRoom.capacity);
-
+    const classCapacity = Number(capacity || (primaryRoom?.capacity ?? 1000));
     const classValidFrom = validFrom ? new Date(validFrom) : year.startDate;
     const classValidTo = validTo ? new Date(validTo) : year.endDate;
 
@@ -2611,29 +2627,40 @@ async function createClass(req, res) {
         data: {
           schoolYearId,
           poleId,
-          levelId,
-          timeSlotId: primarySlot.id,
-          roomId: primaryRoom.id,
-          teacherId,
-          teacherUserId: teacher.userId,
-          teacherName: `${teacher.firstName} ${teacher.lastName}`,
-          dayOfWeek: primarySlot.dayOfWeek,
-          startTime: primarySlot.startTime,
-          endTime: primarySlot.endTime,
-          room: primaryRoom.name,
+          levelId: level.id,
+          ...(primarySlot ? {
+            timeSlotId: primarySlot.id,
+            roomId: primaryRoom.id,
+            dayOfWeek: primarySlot.dayOfWeek,
+            startTime: primarySlot.startTime,
+            endTime: primarySlot.endTime,
+            room: primaryRoom.name,
+          } : {
+            dayOfWeek: 'N/A',
+            startTime: '00:00',
+            endTime: '00:00',
+          }),
+          ...(teacher ? {
+            teacherId,
+            teacherUserId: teacher.userId,
+            teacherName: `${teacher.firstName} ${teacher.lastName}`,
+          } : {}),
           capacity: classCapacity,
           status,
         },
       });
 
-      await tx.classTimeSlot.createMany({
-        data: timeSlotIds.map((tsId, idx) => ({ classId: created.id, timeSlotId: tsId, sortOrder: idx })),
-      });
+      if (timeSlotIds.length > 0) {
+        await tx.classTimeSlot.createMany({
+          data: timeSlotIds.map((tsId, idx) => ({ classId: created.id, timeSlotId: tsId, sortOrder: idx })),
+        });
+      }
 
-      // Set validFrom/validTo/applyEnrollmentFee/examPreparation via raw SQL (Prisma client may not know these fields yet)
+      // Set validFrom/validTo/applyEnrollmentFee/examPreparation/isProvisional via raw SQL (Prisma client may not know these fields yet)
       const applyFee = applyEnrollmentFee !== false;
       const examPrep = Boolean(examPreparation);
-      await tx.$executeRaw`UPDATE classes SET valid_from = ${classValidFrom}, valid_to = ${classValidTo}, apply_enrollment_fee = ${applyFee}, exam_preparation = ${examPrep} WHERE id = ${created.id}`;
+      const provisional = Boolean(isProvisional);
+      await tx.$executeRaw`UPDATE classes SET valid_from = ${classValidFrom}, valid_to = ${classValidTo}, apply_enrollment_fee = ${applyFee}, exam_preparation = ${examPrep}, is_provisional = ${provisional} WHERE id = ${created.id}`;
 
       return created;
     });
@@ -2651,7 +2678,7 @@ async function createClass(req, res) {
       },
     });
 
-    res.status(201).json({ class: { ...fullClass, validFrom: classValidFrom, validTo: classValidTo, applyEnrollmentFee: applyEnrollmentFee !== false, examPreparation: Boolean(examPreparation), fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
+    res.status(201).json({ class: { ...fullClass, validFrom: classValidFrom, validTo: classValidTo, applyEnrollmentFee: applyEnrollmentFee !== false, examPreparation: Boolean(examPreparation), isProvisional: Boolean(isProvisional), fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
   } catch (error) {
     console.error('Erreur createClass:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -2665,7 +2692,7 @@ async function updateClass(req, res) {
     if (!existing) return res.status(404).json({ error: 'Classe non trouvée' });
 
     // Fetch raw fields from SQL since Prisma client may not know them yet
-    const [existingRaw] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee", exam_preparation as "examPreparation" FROM classes WHERE id = ${id}`;
+    const [existingRaw] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee", exam_preparation as "examPreparation", is_provisional as "isProvisional" FROM classes WHERE id = ${id}`;
 
     // Support timeSlotIds[] (new) or single timeSlotId (legacy)
     const rawIds = req.body.timeSlotIds;
@@ -2684,6 +2711,7 @@ async function updateClass(req, res) {
       validTo: req.body.validTo !== undefined ? (req.body.validTo ? new Date(req.body.validTo) : null) : (existingRaw?.validTo ?? null),
       applyEnrollmentFee: req.body.applyEnrollmentFee !== undefined ? req.body.applyEnrollmentFee !== false : (existingRaw?.applyEnrollmentFee ?? true),
       examPreparation: req.body.examPreparation !== undefined ? Boolean(req.body.examPreparation) : (existingRaw?.examPreparation ?? false),
+      isProvisional: req.body.isProvisional !== undefined ? Boolean(req.body.isProvisional) : (existingRaw?.isProvisional ?? false),
     };
 
     const [level, teacher] = await Promise.all([
@@ -2780,9 +2808,9 @@ async function updateClass(req, res) {
       });
 
       // Set raw fields via SQL (Prisma client may not know these fields yet)
-      await tx.$executeRaw`UPDATE classes SET valid_from = ${next.validFrom}, valid_to = ${next.validTo}, apply_enrollment_fee = ${next.applyEnrollmentFee}, exam_preparation = ${next.examPreparation} WHERE id = ${id}`;
+      await tx.$executeRaw`UPDATE classes SET valid_from = ${next.validFrom}, valid_to = ${next.validTo}, apply_enrollment_fee = ${next.applyEnrollmentFee}, exam_preparation = ${next.examPreparation}, is_provisional = ${next.isProvisional} WHERE id = ${id}`;
 
-      return { ...updatedClass, validFrom: next.validFrom, validTo: next.validTo, applyEnrollmentFee: next.applyEnrollmentFee, examPreparation: next.examPreparation };
+      return { ...updatedClass, validFrom: next.validFrom, validTo: next.validTo, applyEnrollmentFee: next.applyEnrollmentFee, examPreparation: next.examPreparation, isProvisional: next.isProvisional };
     });
 
     res.json({ class: { ...updated, fillIndicator: classFillIndicator(updated.enrolledCount, updated.capacity) } });
@@ -3396,4 +3424,61 @@ module.exports = {
   updateRegistrationBlockStatus,
   getStudentAcademicRecord,
   updateEnrollment,
+  cleanupFictiveLevels,
 };
+
+async function cleanupFictiveLevels(req, res) {
+  try {
+    // Per-pole fictive levels created by the old auto-create logic have code starting with 'FICTIF_'
+    const fictiveLevels = await prisma.level.findMany({
+      where: { code: { startsWith: 'FICTIF_' } },
+      include: { classes: true },
+    });
+
+    if (fictiveLevels.length === 0) {
+      return res.json({ message: 'Aucun niveau fictif trouvé', deletedLevels: 0 });
+    }
+
+    // Global fictive class = a fictive class under a real level (not FICTIF_)
+    const globalFictiveClass = await prisma.class.findFirst({
+      where: {
+        level: { code: { not: { startsWith: 'FICTIF_' } } },
+        OR: getProvisionalClassFilter().OR,
+      },
+    });
+
+    let deletedLevels = 0;
+    let movedEnrollments = 0;
+
+    for (const level of fictiveLevels) {
+      for (const cls of level.classes) {
+        const enrollmentCount = await prisma.enrollment.count({ where: { classId: cls.id } });
+
+        if (enrollmentCount > 0) {
+          if (globalFictiveClass) {
+            const moved = await prisma.enrollment.updateMany({
+              where: { classId: cls.id },
+              data: { classId: globalFictiveClass.id },
+            });
+            movedEnrollments += moved.count;
+          } else {
+            await prisma.enrollment.deleteMany({ where: { classId: cls.id } });
+          }
+        }
+
+        await prisma.class.delete({ where: { id: cls.id } });
+      }
+
+      await prisma.level.delete({ where: { id: level.id } });
+      deletedLevels++;
+    }
+
+    const parts = [`${deletedLevels} niveau(x) fictif(s) supprimé(s)`];
+    if (movedEnrollments > 0) parts.push(`${movedEnrollments} inscription(s) déplacée(s) vers la classe fictive globale`);
+
+    return res.json({ message: parts.join(', '), deletedLevels, movedEnrollments });
+  } catch (error) {
+    console.error('Erreur cleanupFictiveLevels:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
