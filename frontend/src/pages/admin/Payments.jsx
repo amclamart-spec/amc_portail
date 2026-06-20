@@ -136,7 +136,10 @@ export default function AdminPayments() {
       }
       const g = groups.get(familyId);
       g.transactions.push(tx);
-      g.totalAmount += Number(tx.amount) || 0;
+      const txStatus = String(tx.status || '').toUpperCase();
+      if (txStatus !== 'CANCELLED' && txStatus !== 'ANNULÉ' && txStatus !== 'ANNULE') {
+        g.totalAmount += Number(tx.amount) || 0;
+      }
     }
     return [...groups.values()].sort((a, b) => a.familyName.localeCompare(b.familyName, 'fr'));
   }, [transactions]);

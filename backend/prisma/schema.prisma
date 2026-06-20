@@ -357,6 +357,7 @@ model Class {
   validTo              DateTime? @map("valid_to")
   applyEnrollmentFee   Boolean   @default(true) @map("apply_enrollment_fee")
   examPreparation      Boolean   @default(false) @map("exam_preparation")
+  isProvisional        Boolean   @default(false) @map("is_provisional")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
 

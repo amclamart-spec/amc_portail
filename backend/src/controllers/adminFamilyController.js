@@ -71,7 +71,7 @@ async function getFamilies(req, res) {
     const families = await Promise.all(
       rows.map(async (family) => {
         const aggregate = await prisma.payment.aggregate({
-          where: { familyId: family.id },
+          where: { familyId: family.id, status: { not: 'CANCELLED' } },
           _sum: { totalAmount: true, paidAmount: true },
         });
 

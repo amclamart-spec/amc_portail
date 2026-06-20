@@ -24,7 +24,6 @@ const { createOnlineCheckout, createStripeCustomer, createStripeSepaSetupIntent 
 
 const { getNextEnrollmentRegistrationCode, extractSchoolYearCode } = require('../utils/enrollmentUtils');
 
-const { getProvisionalClassFilter, PROVISIONAL_CLASS_NAME } = require('../utils/provisionalClassUtils');
 
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { saveBase64File } = require('../utils/fileUtils');
@@ -850,55 +849,23 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-    // ensure there is a fictive / provisional class for new students without class selection
+    const fictiveClass = await prisma.class.findFirst({
 
-    let fictiveClass = await prisma.class.findFirst({
-
-      where: {
-
-        schoolYearId: currentYear.id,
-
-        ...getProvisionalClassFilter(),
-
-      },
+      where: { schoolYearId: currentYear.id, isProvisional: true },
 
     });
 
-    if (!fictiveClass) {
-
-      const anyLevel = await prisma.level.findFirst();
-
-      if (!anyLevel) throw new Error('Niveau introuvable pour crÃ©er la classe provisoire');
-
-      fictiveClass = await prisma.class.create({
-
-        data: {
-
-          schoolYearId: currentYear.id,
-
-          levelId: anyLevel.id,
-
-          dayOfWeek: 'N/A',
-
-          startTime: '00:00',
-
-          endTime: '00:00',
-
-          room: PROVISIONAL_CLASS_NAME,
-
-          teacherName: PROVISIONAL_CLASS_NAME,
-
-          capacity: 1000,
-
-          enrolledCount: 0,
-
-          status: 'OPEN',
-
-        },
-
-      });
-
-    }
+    // Lookup the provisional class for a pole (class.poleId). Falls back to any provisional class.
+    const poleSpecificFictiveCache = new Map();
+    const getFictiveClassForPole = async (poleId) => {
+      if (!poleSpecificFictiveCache.has(poleId)) {
+        const cls = await prisma.class.findFirst({
+          where: { schoolYearId: currentYear.id, poleId, isProvisional: true },
+        });
+        poleSpecificFictiveCache.set(poleId, cls || fictiveClass);
+      }
+      return poleSpecificFictiveCache.get(poleId);
+    };
 
 
 
@@ -1312,7 +1279,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             studentId: student.id,
 
-            classId: fictiveClass.id,
+            classId: (await getFictiveClassForPole(pole.id)).id,
 
             schoolYearId: currentYear.id,
 
@@ -1340,7 +1307,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             studentId: student.id,
 
-            classId: fictiveClass.id,
+            classId: (await getFictiveClassForPole(pole.id)).id,
 
             schoolYearId: currentYear.id,
 
@@ -1522,11 +1489,14 @@ async function completeExistingFamilyRegistration(req, res) {
 
         if (!already) {
 
+          const studentPoleId = (courseSelections || []).find((s) => Number(s.memberIndex) === i)?.poleId;
+          const resolvedFictiveClass = studentPoleId ? await getFictiveClassForPole(studentPoleId) : fictiveClass;
+
           const enrollment = await createEnrollmentWithUniqueRegistrationCode(tx, {
 
             studentId: student.id,
 
-            classId: fictiveClass.id,
+            classId: resolvedFictiveClass.id,
 
             schoolYearId: currentYear.id,
 
@@ -1538,7 +1508,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-          await tx.class.update({ where: { id: fictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
+          await tx.class.update({ where: { id: resolvedFictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
 
           createdEnrollments.push(enrollment);
 
@@ -2870,53 +2840,23 @@ async function completeFamilyRegistration(req, res) {
 
 
 
-    let fictiveClass = await prisma.class.findFirst({
+    const fictiveClass = await prisma.class.findFirst({
 
-      where: {
-
-        schoolYearId: currentYear.id,
-
-        ...getProvisionalClassFilter(),
-
-      },
+      where: { schoolYearId: currentYear.id, isProvisional: true },
 
     });
 
-    if (!fictiveClass) {
-
-      const anyLevel = await prisma.level.findFirst();
-
-      if (!anyLevel) throw new Error('Niveau introuvable pour crÃ©er la classe provisoire');
-
-      fictiveClass = await prisma.class.create({
-
-        data: {
-
-          schoolYearId: currentYear.id,
-
-          levelId: anyLevel.id,
-
-          dayOfWeek: 'N/A',
-
-          startTime: '00:00',
-
-          endTime: '00:00',
-
-          room: PROVISIONAL_CLASS_NAME,
-
-          teacherName: PROVISIONAL_CLASS_NAME,
-
-          capacity: 1000,
-
-          enrolledCount: 0,
-
-          status: 'OPEN',
-
-        },
-
-      });
-
-    }
+    // Lookup the provisional class for a pole (class.poleId). Falls back to any provisional class.
+    const poleSpecificFictiveCache = new Map();
+    const getFictiveClassForPole = async (poleId) => {
+      if (!poleSpecificFictiveCache.has(poleId)) {
+        const cls = await prisma.class.findFirst({
+          where: { schoolYearId: currentYear.id, poleId, isProvisional: true },
+        });
+        poleSpecificFictiveCache.set(poleId, cls || fictiveClass);
+      }
+      return poleSpecificFictiveCache.get(poleId);
+    };
 
 
 
@@ -3193,11 +3133,14 @@ async function completeFamilyRegistration(req, res) {
 
         if (!already) {
 
-            const enrollment = await createEnrollmentWithUniqueRegistrationCode(tx, {
+          const studentPoleId = (courseSelections || []).find((s) => Number(s.memberIndex) === i)?.poleId;
+          const resolvedFictiveClass = studentPoleId ? await getFictiveClassForPole(studentPoleId) : fictiveClass;
+
+          const enrollment = await createEnrollmentWithUniqueRegistrationCode(tx, {
 
             studentId: student.id,
 
-            classId: fictiveClass.id,
+            classId: resolvedFictiveClass.id,
 
             schoolYearId: currentYear.id,
 
@@ -3207,7 +3150,7 @@ async function completeFamilyRegistration(req, res) {
 
           }, currentYear.id, registrationYearCode, usedRegistrationCodes);
 
-          await tx.class.update({ where: { id: fictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
+          await tx.class.update({ where: { id: resolvedFictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
 
           createdEnrollments.push(enrollment);
 

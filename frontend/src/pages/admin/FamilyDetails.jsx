@@ -37,13 +37,17 @@ export default function AdminFamilyDetails() {
     return photoUrl.startsWith('http') ? photoUrl : `${BACKEND_ORIGIN}${photoUrl}`;
   };
 
-  const totalPaid = useMemo(
-    () => (family?.payments || []).reduce((sum, p) => sum + Number(p.paidAmount || 0), 0),
+  const activePayments = useMemo(
+    () => (family?.payments || []).filter((p) => String(p.status || '').toUpperCase() !== 'CANCELLED'),
     [family],
   );
+  const totalPaid = useMemo(
+    () => activePayments.reduce((sum, p) => sum + Number(p.paidAmount || 0), 0),
+    [activePayments],
+  );
   const totalDue = useMemo(
-    () => (family?.payments || []).reduce((sum, p) => sum + Number(p.totalAmount || 0), 0),
-    [family],
+    () => activePayments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0),
+    [activePayments],
   );
 
   async function loadFamily() {

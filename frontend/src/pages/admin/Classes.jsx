@@ -16,6 +16,7 @@ const emptyForm = {
   validTo: '',
   applyEnrollmentFee: true,
   examPreparation: false,
+  isProvisional: false,
 };
 
 function slotLabel(slot) {
@@ -155,6 +156,7 @@ export default function AdminClasses() {
       validTo: cls.validTo ? new Date(cls.validTo).toISOString().slice(0, 10) : (yearObj?.endDate ? new Date(yearObj.endDate).toISOString().slice(0, 10) : ''),
       applyEnrollmentFee: cls.applyEnrollmentFee !== false,
       examPreparation: cls.examPreparation ?? false,
+      isProvisional: cls.isProvisional ?? false,
     });
     setModalOpen(true);
   };
@@ -174,16 +176,27 @@ export default function AdminClasses() {
       validTo: form.validTo || null,
       applyEnrollmentFee: form.applyEnrollmentFee !== false,
       examPreparation: form.examPreparation === true,
+      isProvisional: form.isProvisional === true,
     };
 
-    if (!payload.schoolYearId || !payload.poleId || !payload.levelId || payload.timeSlotIds.length === 0 || !payload.teacherId) {
-      toast.error('Veuillez sélectionner au moins un créneau et renseigner tous les champs obligatoires');
-      return;
-    }
-
-    if (payload.capacity <= 0) {
-      toast.error('La capacité doit être supérieure à 0');
-      return;
+    if (form.isProvisional) {
+      if (!payload.schoolYearId || !payload.poleId) {
+        toast.error('Veuillez sélectionner l\'année scolaire et le pôle');
+        return;
+      }
+    } else {
+      if (!payload.schoolYearId || !payload.poleId || !payload.levelId) {
+        toast.error('Veuillez renseigner l\'année scolaire, le pôle et le niveau');
+        return;
+      }
+      if (payload.timeSlotIds.length === 0 || !payload.teacherId) {
+        toast.error('Veuillez sélectionner au moins un créneau et renseigner tous les champs obligatoires');
+        return;
+      }
+      if (payload.capacity <= 0) {
+        toast.error('La capacité doit être supérieure à 0');
+        return;
+      }
     }
 
     try {
@@ -461,9 +474,9 @@ export default function AdminClasses() {
                   </select>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Niveau *</label>
+                  <label>Niveau{form.isProvisional ? '' : ' *'}</label>
                   <select className="form-control" value={form.levelId} onChange={(e) => setForm((p) => ({ ...p, levelId: e.target.value }))}>
-                    <option value="">Sélectionner</option>
+                    <option value="">{form.isProvisional ? '(auto)' : 'Sélectionner'}</option>
                     {filteredLevelsForForm.map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
                   </select>
                 </div>
@@ -472,15 +485,15 @@ export default function AdminClasses() {
               {/* Ligne 2 : Professeur / Capacité / Statut */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Professeur *</label>
+                  <label>Professeur{form.isProvisional ? '' : ' *'}</label>
                   <select className="form-control" value={form.teacherId} onChange={(e) => setForm((p) => ({ ...p, teacherId: e.target.value }))}>
                     <option value="">Sélectionner</option>
                     {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.lastName} {teacher.firstName}</option>)}
                   </select>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Capacité *</label>
-                  <input type="number" min="1" className="form-control" value={form.capacity} onChange={(e) => setForm((p) => ({ ...p, capacity: e.target.value }))} />
+                  <label>Capacité{form.isProvisional ? '' : ' *'}</label>
+                  <input type="number" min={form.isProvisional ? undefined : 1} className="form-control" value={form.capacity} onChange={(e) => setForm((p) => ({ ...p, capacity: e.target.value }))} />
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Statut</label>
@@ -495,7 +508,7 @@ export default function AdminClasses() {
               {/* Sélection multi-créneaux */}
               <div className="form-group" style={{ margin: 0 }}>
                 <label style={{ marginBottom: 6, display: 'block' }}>
-                  Créneaux * <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>({form.timeSlotIds.length} sélectionné{form.timeSlotIds.length > 1 ? 's' : ''})</span>
+                  Créneaux{form.isProvisional ? '' : ' *'} <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>({form.timeSlotIds.length} sélectionné{form.timeSlotIds.length > 1 ? 's' : ''})</span>
                 </label>
                 <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, padding: 12, maxHeight: 260, overflowY: 'auto', background: '#F9FAFB' }}>
                   {slotsByDay.length === 0 ? (
@@ -567,6 +580,21 @@ export default function AdminClasses() {
                   </label>
                 </div>
               )}
+
+              {/* Classe provisoire */}
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.isProvisional === true}
+                    onChange={(e) => setForm((p) => ({ ...p, isProvisional: e.target.checked }))}
+                  />
+                  Provisoire
+                  <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>
+                    (classe d'attente avant affectation définitive)
+                  </span>
+                </label>
+              </div>
 
               {/* Période de validité */}
               <div>
