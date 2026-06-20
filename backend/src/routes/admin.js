@@ -62,6 +62,7 @@ const {
   deleteTeacher,
   resetUserPassword,
   unlockUser,
+  cleanupFictiveLevels,
 } = require('../controllers/adminController');
 const {
   getFamilies,
@@ -157,6 +158,7 @@ router.get('/niveaux', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getLevel
 router.post('/niveaux', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createLevel);
 router.put('/niveaux/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), updateLevel);
 router.delete('/niveaux/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), deleteLevel);
+router.delete('/niveaux/fictifs', authorizePermission(PERMISSIONS.CLASSES_MANAGE), cleanupFictiveLevels);
 
 // Alias historique
 router.post('/levels', authorizePermission(PERMISSIONS.CLASSES_MANAGE), createLevel);
