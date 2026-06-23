@@ -1166,10 +1166,19 @@ const selectedEnrollmentsLabel = useMemo(() => {
                           const isArabic = String(pole.name || '').toLowerCase().includes('arabe');
                           const isCoran = String(pole.name || '').toLowerCase().includes('coran');
 
+                          const memberGender = wizard.members[memberIndex]?.gender;
+                          const isClassAllowedForGender = (cls) => {
+                            if (!cls.genre || cls.genre === 'Tout') return true;
+                            if (cls.genre === 'Masculin') return memberGender === 'GARCON';
+                            if (cls.genre === 'Feminin') return memberGender === 'FILLE';
+                            return true;
+                          };
+
                           const poleClasses = allClasses.filter((cls) => {
                             const cPoleId = cls.poleId || cls.level?.pole?.id;
                             if (cPoleId !== pole.id) return false;
-                            return isClassAllowedForAge(cls, memberAge);
+                            if (!isClassAllowedForAge(cls, memberAge)) return false;
+                            return isClassAllowedForGender(cls);
                           });
 
                           const allPoleClasses = poleClasses;
@@ -1337,11 +1346,14 @@ const selectedEnrollmentsLabel = useMemo(() => {
                         const curriculum = curriculumByMember[memberIndex] || '';
                         const filteredGrades = curriculum ? SCHOOL_GRADES.filter((g) => g.category === curriculum) : [];
                         const isExamGrade = EXAM_PREP_GRADES.includes(schoolGrade);
+                        const soutienMemberGender = wizard.members[memberIndex]?.gender;
                         const soutienClasses = allClasses.filter((cls) => {
                           const clsPoleId = cls.poleId || cls.level?.poleId || cls.level?.pole?.id;
                           if (clsPoleId !== soutienPole.id) return false;
                           if (cls.status === 'CLOSED') return false;
                           if (!schoolGrade || !curriculum) return false;
+                          if (cls.genre === 'Masculin' && soutienMemberGender !== 'GARCON') return false;
+                          if (cls.genre === 'Feminin' && soutienMemberGender !== 'FILLE') return false;
                           if (isExamGrade) {
                             // 3ème → prépa examen + classes collège ; Première/Terminale → prépa examen + classes lycée
                             return cls.examPreparation === true || cls.level?.cursus === curriculum;
