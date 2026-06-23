@@ -115,6 +115,7 @@ async function generateInvoiceForPayment(paymentId) {
         student: { familyId: payment.familyId },
         schoolYearId: payment.schoolYearId,
         status: { in: ['PENDING', 'CONFIRMED'] },
+        isWaitlist: false,
       },
       include: {
         class: {
@@ -178,7 +179,8 @@ async function generateInvoiceForPayment(paymentId) {
           scheduleDay: familyPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
           firstPaymentDate: paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
         };
-      }));
+      }))
+      .filter((transaction) => String(transaction.status || '').toUpperCase() === 'SUCCEEDED');
 
     // Generate PDF invoice
     const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, familyTransactionsForReceipt);
@@ -2215,11 +2217,12 @@ async function generatePaymentReceiptPDF(req, res) {
       ? payment.metadata.enrollmentIds
       : [];
     const enrollmentWhere = enrollmentIdsFromMetadata.length > 0
-      ? { id: { in: enrollmentIdsFromMetadata } }
+      ? { id: { in: enrollmentIdsFromMetadata }, isWaitlist: false }
       : {
           student: { familyId: payment.familyId },
           schoolYearId: payment.schoolYearId,
           status: { in: ['PENDING', 'CONFIRMED'] },
+          isWaitlist: false,
         };
 
     const activeEnrollments = await prisma.enrollment.findMany({
@@ -2278,7 +2281,7 @@ async function generatePaymentReceiptPDF(req, res) {
           };
         });
       })
-      .filter((transaction) => String(transaction.status || '').toUpperCase() !== 'CANCELLED')
+      .filter((transaction) => String(transaction.status || '').toUpperCase() === 'SUCCEEDED')
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, activeEnrollments, aggregateTransactions);
