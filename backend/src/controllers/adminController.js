@@ -997,6 +997,7 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
         student: { familyId: payment.familyId },
         schoolYearId: payment.schoolYearId,
         status: { in: ['PENDING', 'CONFIRMED'] },
+        isWaitlist: false,
       },
       include: {
         class: { include: { level: { include: { pole: true } } } },
@@ -1069,7 +1070,8 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
           scheduleDay: familyPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
           firstPaymentDate: paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
         };
-      }));
+      }))
+      .filter((tx) => String(tx.status || '').toUpperCase() === 'SUCCEEDED');
 
     // Generate invoice-like PDF file using shared utility
     const invoiceResult = await generateInvoicePDF(
@@ -2387,10 +2389,10 @@ async function getClasses(req, res) {
       const ids = classes.map((c) => c.id);
       const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
       const rawRows = await prisma.$queryRawUnsafe(
-        `SELECT id, valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee" FROM classes WHERE id IN (${placeholders})`,
+        `SELECT id, valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee", genre FROM classes WHERE id IN (${placeholders})`,
         ...ids,
       );
-      rawFieldsMap = Object.fromEntries(rawRows.map((r) => [r.id, { validFrom: r.validFrom, validTo: r.validTo, applyEnrollmentFee: r.applyEnrollmentFee }]));
+      rawFieldsMap = Object.fromEntries(rawRows.map((r) => [r.id, { validFrom: r.validFrom, validTo: r.validTo, applyEnrollmentFee: r.applyEnrollmentFee, genre: r.genre }]));
     }
 
     const formatted = classes.map((cls) => {
@@ -2406,6 +2408,7 @@ async function getClasses(req, res) {
         validFrom: rawFieldsMap[cls.id]?.validFrom ?? null,
         validTo: rawFieldsMap[cls.id]?.validTo ?? null,
         applyEnrollmentFee: rawFieldsMap[cls.id]?.applyEnrollmentFee ?? true,
+        genre: rawFieldsMap[cls.id]?.genre ?? 'Tout',
       };
     });
 
@@ -2548,6 +2551,7 @@ async function createClass(req, res) {
       applyEnrollmentFee = true,
       examPreparation = false,
       isProvisional = false,
+      genre = 'Tout',
     } = req.body;
 
     // Support both timeSlotIds[] (new) and timeSlotId (legacy single)
@@ -2660,7 +2664,8 @@ async function createClass(req, res) {
       const applyFee = applyEnrollmentFee !== false;
       const examPrep = Boolean(examPreparation);
       const provisional = Boolean(isProvisional);
-      await tx.$executeRaw`UPDATE classes SET valid_from = ${classValidFrom}, valid_to = ${classValidTo}, apply_enrollment_fee = ${applyFee}, exam_preparation = ${examPrep}, is_provisional = ${provisional} WHERE id = ${created.id}`;
+      const genreVal = ['Tout', 'Masculin', 'Feminin'].includes(genre) ? genre : 'Tout';
+      await tx.$executeRaw`UPDATE classes SET valid_from = ${classValidFrom}, valid_to = ${classValidTo}, apply_enrollment_fee = ${applyFee}, exam_preparation = ${examPrep}, is_provisional = ${provisional}, genre = ${genreVal} WHERE id = ${created.id}`;
 
       return created;
     });
@@ -2678,7 +2683,8 @@ async function createClass(req, res) {
       },
     });
 
-    res.status(201).json({ class: { ...fullClass, validFrom: classValidFrom, validTo: classValidTo, applyEnrollmentFee: applyEnrollmentFee !== false, examPreparation: Boolean(examPreparation), isProvisional: Boolean(isProvisional), fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
+    const genreVal = ['Tout', 'Masculin', 'Feminin'].includes(genre) ? genre : 'Tout';
+    res.status(201).json({ class: { ...fullClass, validFrom: classValidFrom, validTo: classValidTo, applyEnrollmentFee: applyEnrollmentFee !== false, examPreparation: Boolean(examPreparation), isProvisional: Boolean(isProvisional), genre: genreVal, fillIndicator: classFillIndicator(fullClass.enrolledCount, fullClass.capacity) } });
   } catch (error) {
     console.error('Erreur createClass:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -2692,7 +2698,7 @@ async function updateClass(req, res) {
     if (!existing) return res.status(404).json({ error: 'Classe non trouvée' });
 
     // Fetch raw fields from SQL since Prisma client may not know them yet
-    const [existingRaw] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee", exam_preparation as "examPreparation", is_provisional as "isProvisional" FROM classes WHERE id = ${id}`;
+    const [existingRaw] = await prisma.$queryRaw`SELECT valid_from as "validFrom", valid_to as "validTo", apply_enrollment_fee as "applyEnrollmentFee", exam_preparation as "examPreparation", is_provisional as "isProvisional", genre FROM classes WHERE id = ${id}`;
 
     // Support timeSlotIds[] (new) or single timeSlotId (legacy)
     const rawIds = req.body.timeSlotIds;
@@ -2712,6 +2718,7 @@ async function updateClass(req, res) {
       applyEnrollmentFee: req.body.applyEnrollmentFee !== undefined ? req.body.applyEnrollmentFee !== false : (existingRaw?.applyEnrollmentFee ?? true),
       examPreparation: req.body.examPreparation !== undefined ? Boolean(req.body.examPreparation) : (existingRaw?.examPreparation ?? false),
       isProvisional: req.body.isProvisional !== undefined ? Boolean(req.body.isProvisional) : (existingRaw?.isProvisional ?? false),
+      genre: req.body.genre !== undefined ? ((['Tout', 'Masculin', 'Feminin'].includes(req.body.genre) ? req.body.genre : 'Tout')) : (existingRaw?.genre ?? 'Tout'),
     };
 
     const [level, teacher] = await Promise.all([
@@ -2808,9 +2815,9 @@ async function updateClass(req, res) {
       });
 
       // Set raw fields via SQL (Prisma client may not know these fields yet)
-      await tx.$executeRaw`UPDATE classes SET valid_from = ${next.validFrom}, valid_to = ${next.validTo}, apply_enrollment_fee = ${next.applyEnrollmentFee}, exam_preparation = ${next.examPreparation}, is_provisional = ${next.isProvisional} WHERE id = ${id}`;
+      await tx.$executeRaw`UPDATE classes SET valid_from = ${next.validFrom}, valid_to = ${next.validTo}, apply_enrollment_fee = ${next.applyEnrollmentFee}, exam_preparation = ${next.examPreparation}, is_provisional = ${next.isProvisional}, genre = ${next.genre} WHERE id = ${id}`;
 
-      return { ...updatedClass, validFrom: next.validFrom, validTo: next.validTo, applyEnrollmentFee: next.applyEnrollmentFee, examPreparation: next.examPreparation, isProvisional: next.isProvisional };
+      return { ...updatedClass, validFrom: next.validFrom, validTo: next.validTo, applyEnrollmentFee: next.applyEnrollmentFee, examPreparation: next.examPreparation, isProvisional: next.isProvisional, genre: next.genre };
     });
 
     res.json({ class: { ...updated, fillIndicator: classFillIndicator(updated.enrolledCount, updated.capacity) } });

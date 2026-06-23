@@ -297,6 +297,8 @@ async function getPricingPreview(req, res) {
 
           if (!cls) return null;
 
+          if (cls.status === 'FULL') return null; // waitlist — no fee
+
           return {
 
             memberIndex: selection.memberIndex,
@@ -883,7 +885,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
           const cls = classById.get(selection.classId);
 
-          if (cls) {
+          if (cls && cls.status !== 'FULL') {
 
             result.push({
 
@@ -2872,7 +2874,7 @@ async function completeFamilyRegistration(req, res) {
 
           const cls = classById.get(selection.classId);
 
-          if (!cls) return null;
+          if (!cls || cls.status === 'FULL') return null; // null = waitlist or not found
 
           return {
 

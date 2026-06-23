@@ -17,6 +17,7 @@ const emptyForm = {
   applyEnrollmentFee: true,
   examPreparation: false,
   isProvisional: false,
+  genre: 'Tout',
 };
 
 function slotLabel(slot) {
@@ -157,6 +158,7 @@ export default function AdminClasses() {
       applyEnrollmentFee: cls.applyEnrollmentFee !== false,
       examPreparation: cls.examPreparation ?? false,
       isProvisional: cls.isProvisional ?? false,
+      genre: cls.genre ?? 'Tout',
     });
     setModalOpen(true);
   };
@@ -177,6 +179,7 @@ export default function AdminClasses() {
       applyEnrollmentFee: form.applyEnrollmentFee !== false,
       examPreparation: form.examPreparation === true,
       isProvisional: form.isProvisional === true,
+      genre: form.genre || 'Tout',
     };
 
     if (form.isProvisional) {
@@ -581,8 +584,8 @@ export default function AdminClasses() {
                 </div>
               )}
 
-              {/* Classe provisoire */}
-              <div>
+              {/* Classe provisoire + Genre */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'center' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
                   <input
                     type="checkbox"
@@ -591,9 +594,17 @@ export default function AdminClasses() {
                   />
                   Provisoire
                   <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>
-                    (classe d'attente avant affectation définitive)
+                    (classe d'attente)
                   </span>
                 </label>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ fontWeight: 600, fontSize: 13 }}>Genre</label>
+                  <select className="form-control" value={form.genre || 'Tout'} onChange={(e) => setForm((p) => ({ ...p, genre: e.target.value }))}>
+                    <option value="Tout">Tout</option>
+                    <option value="Masculin">Masculin</option>
+                    <option value="Feminin">Féminin</option>
+                  </select>
+                </div>
               </div>
 
               {/* Période de validité */}

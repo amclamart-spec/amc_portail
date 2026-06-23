@@ -72,12 +72,24 @@ async function getAvailableClasses(req, res) {
       orderBy: { dayOfWeek: 'asc' },
     });
 
+    let genreMap = {};
+    if (classes.length > 0) {
+      const ids = classes.map((c) => c.id);
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+      const genreRows = await prisma.$queryRawUnsafe(
+        `SELECT id, genre FROM classes WHERE id IN (${placeholders})`,
+        ...ids,
+      );
+      genreMap = Object.fromEntries(genreRows.map((r) => [r.id, r.genre]));
+    }
+
     const formatted = classes.map((cls) => {
       const enrolledCount = cls._count?.enrollments || 0;
       return {
         ...cls,
         enrolledCount,
         status: cls.status === 'CLOSED' ? 'CLOSED' : (enrolledCount >= cls.capacity ? 'FULL' : 'OPEN'),
+        genre: genreMap[cls.id] ?? 'Tout',
       };
     });
 

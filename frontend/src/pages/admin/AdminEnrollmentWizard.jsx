@@ -756,6 +756,8 @@ export default function AdminEnrollmentWizard({ family, familyDetails, isNewFami
                       const days = slots.length > 0 ? slots.map((s) => s.dayOfWeek) : [cls.dayOfWeek];
                       if (!days.includes(courseFilterDay)) return false;
                     }
+                    if (cls.genre === 'Masculin' && member.gender !== 'GARCON') return false;
+                    if (cls.genre === 'Feminin' && member.gender !== 'FILLE') return false;
                     if (isSoutien) {
                       if (!grade) return false;
                       if (!matchSoutienLevel(cls.level?.name, grade, member.gender)) return false;
