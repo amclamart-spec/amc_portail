@@ -205,7 +205,7 @@ function buildEnrollmentTableRows(enrollmentData) {
     return [];
   }
 
-  const filteredEnrollments = enrollmentData.filter((enrollment) => String(enrollment?.status || '').toUpperCase() !== 'CANCELLED');
+  const filteredEnrollments = enrollmentData.filter((enrollment) => String(enrollment?.status || '').toUpperCase() === 'CONFIRMED');
   if (filteredEnrollments.length === 0) {
     return [];
   }
