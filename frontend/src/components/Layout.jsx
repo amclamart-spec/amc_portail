@@ -238,13 +238,21 @@ const navSectionsByRoleExtra = {
 Object.assign(navSectionsByRole, navSectionsByRoleExtra);
 
 // Réouverture de navSectionsByRole pour PROFESSEUR et FAMILLE (suite du fichier d'origine)
-navSectionsByRole.PROFESSEUR = [{
-  title: 'Pédagogie',
-  items: [
-    { path: '/professeur', icon: FiHome, label: 'Mes classes' },
-    { path: '/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
-  ],
-}];
+navSectionsByRole.PROFESSEUR = [
+  {
+    title: 'Pédagogie',
+    items: [
+      { path: '/professeur', icon: FiHome, label: 'Mes classes' },
+      { path: '/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
+    ],
+  },
+  {
+    title: 'Mon compte',
+    items: [
+      { path: '/professeur/profil', icon: FiUser, label: 'Mon profil' },
+    ],
+  },
+];
 
 navSectionsByRole.FAMILLE = [{
   title: 'Mon espace',

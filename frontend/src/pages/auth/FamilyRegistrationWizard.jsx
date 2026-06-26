@@ -1531,8 +1531,16 @@ const selectedEnrollmentsLabel = useMemo(() => {
                     {(wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') && pricingPreview.fraisPrelevement > 0 && (
                       <div>Frais prélèvement: {Number(pricingPreview.fraisPrelevement).toFixed(2)} €</div>
                     )}
-                    <div style={{ marginTop: 8, fontWeight: 700 }}>
-                      TOTAL: {Number(pricingPreview.total + ((wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') ? pricingPreview.fraisPrelevement : 0)).toFixed(2)} €
+                    {(pricingPreview.effectiveDeduction || 0) > 0 && (
+                      <div style={{ color: '#059669', marginTop: 6 }}>
+                        Déjà réglé sur ce(s) pôle(s) : -{Number(pricingPreview.effectiveDeduction).toFixed(2)} €
+                      </div>
+                    )}
+                    <div style={{ marginTop: 8, fontWeight: 700, fontSize: 15 }}>
+                      {(pricingPreview.effectiveDeduction || 0) > 0
+                        ? <>À PAYER : {Number((pricingPreview.amountDue || 0) + ((wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') ? (pricingPreview.fraisPrelevement || 0) : 0)).toFixed(2)} €</>
+                        : <>TOTAL : {Number(pricingPreview.total + ((wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') ? (pricingPreview.fraisPrelevement || 0) : 0)).toFixed(2)} €</>
+                      }
                     </div>
                   </div>
                 )}
@@ -1667,8 +1675,18 @@ const selectedEnrollmentsLabel = useMemo(() => {
                 {selectedEnrollmentsLabel.map((line) => <li key={line}>{line}</li>)}
               </ul>
               {pricingPreview && (
-                <div style={{ marginTop: 8, fontWeight: 700 }}>
-                  Total estimé: {Number(pricingPreview.total + ((wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') ? pricingPreview.fraisPrelevement : 0)).toFixed(2)} €
+                <div style={{ marginTop: 8 }}>
+                  {(pricingPreview.effectiveDeduction || 0) > 0 && (
+                    <div style={{ fontSize: 13, color: '#059669', marginBottom: 4 }}>
+                      Déjà réglé sur ce(s) pôle(s) : -{Number(pricingPreview.effectiveDeduction).toFixed(2)} €
+                    </div>
+                  )}
+                  <div style={{ fontWeight: 700 }}>
+                    {(pricingPreview.effectiveDeduction || 0) > 0 ? 'À payer' : 'Total estimé'} : {Number(
+                      ((pricingPreview.effectiveDeduction || 0) > 0 ? (pricingPreview.amountDue || 0) : pricingPreview.total)
+                      + ((wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') ? (pricingPreview.fraisPrelevement || 0) : 0)
+                    ).toFixed(2)} €
+                  </div>
                   {(wizard.payment.method === 'GO_CARDLESS_SEPA' || wizard.payment.method === 'PRELEVEMENT_BANCAIRE' || wizard.payment.method === 'STRIPE_SEPA') && pricingPreview.fraisPrelevement > 0 && (
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
                       Montant total incluant les frais de prélèvement et les frais d'inscription facturés une seule fois par famille.

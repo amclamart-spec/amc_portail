@@ -9,6 +9,14 @@ const CURSUS_OPTIONS = [
   { value: 'lycee', label: 'Lycée' },
 ];
 
+const PERIOD_OPTIONS = [
+  { value: 'ANNUEL', label: 'Annuel' },
+  { value: 'SEMESTRIEL', label: 'Semestriel' },
+  { value: 'TRIMESTRIEL', label: 'Trimestriel' },
+];
+
+const PERIOD_LABEL = { ANNUEL: 'Annuel', SEMESTRIEL: 'Semestriel', TRIMESTRIEL: 'Trimestriel', MENSUEL: 'Mensuel' };
+
 const isSoutienPoleName = (name) => String(name || '').toLowerCase().includes('soutien');
 
 const emptyLevelForm = {
@@ -28,7 +36,7 @@ export default function AdminLevels() {
   const [levels, setLevels] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [newPole, setNewPole] = useState({ name: '', description: '', sortOrder: 1 });
+  const [newPole, setNewPole] = useState({ name: '', description: '', sortOrder: 1, period: 'ANNUEL' });
 
   const [modalOpen, setModalOpen] = useState(false);
   const [levelForm, setLevelForm] = useState(emptyLevelForm);
@@ -97,7 +105,7 @@ export default function AdminLevels() {
         sortOrder: Number(newPole.sortOrder || 0),
       });
       toast.success('Pôle créé');
-      setNewPole({ name: '', description: '', sortOrder: 1 });
+      setNewPole({ name: '', description: '', sortOrder: 1, period: 'ANNUEL' });
       fetchData();
     } catch (error) {
       console.error(error);
@@ -214,7 +222,7 @@ export default function AdminLevels() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginBottom: 12 }}>Créer un pôle</h3>
-        <form onSubmit={createPole} style={{ display: 'grid', gridTemplateColumns: '2fr 3fr 120px auto', gap: 10, alignItems: 'end' }}>
+        <form onSubmit={createPole} style={{ display: 'grid', gridTemplateColumns: '2fr 3fr 160px 100px auto', gap: 10, alignItems: 'end' }}>
           <div className="form-group" style={{ margin: 0 }}>
             <label>Nom</label>
             <input className="form-control" value={newPole.name} onChange={(e) => setNewPole((prev) => ({ ...prev, name: e.target.value }))} placeholder="Arabe / Coran / Sciences islamiques" />
@@ -222,6 +230,12 @@ export default function AdminLevels() {
           <div className="form-group" style={{ margin: 0 }}>
             <label>Description</label>
             <input className="form-control" value={newPole.description} onChange={(e) => setNewPole((prev) => ({ ...prev, description: e.target.value }))} />
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label>Période</label>
+            <select className="form-control" value={newPole.period} onChange={(e) => setNewPole((prev) => ({ ...prev, period: e.target.value }))}>
+              {PERIOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
           </div>
           <div className="form-group" style={{ margin: 0 }}>
             <label>Ordre</label>
@@ -250,7 +264,7 @@ export default function AdminLevels() {
                   <div>
                     <h4 style={{ margin: 0 }}>{pole.name}</h4>
                     <p style={{ margin: 0, color: '#6B7280' }}>{pole.description || 'Sans description'}</p>
-                    <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: pole.blockReenrollments ? '#B91C1C' : '#374151', userSelect: 'none' }}>
                         <input
                           type="checkbox"
@@ -268,6 +282,17 @@ export default function AdminLevels() {
                           style={{ cursor: 'pointer' }}
                         />
                         Bloquer les nouvelles inscriptions
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#374151', userSelect: 'none' }}>
+                        Période :
+                        <select
+                          className="form-control"
+                          style={{ padding: '3px 8px', fontSize: 13, width: 'auto', minWidth: 120 }}
+                          value={pole.period || 'ANNUEL'}
+                          onChange={(e) => togglePoleBlocking(pole.id, 'period', e.target.value)}
+                        >
+                          {PERIOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
                       </label>
                     </div>
                   </div>
