@@ -37,6 +37,7 @@ import TresorierPayments from './pages/tresorier/Payments';
 
 import ProfesseurDashboard from './pages/professeur/Dashboard';
 import SuiviPedagogique from './pages/professeur/SuiviPedagogique';
+import ProfesseurProfile from './pages/professeur/Profile';
 
 import FamilyDashboard from './pages/family/Dashboard';
 import FamilyChildren from './pages/family/Children';
@@ -97,6 +98,7 @@ function App() {
 
       <Route path="/professeur" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurDashboard /></Layout></PrivateRoute>} />
       <Route path="/suivi-pedagogique" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><SuiviPedagogique /></Layout></PrivateRoute>} />
+      <Route path="/professeur/profil" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurProfile /></Layout></PrivateRoute>} />
 
       <Route path="/famille" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyDashboard /></Layout></PrivateRoute>} />
       <Route path="/famille/chat" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyChat /></Layout></PrivateRoute>} />
