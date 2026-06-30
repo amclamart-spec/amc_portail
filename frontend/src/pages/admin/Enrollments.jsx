@@ -927,7 +927,7 @@ export default function AdminEnrollments() {
 
     const activeEnrollment = paymentEnrollment || editingEnrollment;
     if (!activeEnrollment) return;
-    const paymentId = enrollmentPayments[0].id || enrollmentPayments[0].paymentId;
+    const paymentId = enrollmentPayments[0].paymentId || enrollmentPayments[0].id;
     if (!paymentId) {
       toast.error('Impossible de trouver le paiement associé.');
       return;

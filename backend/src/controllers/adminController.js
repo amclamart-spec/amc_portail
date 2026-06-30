@@ -843,16 +843,19 @@ async function updateEnrollmentPayment(req, res) {
       updateData.status = status === 'validé' ? 'SUCCEEDED' : status === 'annulé' ? 'CANCELLED' : 'INITIATED';
 
       if (updateData.status === 'SUCCEEDED') {
+        // Scope the level-validation check to enrollments linked to THIS payment only
+        const thisPayment = await prisma.payment.findUnique({ where: { id: transaction.paymentId } });
+        const thisPaymentEnrollmentIds = Array.isArray(thisPayment?.metadata?.enrollmentIds) && thisPayment.metadata.enrollmentIds.length > 0
+          ? thisPayment.metadata.enrollmentIds : null;
         const unvalidatedActiveCount = await prisma.enrollment.count({
           where: {
-            student: { familyId: enrollment.student.familyId },
-            schoolYearId: enrollment.schoolYearId,
+            ...(thisPaymentEnrollmentIds ? { id: { in: thisPaymentEnrollmentIds } } : { student: { familyId: enrollment.student.familyId }, schoolYearId: enrollment.schoolYearId }),
             status: { in: ['PENDING', 'CONFIRMED'] },
             levelValidated: false,
           },
         });
         if (unvalidatedActiveCount > 0) {
-          return res.status(400).json({ error: "Au moins une inscription active de la famille n'a pas le niveau validé — impossible de valider le paiement." });
+          return res.status(400).json({ error: "Au moins une inscription liée à ce paiement n'a pas le niveau validé — impossible de valider le paiement." });
         }
       }
     }
@@ -1073,12 +1076,21 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
       }))
       .filter((tx) => String(tx.status || '').toUpperCase() === 'SUCCEEDED');
 
+    const familyPaymentIds = familyPayments.map((familyPayment) => familyPayment.id);
+    const familyRefunds = familyPaymentIds.length > 0
+      ? await prisma.refund.findMany({
+          where: { paymentId: { in: familyPaymentIds }, status: 'PROCESSED' },
+          orderBy: { processedAt: 'desc' },
+        })
+      : [];
+
     // Generate invoice-like PDF file using shared utility
     const invoiceResult = await generateInvoicePDF(
       payment,
       familyWithChildren,
       enrollmentRows,
       familyTransactionsForReceipt,
+      familyRefunds,
     );
     if (!invoiceResult) {
       return res.status(500).json({ error: 'Impossible de générer le reçu' });
@@ -1191,16 +1203,18 @@ async function createEnrollmentPayment(req, res) {
         metadata: { ...targetPayment.metadata, enrollmentIds, ...paymentMetadata },
       };
       if (transactionStatus === 'SUCCEEDED') {
+        // Scope to enrollments of THIS payment
+        const scopedEnrollmentIds = Array.isArray(targetPayment.metadata?.enrollmentIds) && targetPayment.metadata.enrollmentIds.length > 0
+          ? targetPayment.metadata.enrollmentIds : null;
         const unvalidatedActiveCount = await prisma.enrollment.count({
           where: {
-            student: { familyId: enrollment.student.familyId },
-            schoolYearId: enrollment.schoolYearId,
+            ...(scopedEnrollmentIds ? { id: { in: scopedEnrollmentIds } } : { student: { familyId: enrollment.student.familyId }, schoolYearId: enrollment.schoolYearId }),
             status: { in: ['PENDING', 'CONFIRMED'] },
             levelValidated: false,
           },
         });
         if (unvalidatedActiveCount > 0) {
-          return res.status(400).json({ error: "Au moins une inscription active de la famille n'a pas le niveau validé — impossible de marquer ce paiement comme validé." });
+          return res.status(400).json({ error: "Au moins une inscription liée à ce paiement n'a pas le niveau validé — impossible de marquer ce paiement comme validé." });
         }
 
         const newPaidAmount = new Prisma.Decimal(targetPayment.paidAmount).plus(parsedAmount);
@@ -1968,10 +1982,11 @@ async function getPoles(req, res) {
 
 async function createPole(req, res) {
   try {
-    const { name, description, sortOrder = 0 } = req.body;
+    const { name, description, sortOrder = 0, period = 'ANNUEL' } = req.body;
     if (!name) return res.status(400).json({ error: 'Le nom du pôle est requis' });
-
-    const pole = await prisma.pole.create({ data: { name: name.trim(), description, sortOrder: Number(sortOrder) } });
+    const validPeriods = ['ANNUEL', 'SEMESTRIEL', 'TRIMESTRIEL', 'MENSUEL'];
+    const safePeriod = validPeriods.includes(period) ? period : 'ANNUEL';
+    const pole = await prisma.pole.create({ data: { name: name.trim(), description, sortOrder: Number(sortOrder), period: safePeriod } });
     res.status(201).json({ pole });
   } catch (error) {
     console.error('Erreur createPole:', error);
@@ -1982,7 +1997,8 @@ async function createPole(req, res) {
 async function updatePole(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, sortOrder, blockReenrollments, blockNewEnrollments } = req.body;
+    const { name, description, sortOrder, blockReenrollments, blockNewEnrollments, period } = req.body;
+    const validPeriods = ['ANNUEL', 'SEMESTRIEL', 'TRIMESTRIEL', 'MENSUEL'];
 
     const pole = await prisma.pole.update({
       where: { id },
@@ -1992,6 +2008,7 @@ async function updatePole(req, res) {
         ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
         ...(blockReenrollments !== undefined ? { blockReenrollments: Boolean(blockReenrollments) } : {}),
         ...(blockNewEnrollments !== undefined ? { blockNewEnrollments: Boolean(blockNewEnrollments) } : {}),
+        ...(period !== undefined && validPeriods.includes(period) ? { period } : {}),
       },
     });
 
