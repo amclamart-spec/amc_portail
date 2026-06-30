@@ -182,8 +182,16 @@ async function generateInvoiceForPayment(paymentId) {
       }))
       .filter((transaction) => String(transaction.status || '').toUpperCase() === 'SUCCEEDED');
 
+    const familyPaymentIds = familyPayments.map((familyPayment) => familyPayment.id);
+    const familyRefunds = familyPaymentIds.length > 0
+      ? await prisma.refund.findMany({
+          where: { paymentId: { in: familyPaymentIds }, status: 'PROCESSED' },
+          orderBy: { processedAt: 'desc' },
+        })
+      : [];
+
     // Generate PDF invoice
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, familyTransactionsForReceipt);
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, enrollments, familyTransactionsForReceipt, familyRefunds);
     console.log(`✅ Facture générée: ${invoiceResult.filename}`);
 
     return invoiceResult;
@@ -1354,10 +1362,47 @@ async function processRefund(req, res) {
 
 async function getRefunds(req, res) {
   try {
-    const { paymentId } = req.query;
+    const { paymentId, familyId, familyName, status, startDate, endDate, minAmount, maxAmount } = req.query;
     const where = {};
     if (paymentId) {
       where.paymentId = paymentId;
+    }
+    if (status) {
+      where.status = status;
+    }
+
+    const paymentWhere = {};
+    if (familyId) {
+      paymentWhere.familyId = familyId;
+    }
+    if (familyName) {
+      paymentWhere.family = {
+        familyName: { contains: String(familyName), mode: 'insensitive' },
+      };
+    }
+    if (Object.keys(paymentWhere).length > 0) {
+      where.payment = paymentWhere;
+    }
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        const from = new Date(startDate);
+        from.setHours(0, 0, 0, 0);
+        where.createdAt.gte = from;
+      }
+      if (endDate) {
+        const to = new Date(endDate);
+        to.setHours(23, 59, 59, 999);
+        where.createdAt.lte = to;
+      }
+    }
+
+    if (minAmount || maxAmount) {
+      const amountFilter = {};
+      if (minAmount) amountFilter.gte = new Prisma.Decimal(minAmount);
+      if (maxAmount) amountFilter.lte = new Prisma.Decimal(maxAmount);
+      where.amount = amountFilter;
     }
 
     const refunds = await prisma.refund.findMany({
@@ -1365,11 +1410,22 @@ async function getRefunds(req, res) {
       orderBy: { createdAt: 'desc' },
       include: {
         payment: {
-          include: {
-            family: true,
+          select: {
+            id: true,
+            paymentMethod: true,
+            totalAmount: true,
+            familyId: true,
+            family: {
+              select: {
+                id: true,
+                familyName: true,
+                city: true,
+                user: { select: { firstName: true, lastName: true, email: true } },
+              },
+            },
           },
         },
-        approvedBy: true,
+        approvedBy: { select: { id: true, firstName: true, lastName: true } },
       },
     });
 
@@ -2278,7 +2334,15 @@ async function generatePaymentReceiptPDF(req, res) {
       .filter((transaction) => String(transaction.status || '').toUpperCase() === 'SUCCEEDED')
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, activeEnrollments, aggregateTransactions);
+    const familyPaymentIds = familyPayments.map((currentPayment) => currentPayment.id);
+    const familyRefunds = familyPaymentIds.length > 0
+      ? await prisma.refund.findMany({
+          where: { paymentId: { in: familyPaymentIds }, status: 'PROCESSED' },
+          orderBy: { processedAt: 'desc' },
+        })
+      : [];
+
+    const invoiceResult = await generateInvoicePDF(payment, familyWithChildren, activeEnrollments, aggregateTransactions, familyRefunds);
     if (!invoiceResult) {
       console.error(`Échec génération reçu pour paiement ${paymentId}`);
       return res.status(500).json({ error: 'Impossible de générer le reçu' });

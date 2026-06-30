@@ -233,7 +233,7 @@ if (!fs.existsSync(uploadsDir)) {
  * @param {Array} enrollmentData - Enrollment records with course details
  * @returns {Promise<{filePath: string, filename: string}>}
  */
-async function generateInvoicePDF(paymentData, familyData, enrollmentData, paymentTransactions = []) {
+async function generateInvoicePDF(paymentData, familyData, enrollmentData, paymentTransactions = [], refunds = []) {
   const enrollmentRows = buildEnrollmentTableRows(enrollmentData);
 
   return new Promise((resolve, reject) => {
@@ -586,6 +586,50 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
         currentY += 8;
       }
 
+      const refundRows = Array.isArray(refunds) ? refunds : [];
+      const refundsTotal = refundRows.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
+
+      if (refundRows.length > 0) {
+        if (currentY > doc.page.height - 180) {
+          doc.addPage();
+          currentY = 40;
+        }
+
+        currentY += 10;
+        doc.fontSize(10).font('Helvetica-Bold').text('REMBOURSEMENT', 40, currentY);
+        currentY += 18;
+
+        const rfTableX = 40;
+        const rfCellH = 18;
+        const rfDateW = 95;
+        const rfAmountW = 95;
+        const rfReasonW = 340;
+
+        doc.fontSize(9).font('Helvetica-Bold');
+        doc.text('Date', rfTableX + 5, currentY + 4, { width: rfDateW - 10 });
+        doc.text('Montant', rfTableX + rfDateW + 5, currentY + 4, { width: rfAmountW - 10, align: 'right' });
+        doc.text('Motif', rfTableX + rfDateW + rfAmountW + 5, currentY + 4, { width: rfReasonW - 10 });
+        currentY += rfCellH;
+
+        doc.fontSize(9).font('Helvetica');
+        refundRows.forEach((refund) => {
+          if (currentY > doc.page.height - 120) {
+            doc.addPage();
+            currentY = 40;
+          }
+          const dateStr = formatDateValue(refund.processedAt || refund.createdAt) || '-';
+          const reasonText = normalizeText(refund.reason) || '-';
+          const reasonHeight = doc.heightOfString(reasonText, { width: rfReasonW - 10 });
+          const rowHeight = Math.max(rfCellH, Math.ceil(reasonHeight + 8));
+
+          doc.text(dateStr, rfTableX + 5, currentY + 4, { width: rfDateW - 10 });
+          doc.text(`-${Number(refund.amount || 0).toFixed(2)}€`, rfTableX + rfDateW + 5, currentY + 4, { width: rfAmountW - 10, align: 'right' });
+          doc.text(reasonText, rfTableX + rfDateW + rfAmountW + 5, currentY + 4, { width: rfReasonW - 10 });
+          currentY += rowHeight;
+        });
+        currentY += 8;
+      }
+
       currentY += 10;
       if (currentY > doc.page.height - 120) {
         doc.addPage();
@@ -596,7 +640,7 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
       const totalWidth = 200;
       const totalLabelX = totalX;
       const totalAmountX = totalX + 130;
-      const finalTotal = paymentTransactionsTotal;
+      const finalTotal = paymentTransactionsTotal - refundsTotal;
 
       doc.rect(totalLabelX - 5, currentY - 5, totalWidth + 10, 25).stroke();
       doc.fontSize(10).font('Helvetica-Bold').text('TOTAL:', totalLabelX, currentY);
