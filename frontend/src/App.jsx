@@ -30,10 +30,12 @@ import AdminProfile from './pages/admin/Profile';
 import AdminPlanning from './pages/admin/Planning';
 import AdminChat from './pages/admin/Chat';
 import AdminPayments from './pages/admin/Payments';
+import AdminRefunds from './pages/admin/Refunds';
 import EnrollmentDashboard from './pages/EnrollmentDashboard';
 
 import TresorierDashboard from './pages/tresorier/Dashboard';
 import TresorierPayments from './pages/tresorier/Payments';
+import TresorierRefunds from './pages/tresorier/Refunds';
 
 import ProfesseurDashboard from './pages/professeur/Dashboard';
 import SuiviPedagogique from './pages/professeur/SuiviPedagogique';
@@ -71,6 +73,7 @@ function App() {
       <Route path="/admin/enrollments" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminEnrollments /></Layout></PrivateRoute>} />
       <Route path="/admin/settings" element={<PrivateRoute roles={ADMIN_ONLY}><Layout><AdminSettings /></Layout></PrivateRoute>} />
       <Route path="/admin/payments" element={<PrivateRoute roles={ADMIN_ONLY}><Layout><AdminPayments /></Layout></PrivateRoute>} />
+      <Route path="/admin/remboursements" element={<PrivateRoute roles={ADMIN_ONLY}><Layout><AdminRefunds /></Layout></PrivateRoute>} />
 
       <Route path="/admin/salles" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminRooms /></Layout></PrivateRoute>} />
       <Route path="/admin/creneaux" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminTimeslots /></Layout></PrivateRoute>} />
@@ -94,6 +97,7 @@ function App() {
       <Route path="/tresorier/payments" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments scope="all" /></Layout></PrivateRoute>} />
       <Route path="/tresorier/echeanciers" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments scope="plans" /></Layout></PrivateRoute>} />
       <Route path="/tresorier/prelevements" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments scope="debits" /></Layout></PrivateRoute>} />
+      <Route path="/tresorier/remboursements" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierRefunds /></Layout></PrivateRoute>} />
 
       <Route path="/professeur" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurDashboard /></Layout></PrivateRoute>} />
       <Route path="/suivi-pedagogique" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><SuiviPedagogique /></Layout></PrivateRoute>} />
