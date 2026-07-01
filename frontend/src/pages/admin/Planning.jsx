@@ -81,8 +81,8 @@ export default function AdminPlanning() {
   const filteredClasses = useMemo(() => {
     const ref = viewDate ? new Date(viewDate) : null;
     return classes.filter((cls) => {
-      // Filter by validity date range
-      if (ref) {
+      // Filter by validity date range — closed classes are always included regardless of validTo
+      if (ref && cls.status !== 'CLOSED') {
         if (cls.validFrom && new Date(cls.validFrom) > ref) return false;
         if (cls.validTo && new Date(cls.validTo) < ref) return false;
       }
