@@ -36,6 +36,14 @@ export default function AdminLevels() {
   const [levels, setLevels] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const PERIOD_OPTIONS = [
+    { value: 'ANNUEL',      label: 'Annuel' },
+    { value: 'SEMESTRIEL',  label: 'Semestriel' },
+    { value: 'TRIMESTRIEL', label: 'Trimestriel' },
+    { value: 'MENSUEL',     label: 'Mensuel' },
+  ];
+  const periodLabel = (p) => PERIOD_OPTIONS.find((o) => o.value === p)?.label || p || 'Annuel';
+
   const [newPole, setNewPole] = useState({ name: '', description: '', sortOrder: 1, period: 'ANNUEL' });
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -232,7 +240,7 @@ export default function AdminLevels() {
             <input className="form-control" value={newPole.description} onChange={(e) => setNewPole((prev) => ({ ...prev, description: e.target.value }))} />
           </div>
           <div className="form-group" style={{ margin: 0 }}>
-            <label>Période</label>
+            <label>Période des notes</label>
             <select className="form-control" value={newPole.period} onChange={(e) => setNewPole((prev) => ({ ...prev, period: e.target.value }))}>
               {PERIOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
@@ -262,9 +270,20 @@ export default function AdminLevels() {
               <div key={pole.id} style={{ border: '1px solid var(--amc-border)', borderRadius: 10, padding: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div>
-                    <h4 style={{ margin: 0 }}>{pole.name}</h4>
-                    <p style={{ margin: 0, color: '#6B7280' }}>{pole.description || 'Sans description'}</p>
-                    <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <h4 style={{ margin: 0 }}>{pole.name}</h4>
+                      <select
+                        className="form-control"
+                        value={pole.period || 'ANNUEL'}
+                        onChange={(e) => togglePoleBlocking(pole.id, 'period', e.target.value)}
+                        style={{ width: 'auto', fontSize: 12, padding: '2px 6px', height: 28 }}
+                        title="Période des notes pour ce pôle"
+                      >
+                        {PERIOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                    <p style={{ margin: '2px 0 0', color: '#6B7280' }}>{pole.description || 'Sans description'}</p>
+                    <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: pole.blockReenrollments ? '#B91C1C' : '#374151', userSelect: 'none' }}>
                         <input
                           type="checkbox"

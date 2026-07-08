@@ -964,6 +964,15 @@ async function getChequePaymentPlans(_req, res) {
   }
 }
 
+// Maps frontend method group keys to PaymentMethod enum values stored in DB
+// Enum values: STRIPE, PAYPAL, CHEQUE, ESPECES, VIREMENT, CB, SEPA
+const METHOD_GROUP_MAP = {
+  PRELEVEMENT: ['VIREMENT', 'SEPA'],
+  CHEQUE:      ['CHEQUE'],
+  ESPECES:     ['ESPECES'],
+  CB:          ['CB', 'STRIPE'],
+};
+
 function buildTransactionQuery(query = {}) {
   const {
     familyId,
@@ -973,6 +982,7 @@ function buildTransactionQuery(query = {}) {
     endDate,
     minAmount,
     maxAmount,
+    method,
   } = query;
 
   // support multiple input names for family search (family, familyName, family_name)
@@ -1002,6 +1012,16 @@ function buildTransactionQuery(query = {}) {
 
   if (status) {
     where.status = status;
+  }
+
+  if (method) {
+    const methods = METHOD_GROUP_MAP[String(method).toUpperCase()]
+      || String(method).split(',').map((m) => m.trim()).filter(Boolean);
+    if (methods.length === 1) {
+      where.method = methods[0];
+    } else if (methods.length > 1) {
+      where.method = { in: methods };
+    }
   }
 
   if (startDate || endDate) {
@@ -1228,6 +1248,99 @@ async function getTransactions(req, res) {
   }
 }
 
+function mergeMetadata(...sources) {
+  return Object.assign({}, ...sources.map((s) => (s && typeof s === 'object' ? s : {})));
+}
+
+function fmtDateFR(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  return Number.isFinite(d.getTime()) ? d.toLocaleDateString('fr-FR') : String(value);
+}
+
+function extractPaymentDetails(tx) {
+  const payment = tx.payment || {};
+  const paymentMeta = mergeMetadata(payment.metadata);
+  const planMeta    = mergeMetadata(payment.paymentPlan?.metadata);
+  const txMeta      = mergeMetadata(tx.metadata);
+  const meta        = mergeMetadata(planMeta, paymentMeta, txMeta);
+
+  const method = String(tx.method || payment.paymentMethod || '').toUpperCase();
+  const isDebit  = ['VIREMENT', 'SEPA'].includes(method);
+  const isCheque = method === 'CHEQUE';
+
+  if (!isDebit && !isCheque) return {};
+
+  if (isDebit) {
+    const installments = meta.bankDebitInstallmentsCount
+      || meta.numberOfInstallments
+      || payment.numberOfInstallments
+      || payment.paymentPlan?.installmentsCount
+      || '';
+    const scheduleDay = meta.bankDebitDay
+      || payment.paymentPlan?.scheduleDay
+      || '';
+    const firstDate = meta.firstPaymentDate
+      || meta.bankDebitFirstPaymentDate
+      || (Array.isArray(payment.installments) && payment.installments[0]?.dueDate)
+      || '';
+    const iban  = String(meta.bankDebitIban  || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/(.{4})/g, '$1 ').trim();
+    const swift = String(meta.bankDebitSwift || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return {
+      nbEcheances:     installments ? String(installments) : '',
+      jourPrelevement: scheduleDay  ? String(scheduleDay)  : '',
+      datePremiere:    fmtDateFR(firstDate),
+      iban,
+      swift,
+      nbCheques:       '',
+      jourDepot:       '',
+      datePremierCheque: '',
+    };
+  }
+
+  // Cheque
+  const nbCheques = meta.chequeInstallmentsCount
+    || meta.chequeCount
+    || payment.numberOfInstallments
+    || payment.paymentPlan?.installmentsCount
+    || '';
+  const jourDepot = meta.chequeDepositDay
+    || payment.paymentPlan?.scheduleDay
+    || '';
+  const datePremierCheque = meta.chequeFirstPaymentDate
+    || meta.firstPaymentDate
+    || (Array.isArray(payment.installments) && payment.installments[0]?.dueDate)
+    || '';
+  return {
+    nbEcheances:       '',
+    jourPrelevement:   '',
+    datePremiere:      '',
+    iban:              '',
+    swift:             '',
+    nbCheques:         nbCheques ? String(nbCheques) : '',
+    jourDepot:         jourDepot ? String(jourDepot)  : '',
+    datePremierCheque: fmtDateFR(datePremierCheque),
+  };
+}
+
+const METHOD_LABEL = {
+  VIREMENT: 'Prélèvement',
+  SEPA:     'Prélèvement SEPA',
+  CHEQUE:   'Chèque',
+  ESPECES:  'Espèces',
+  CB:       'Carte bancaire',
+  STRIPE:   'Carte bancaire (Stripe)',
+  PAYPAL:   'PayPal',
+};
+
+const STATUS_LABEL = {
+  INITIATED: 'Initié',
+  SUCCEEDED: 'Payé',
+  FAILED:    'Échoué',
+  CANCELLED: 'Annulé',
+  PENDING:   'En attente',
+};
+
 async function exportTransactions(req, res) {
   try {
     const where = buildTransactionQuery(req.query);
@@ -1237,6 +1350,8 @@ async function exportTransactions(req, res) {
         payment: {
           include: {
             family: true,
+            paymentPlan: true,
+            installments: { orderBy: { dueDate: 'asc' }, take: 1 },
           },
         },
       },
@@ -1247,32 +1362,58 @@ async function exportTransactions(req, res) {
     const sheet = workbook.addWorksheet('Transactions');
 
     sheet.columns = [
-      { header: 'Date', key: 'createdAt', width: 20 },
-      { header: 'Paiement', key: 'paymentId', width: 36 },
-      { header: 'Payeur', key: 'payerName', width: 30 },
-      { header: 'Famille', key: 'familyName', width: 30 },
-      { header: 'Méthode', key: 'method', width: 15 },
-      { header: 'Montant', key: 'amount', width: 15 },
-      { header: 'Devise', key: 'currency', width: 10 },
-      { header: 'Statut', key: 'status', width: 15 },
-      { header: 'Référence externe', key: 'externalRef', width: 30 },
-      { header: 'Description', key: 'description', width: 40 },
+      { header: 'Date',                  key: 'createdAt',         width: 20 },
+      { header: 'Payeur',                key: 'payerName',         width: 25 },
+      { header: 'Famille',               key: 'familyName',        width: 25 },
+      { header: 'Mode de paiement',      key: 'method',            width: 20 },
+      { header: 'Montant (€)',           key: 'amount',            width: 14 },
+      { header: 'Statut',                key: 'status',            width: 15 },
+      // Prélèvement
+      { header: 'Nb échéances',          key: 'nbEcheances',       width: 14 },
+      { header: 'Jour prélèvement',      key: 'jourPrelevement',   width: 16 },
+      { header: 'Date 1ère échéance',    key: 'datePremiere',      width: 18 },
+      { header: 'IBAN',                  key: 'iban',              width: 30 },
+      { header: 'SWIFT/BIC',             key: 'swift',             width: 14 },
+      // Chèque
+      { header: 'Nb chèques',            key: 'nbCheques',         width: 12 },
+      { header: 'Jour dépôt',            key: 'jourDepot',         width: 12 },
+      { header: 'Date 1er chèque',       key: 'datePremierCheque', width: 18 },
+      // Commun
+      { header: 'Référence externe',     key: 'externalRef',       width: 30 },
+      { header: 'Description',           key: 'description',       width: 40 },
     ];
 
+    // Style header row
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F7' } };
+
     transactions.forEach((tx) => {
-      sheet.addRow({
-        createdAt: tx.createdAt ? new Date(tx.createdAt).toLocaleString('fr-FR') : '',
-        paymentId: tx.paymentId,
-        payerName: tx.payerName || '',
-        familyName: tx.payment?.family?.familyName || '',
-        method: tx.method,
-        amount: Number(tx.amount).toFixed(2),
-        currency: tx.currency,
-        status: tx.status,
-        externalRef: tx.externalRef || '',
-        description: tx.description || '',
+      const details = extractPaymentDetails(tx);
+      const row = sheet.addRow({
+        createdAt:         tx.createdAt ? new Date(tx.createdAt).toLocaleString('fr-FR') : '',
+        payerName:         tx.payerName || '',
+        familyName:        tx.payment?.family?.familyName || '',
+        method:            METHOD_LABEL[tx.method] || tx.method || '',
+        amount:            Number(tx.amount).toFixed(2),
+        status:            STATUS_LABEL[tx.status] || tx.status || '',
+        nbEcheances:       details.nbEcheances       || '',
+        jourPrelevement:   details.jourPrelevement    || '',
+        datePremiere:      details.datePremiere       || '',
+        iban:              details.iban               || '',
+        swift:             details.swift              || '',
+        nbCheques:         details.nbCheques          || '',
+        jourDepot:         details.jourDepot          || '',
+        datePremierCheque: details.datePremierCheque  || '',
+        externalRef:       tx.externalRef || '',
+        description:       tx.description || '',
       });
+
+      // Align amounts right
+      row.getCell('amount').alignment = { horizontal: 'right' };
     });
+
+    // Freeze header row
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
 
     const filename = `paiements-${Date.now()}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

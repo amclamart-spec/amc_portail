@@ -7,6 +7,7 @@ const {
   getLessons,
   getPeriodNotes,
   postPeriodNote,
+  generateBulletinPDF,
 } = require('../controllers/evaluationController');
 
 const router = Router();
@@ -18,5 +19,6 @@ router.get('/period', getPeriodNotes);
 router.get('/lessons', getLessons);
 router.post('/', postEvaluation);
 router.post('/note', postPeriodNote);
+router.post('/bulletin/pdf', generateBulletinPDF);
 
 module.exports = router;

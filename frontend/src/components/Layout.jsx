@@ -35,6 +35,7 @@ const navSectionsByRole = {
       items: [
         { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
         { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
+        { path: '/admin/justificatifs', icon: FiClipboard, label: 'Justificatifs' },
       ],
     },
     {
@@ -109,6 +110,7 @@ const navSectionsByRole = {
       items: [
         { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
         { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
+        { path: '/admin/justificatifs', icon: FiClipboard, label: 'Justificatifs' },
       ],
     },
     {

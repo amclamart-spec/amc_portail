@@ -31,6 +31,7 @@ import AdminPlanning from './pages/admin/Planning';
 import AdminChat from './pages/admin/Chat';
 import AdminPayments from './pages/admin/Payments';
 import AdminRefunds from './pages/admin/Refunds';
+import AdminJustificatifs from './pages/admin/Justificatifs';
 import EnrollmentDashboard from './pages/EnrollmentDashboard';
 
 import TresorierDashboard from './pages/tresorier/Dashboard';
@@ -75,6 +76,7 @@ function App() {
       <Route path="/admin/settings" element={<PrivateRoute roles={ADMIN_ONLY}><Layout><AdminSettings /></Layout></PrivateRoute>} />
       <Route path="/admin/payments" element={<PrivateRoute roles={ADMIN_ONLY}><Layout><AdminPayments /></Layout></PrivateRoute>} />
       <Route path="/admin/remboursements" element={<PrivateRoute roles={ADMIN_ONLY}><Layout><AdminRefunds /></Layout></PrivateRoute>} />
+      <Route path="/admin/justificatifs" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminJustificatifs /></Layout></PrivateRoute>} />
 
       <Route path="/admin/salles" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminRooms /></Layout></PrivateRoute>} />
       <Route path="/admin/creneaux" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminTimeslots /></Layout></PrivateRoute>} />
