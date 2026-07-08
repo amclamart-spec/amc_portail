@@ -5,16 +5,24 @@ import { FiCheckCircle, FiDownload, FiEye, FiXCircle } from 'react-icons/fi';
 import PaymentDetailModal from '../../components/PaymentDetailModal';
 
 const transactionStatusOptions = [
-  { value: '', label: 'Tous' },
+  { value: '', label: 'Tous les statuts' },
   { value: 'INITIATED', label: 'Initié' },
   { value: 'SUCCEEDED', label: 'Payé' },
   { value: 'FAILED', label: 'Échoué' },
   { value: 'CANCELLED', label: 'Annulé' },
 ];
 
+const transactionMethodOptions = [
+  { value: '', label: 'Tous les modes' },
+  { value: 'PRELEVEMENT', label: 'Prélèvement' },
+  { value: 'CHEQUE', label: 'Chèque' },
+  { value: 'ESPECES', label: 'Espèces' },
+  { value: 'CB', label: 'Carte bancaire' },
+];
+
 export default function AdminPayments() {
   const [transactions, setTransactions] = useState([]);
-  const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
+  const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', method: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 1 });
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [expandedFamilies, setExpandedFamilies] = useState({});
@@ -97,7 +105,7 @@ export default function AdminPayments() {
   };
 
   const resetFilters = () => {
-    const reset = { familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
+    const reset = { familyName: '', payerName: '', status: '', method: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
     setFilters(reset);
     setPagination((prev) => ({ ...prev, page: 1 }));
     load(reset, 1, pagination.limit);
@@ -157,7 +165,7 @@ export default function AdminPayments() {
       <div className="card" style={{ marginBottom: 16 }}>
         <h3>Recherche</h3>
         <form onSubmit={(e) => { e.preventDefault(); applyFilters(); }} style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 12 }}>
             <input
               className="form-control"
               placeholder="Famille (nom)"
@@ -176,6 +184,15 @@ export default function AdminPayments() {
               onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
             >
               {transactionStatusOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <select
+              className="form-control"
+              value={filters.method}
+              onChange={(e) => setFilters((prev) => ({ ...prev, method: e.target.value }))}
+            >
+              {transactionMethodOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>

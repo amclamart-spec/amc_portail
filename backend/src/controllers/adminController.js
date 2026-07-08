@@ -1977,10 +1977,18 @@ async function getPoles(req, res) {
 
 async function createPole(req, res) {
   try {
-    const { name, description, sortOrder = 0 } = req.body;
+    const { name, description, sortOrder = 0, period = 'ANNUEL' } = req.body;
     if (!name) return res.status(400).json({ error: 'Le nom du pôle est requis' });
 
-    const pole = await prisma.pole.create({ data: { name: name.trim(), description, sortOrder: Number(sortOrder) } });
+    const VALID_PERIODS = ['ANNUEL', 'SEMESTRIEL', 'TRIMESTRIEL', 'MENSUEL'];
+    const pole = await prisma.pole.create({
+      data: {
+        name: name.trim(),
+        description,
+        sortOrder: Number(sortOrder),
+        period: VALID_PERIODS.includes(period) ? period : 'ANNUEL',
+      },
+    });
     res.status(201).json({ pole });
   } catch (error) {
     console.error('Erreur createPole:', error);
@@ -1991,7 +1999,8 @@ async function createPole(req, res) {
 async function updatePole(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, sortOrder, blockReenrollments, blockNewEnrollments } = req.body;
+    const { name, description, sortOrder, blockReenrollments, blockNewEnrollments, period } = req.body;
+    const VALID_PERIODS = ['ANNUEL', 'SEMESTRIEL', 'TRIMESTRIEL', 'MENSUEL'];
 
     const pole = await prisma.pole.update({
       where: { id },
@@ -2001,6 +2010,7 @@ async function updatePole(req, res) {
         ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
         ...(blockReenrollments !== undefined ? { blockReenrollments: Boolean(blockReenrollments) } : {}),
         ...(blockNewEnrollments !== undefined ? { blockNewEnrollments: Boolean(blockNewEnrollments) } : {}),
+        ...(period !== undefined && VALID_PERIODS.includes(period) ? { period } : {}),
       },
     });
 

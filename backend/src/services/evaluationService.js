@@ -63,19 +63,8 @@ async function fetchAbsenceHistory({ teacherUserId, classId }) {
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
 
-  const lessonWhere = {
-    classId,
-    evaluations: { some: {} },
-  };
-  if (classRecord.schoolYear) {
-    lessonWhere.date = {
-      gte: classRecord.schoolYear.startDate,
-      lte: classRecord.schoolYear.endDate,
-    };
-  }
-
   const lessons = await prisma.lesson.findMany({
-    where: lessonWhere,
+    where: { classId, evaluations: { some: {} } },
     orderBy: [{ date: 'desc' }, { title: 'asc' }],
   });
 

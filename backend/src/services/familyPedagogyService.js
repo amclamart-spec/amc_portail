@@ -95,16 +95,63 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
     orderBy: [{ lesson: { date: 'desc' } }],
   });
 
+  const ids = absences.map((e) => e.id);
+  let rawFieldsMap = {};
+  if (ids.length > 0) {
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+    const rawRows = await prisma.$queryRawUnsafe(
+      `SELECT id, family_justification as "familyJustification", justification_status as "justificationStatus" FROM evaluations WHERE id IN (${placeholders})`,
+      ...ids,
+    );
+    rawFieldsMap = Object.fromEntries(rawRows.map((r) => [r.id, r]));
+  }
+
   return absences.map((evaluation) => ({
     id: evaluation.id,
     grade: evaluation.grade,
     appreciation: evaluation.appreciation,
     justification: evaluation.justification,
+    familyJustification: rawFieldsMap[evaluation.id]?.familyJustification || null,
+    justificationStatus: rawFieldsMap[evaluation.id]?.justificationStatus || 'NONE',
     date: evaluation.lesson?.date || null,
     lessonTitle: evaluation.lesson?.title || null,
     classLabel: formatClassLabel(evaluation.lesson?.class),
     status: evaluation.status,
   }));
+}
+
+async function submitFamilyJustification({ familyUserId, evaluationId, comment }) {
+  if (!comment || !comment.trim()) {
+    const err = new Error('Le commentaire est requis');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Verify the evaluation belongs to a student of this family
+  const evaluation = await prisma.evaluation.findUnique({
+    where: { id: evaluationId },
+    include: {
+      student: { include: { family: true } },
+    },
+  });
+  if (!evaluation || evaluation.student?.family?.userId !== familyUserId) {
+    const err = new Error('Absence introuvable');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (evaluation.status !== 'missing') {
+    const err = new Error('Ce relevé n\'est pas une absence');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await prisma.$queryRawUnsafe(
+    `UPDATE evaluations SET family_justification = $1, justification_status = 'PENDING' WHERE id = $2`,
+    comment.trim(),
+    evaluationId,
+  );
+
+  return { success: true };
 }
 
 async function fetchStudentHomework({ familyUserId, studentId }) {
@@ -209,4 +256,5 @@ module.exports = {
   fetchStudentAbsences,
   fetchStudentHomework,
   fetchStudentNotes,
+  submitFamilyJustification,
 };

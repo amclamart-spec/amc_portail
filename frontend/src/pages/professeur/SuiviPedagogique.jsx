@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FiLoader, FiPrinter, FiCheck, FiX, FiSave, FiEdit2, FiTrash2 } from 'react-icons/fi';
+import { FiLoader, FiPrinter, FiDownload, FiCheck, FiX, FiSave, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import useEvaluations from '../../hooks/useEvaluations';
@@ -183,7 +183,7 @@ export default function SuiviPedagogique() {
 
   /* ── derived ── */
   const selectedClass  = classes.find((c) => String(c.id) === String(selectedClassId)) || null;
-  const classPeriod    = selectedClass?.schoolYear?.period;
+  const classPeriod    = selectedClass?.level?.pole?.period;
   const periodOptions  = useMemo(() => {
     if (classPeriod === 'TRIMESTRIEL') return [
       { label: 'Trimestre 1', value: 'TRIMESTRE_1' },
@@ -300,6 +300,22 @@ export default function SuiviPedagogique() {
   }, [classPeriod, periodOptions]);
 
   useEffect(() => { if (error) toast.error(error); }, [error]);
+
+  /* ── day-of-week validation for absence date ── */
+  const DAY_MAP = { DIMANCHE: 0, LUNDI: 1, MARDI: 2, MERCREDI: 3, JEUDI: 4, VENDREDI: 5, SAMEDI: 6 };
+  const handleAbsenceDateChange = (value) => {
+    if (!value) { setDateFilter(''); return; }
+    const expectedDay = DAY_MAP[selectedClass?.dayOfWeek];
+    if (expectedDay !== undefined) {
+      const [year, month, day] = value.split('-').map(Number);
+      const picked = new Date(year, month - 1, day).getDay();
+      if (picked !== expectedDay) {
+        toast.error(`Ce cours a lieu le ${selectedClass.dayOfWeek.charAt(0) + selectedClass.dayOfWeek.slice(1).toLowerCase()}. Veuillez choisir un autre jour.`);
+        return;
+      }
+    }
+    setDateFilter(value);
+  };
 
   /* ── handlers ── */
   const handleStatusToggle = (studentId, status) => {
@@ -538,8 +554,15 @@ export default function SuiviPedagogique() {
             <div className="ep-sec-body">
               <div className="ep-2col">
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: 'block' }}>Date de la séance</label>
-                  <input type="date" className="form-control" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} />
+                  <label style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: 'block' }}>
+                    Date de la séance
+                    {selectedClass?.dayOfWeek && (
+                      <span style={{ marginLeft: 8, fontWeight: 400, fontSize: 12, color: T.primary }}>
+                        (cours le {selectedClass.dayOfWeek.charAt(0) + selectedClass.dayOfWeek.slice(1).toLowerCase()})
+                      </span>
+                    )}
+                  </label>
+                  <input type="date" className="form-control" value={dateFilter} onChange={(e) => handleAbsenceDateChange(e.target.value)} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
                   <button className="btn btn-outline btn-sm" onClick={openAbsenceHistory} disabled={historyLoading || !selectedClassId}>
@@ -565,9 +588,7 @@ export default function SuiviPedagogique() {
               {dateFilter && <span style={{ fontWeight: 400, fontSize: 12, color: '#6B7280' }}>{fmtDate(dateFilter, { day: '2-digit', month: 'long', year: 'numeric' })}</span>}
             </SecHead>
             <div className="ep-sec-body">
-              {!dateFilter ? (
-                <EmptyState icon="📅" text="Sélectionnez une date pour afficher la feuille d'appel" />
-              ) : rows.length === 0 ? (
+              {rows.length === 0 ? (
                 <EmptyState icon="👥" text="Aucun élève trouvé pour cette classe" />
               ) : (
                 <>
@@ -863,7 +884,38 @@ export default function SuiviPedagogique() {
                     disabled={!bulletinStudentId}
                     onClick={() => window.print()}
                   >
-                    <FiPrinter size={14} /> Imprimer / PDF
+                    <FiPrinter size={14} /> Imprimer
+                  </button>
+                  <button
+                    className="btn ep-no-print"
+                    style={{ background: T.dark, color: '#fff' }}
+                    disabled={!bulletinStudentId || !selectedPeriod || saving}
+                    onClick={async () => {
+                      setSaving(true);
+                      try {
+                        const response = await api.post(
+                          '/evaluations/bulletin/pdf',
+                          { classId: selectedClassId, period: selectedPeriod, studentId: bulletinStudentId, appreciation: bulletinAppreciation },
+                          { responseType: 'blob' },
+                        );
+                        const studentName = noteRows.find((r) => String(r.id) === bulletinStudentId)?.studentName || bulletinStudentId;
+                        const url = window.URL.createObjectURL(new Blob([response.data]));
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.setAttribute('download', `bulletin-${studentName.replace(/\s+/g, '-')}-${selectedPeriod}.pdf`);
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        window.URL.revokeObjectURL(url);
+                      } catch (e) {
+                        console.error('Erreur téléchargement bulletin', e);
+                        toast.error('Impossible de générer le bulletin PDF');
+                      } finally {
+                        setSaving(false);
+                      }
+                    }}
+                  >
+                    <FiDownload size={14} /> Télécharger PDF
                   </button>
                 </div>
               </div>
