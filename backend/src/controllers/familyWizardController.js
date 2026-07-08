@@ -379,6 +379,12 @@ async function getPricingPreview(req, res) {
 
     let totalFamilyEnrollmentsByPole = {};
 
+    let alreadyPaidTotal = 0;
+
+    let alreadyPaidPerPole = {};
+
+    let existingEnrollmentsForPricing = [];
+
 
 
     if (req.user) {
@@ -484,12 +490,61 @@ async function getPricingPreview(req, res) {
 
         }
 
+        // Map existing enrollments to pricing format for global tariff calculation
+        existingEnrollmentsForPricing = existingEnrollments.map((e) => ({
+          poleId: e.class?.level?.pole?.id || '',
+          poleName: e.class?.level?.pole?.name || '',
+          levelId: e.class?.level?.id || '',
+          levelCode: e.class?.level?.code || '',
+        }));
+
+        // Fetch already paid amounts per pole for this family this school year
+        const existingPayments = await prisma.payment.findMany({
+          where: {
+            familyId: family.id,
+            schoolYearId: currentYear.id,
+            status: { in: ['PENDING', 'PARTIAL', 'COMPLETED', 'OVERDUE'] },
+          },
+          select: { totalAmount: true, metadata: true },
+        });
+
+        // For payments without metadata.poleId (legacy), try to find pole via metadata.enrollmentIds
+        const legacyEnrollmentIds = [];
+        for (const p of existingPayments) {
+          if (!p.metadata?.poleId && Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.length > 0) {
+            legacyEnrollmentIds.push(...p.metadata.enrollmentIds);
+          }
+        }
+        const legacyEnrollmentPoleMap = {};
+        if (legacyEnrollmentIds.length > 0) {
+          const legacyEnrollments = await prisma.enrollment.findMany({
+            where: { id: { in: legacyEnrollmentIds } },
+            select: { id: true, class: { select: { level: { select: { pole: { select: { id: true } } } } } } },
+          });
+          for (const e of legacyEnrollments) {
+            legacyEnrollmentPoleMap[e.id] = e.class?.level?.pole?.id || null;
+          }
+        }
+
+        for (const p of existingPayments) {
+          const amt = Number(p.totalAmount || 0);
+          alreadyPaidTotal += amt;
+          let pid = p.metadata?.poleId || null;
+          if (!pid && Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.length > 0) {
+            pid = legacyEnrollmentPoleMap[p.metadata.enrollmentIds[0]] || null;
+          }
+          if (pid) {
+            alreadyPaidPerPole[pid] = (alreadyPaidPerPole[pid] || 0) + amt;
+          }
+        }
+
       }
 
     }
 
 
 
+    // pricing for the new enrollments only (used for fee breakdown display in the UI)
     const pricing = calculateFamilyTotal(enrollments, pricingConfig, {
 
       skipRegistrationFee,
@@ -500,9 +555,22 @@ async function getPricingPreview(req, res) {
 
     });
 
+    // Global tariff = tier prices for ALL family enrollments (existing + new) from the tariff grid
+    const allEnrollmentsForPricing = [...existingEnrollmentsForPricing, ...enrollments];
+    const globalPricing = allEnrollmentsForPricing.length > 0
+      ? calculateFamilyTotal(allEnrollmentsForPricing, pricingConfig, {
+          skipRegistrationFee,
+          existingArabicCount: 0,
+          totalFamilyEnrollmentsByPole: {},
+        })
+      : pricing;
 
+    // Déjà réglé = total already paid before this session (any pole, any status except cancelled/failed)
+    const effectiveDeduction = alreadyPaidTotal;
+    // Reste à payer = global tariff - already paid
+    const amountDue = Math.max(0, globalPricing.total - alreadyPaidTotal);
 
-    return res.json({ pricing, classes });
+    return res.json({ pricing: { ...globalPricing, alreadyPaid: alreadyPaidTotal, alreadyPaidPerPole, amountDue, effectiveDeduction }, classes });
 
   } catch (error) {
 
@@ -582,6 +650,117 @@ function buildBankDebitMetadata(payment) {
   }
 
   return metadata;
+}
+
+async function createPolePricingAndPayment(tx, {
+  familyId, schoolYearId, poleId, poleName, poleEnrollmentIds,
+  poleEnrollmentsForPricing, pricingConfig, isFirstPole, existingArabicCount, totalFamilyEnrollmentsByPole,
+  installmentsCount, scheduleDay, selectedPaymentMethod, paymentMethod, provider,
+  bankDebitMetadata, draftId, payerName, source, alreadyPaidForPole = 0,
+  skipRegistrationFeeForFamily = false,
+}) {
+  const polePricing = calculateFamilyTotal(poleEnrollmentsForPricing, pricingConfig, {
+    skipRegistrationFee: skipRegistrationFeeForFamily || !isFirstPole,
+    existingArabicCount: existingArabicCount || 0,
+    totalFamilyEnrollmentsByPole: totalFamilyEnrollmentsByPole || {},
+  });
+
+  const sepaExtra = (selectedPaymentMethod === 'GO_CARDLESS_SEPA' || selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE')
+    ? polePricing.fraisPrelevement : 0;
+  const poleTotal = Math.max(0, polePricing.total + sepaExtra - alreadyPaidForPole);
+
+  // If the pole is already fully paid, skip creating a new payment record
+  if (poleTotal === 0) {
+    return { paymentRecord: null, paymentPlan: null, installments: [], polePricing, poleTotal: 0 };
+  }
+
+  const paymentRecord = await tx.payment.create({
+    data: {
+      familyId,
+      schoolYearId,
+      totalAmount: toDecimal(poleTotal),
+      registrationFee: toDecimal(polePricing.registrationFee),
+      arabicFee: toDecimal(polePricing.arabicFee),
+      coranScienceFee: toDecimal(polePricing.coranScienceFee),
+      paymentMethod,
+      provider,
+      numberOfInstallments: installmentsCount,
+      status: 'PENDING',
+      metadata: {
+        enrollmentIds: poleEnrollmentIds,
+        poleId,
+        poleName,
+        checkoutMethod: selectedPaymentMethod,
+        sepaFee: polePricing.fraisPrelevement,
+        draftId: draftId || null,
+        payerName: payerName || null,
+        ...bankDebitMetadata,
+      },
+    },
+  });
+
+  const installments = buildInstallmentSchedule(poleTotal, installmentsCount, {
+    dayOfMonth: scheduleDay,
+    startDate: new Date(),
+  });
+
+  await tx.installment.createMany({
+    data: installments.map((inst) => ({
+      paymentId: paymentRecord.id,
+      installmentNumber: inst.installmentNumber,
+      amount: toDecimal(inst.amount),
+      dueDate: inst.dueDate,
+      status: 'UPCOMING',
+    })),
+  });
+
+  const paymentPlan = await tx.paymentPlan.create({
+    data: {
+      familyId,
+      schoolYearId,
+      paymentId: paymentRecord.id,
+      type: selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE' ? 'ESPECES' : selectedPaymentMethod,
+      status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
+      installmentsCount,
+      scheduleDay,
+      totalAmount: toDecimal(poleTotal),
+      metadata: {
+        poleId,
+        poleName,
+        createdFrom: source || 'wizard',
+        sepaFee: polePricing.fraisPrelevement,
+        ...bankDebitMetadata,
+      },
+    },
+  });
+
+  if (provider === 'OFFLINE') {
+    const isCheque = paymentMethod === 'CHEQUE';
+    const isBankDebit = paymentMethod === 'VIREMENT' && selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE';
+    await tx.paymentTransaction.create({
+      data: {
+        paymentId: paymentRecord.id,
+        provider: 'OFFLINE',
+        method: paymentMethod,
+        amount: toDecimal(poleTotal),
+        status: 'INITIATED',
+        payerName: payerName || 'Non spécifié',
+        description: `${poleName} — ${isCheque ? 'Paiement par chèque en attente' : isBankDebit ? 'Prélèvement bancaire en attente' : 'Paiement en espèces en attente'}`,
+        metadata: {
+          poleId,
+          instructions: isCheque
+            ? 'Déposer les chèques selon l\'échéancier communiqué par association PARTAGE.'
+            : isBankDebit
+              ? 'Le RIB est enregistré pour traitement. Le prélèvement sera mis en place par le service trésorerie.'
+              : 'Veuillez déposer le montant en espèces selon l\'échéancier fourni.',
+        },
+      },
+    });
+  }
+
+  const savedInstallments = await tx.installment.findMany({ where: { paymentId: paymentRecord.id } });
+
+  return { paymentRecord, paymentPlan, installments: savedInstallments, polePricing, poleTotal };
 }
 
 async function createEnrollmentWithUniqueRegistrationCode(tx, enrollmentData, schoolYearId, registrationYearCode, usedRegistrationCodes) {
@@ -1189,6 +1368,8 @@ async function completeExistingFamilyRegistration(req, res) {
 
       const usedRegistrationCodes = new Set();
 
+      const enrollmentPoleMap = new Map();
+
       for (const selection of courseSelections) {
 
         const studentIndex = Number(selection.memberIndex);
@@ -1259,6 +1440,8 @@ async function completeExistingFamilyRegistration(req, res) {
 
           createdEnrollments.push(enrollment);
 
+          enrollmentPoleMap.set(enrollment.id, { poleId: cls.level?.pole?.id || '', poleName: cls.level?.pole?.name || '' });
+
         }
 
         // New student: has selected a specific level
@@ -1293,6 +1476,8 @@ async function completeExistingFamilyRegistration(req, res) {
 
           createdEnrollments.push(enrollment);
 
+          enrollmentPoleMap.set(enrollment.id, { poleId: (poleById.get(selection.poleId) || level.pole)?.id || '', poleName: (poleById.get(selection.poleId) || level.pole)?.name || '' });
+
         }
 
         // New student: fallback selection by pole only
@@ -1320,6 +1505,8 @@ async function completeExistingFamilyRegistration(req, res) {
           }, currentYear.id, registrationYearCode, usedRegistrationCodes);
 
           createdEnrollments.push(enrollment);
+
+          enrollmentPoleMap.set(enrollment.id, { poleId: pole.id, poleName: pole.name });
 
         }
 
@@ -1514,6 +1701,9 @@ async function completeExistingFamilyRegistration(req, res) {
 
           createdEnrollments.push(enrollment);
 
+          const selForFallback = (courseSelections || []).find((s) => Number(s.memberIndex) === i);
+          enrollmentPoleMap.set(enrollment.id, { poleId: selForFallback?.poleId || '', poleName: poleById.get(selForFallback?.poleId)?.name || '' });
+
         }
 
       }
@@ -1580,242 +1770,94 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-      // Idempotence: if a payment already exists for these enrollments, reuse it
-
-      const enrollmentIds = createdEnrollments.map((e) => e.id).sort();
-
-      let paymentRecord = null;
-
-      const candidatePayments = await tx.payment.findMany({
-
+      // Fetch existing payments per pole to compute delta amounts
+      const existingFamilyPaymentsList = await tx.payment.findMany({
         where: {
-
           familyId: family.id,
-
           schoolYearId: currentYear.id,
-
-          status: { not: 'CANCELLED' },
-
+          status: { in: ['PENDING', 'PARTIAL', 'COMPLETED', 'OVERDUE'] },
         },
-
+        select: { totalAmount: true, metadata: true },
       });
 
-
-
-      for (const p of candidatePayments) {
-
-        const pIds = Array.isArray(p.metadata?.enrollmentIds) ? p.metadata.enrollmentIds.slice().sort() : [];
-
-        if (pIds.length === enrollmentIds.length && pIds.join(',') === enrollmentIds.join(',')) {
-
-          paymentRecord = p;
-
-          break;
-
+      // For payments without metadata.poleId (legacy), try to find pole via metadata.enrollmentIds
+      const legacyEidList = [];
+      for (const p of existingFamilyPaymentsList) {
+        if (!p.metadata?.poleId && Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.length > 0) {
+          legacyEidList.push(...p.metadata.enrollmentIds);
         }
-
+      }
+      const legacyEidPoleMap = {};
+      if (legacyEidList.length > 0) {
+        const legacyEnrs = await tx.enrollment.findMany({
+          where: { id: { in: legacyEidList } },
+          select: { id: true, class: { select: { level: { select: { pole: { select: { id: true } } } } } } },
+        });
+        for (const e of legacyEnrs) {
+          legacyEidPoleMap[e.id] = e.class?.level?.pole?.id || null;
+        }
       }
 
-
-
-      if (!paymentRecord) {
-
-        paymentRecord = await tx.payment.create({
-
-          data: {
-
-            familyId: family.id,
-
-            schoolYearId: currentYear.id,
-
-            totalAmount: toDecimal(paymentTotal),
-
-            registrationFee: toDecimal(pricing.registrationFee),
-
-            arabicFee: toDecimal(pricing.arabicFee),
-
-            coranScienceFee: toDecimal(pricing.coranScienceFee),
-
-            paymentMethod,
-
-            provider,
-
-            numberOfInstallments: installmentsCount,
-
-            status: 'PENDING',
-
-            metadata: {
-
-              enrollmentIds,
-
-              checkoutMethod: selectedPaymentMethod,
-
-              sepaFee: pricing.fraisPrelevement,
-
-              ipAddress,
-
-              draftId: payload.draftId || null,
-
-              payerName: payment.payerName || null,
-              ...bankDebitMetadata,
-
-            },
-
-          },
-
-        });
-
-
-
-        const installments = buildInstallmentSchedule(paymentTotal, installmentsCount, {
-
-          dayOfMonth: scheduleDay,
-
-          startDate: new Date(),
-
-        });
-
-
-
-        await tx.installment.createMany({
-
-          data: installments.map((inst) => ({
-
-            paymentId: paymentRecord.id,
-
-            installmentNumber: inst.installmentNumber,
-
-            amount: toDecimal(inst.amount),
-
-            dueDate: inst.dueDate,
-
-            status: 'UPCOMING',
-
-          })),
-
-        });
-
-
-
-        await tx.paymentPlan.create({
-
-          data: {
-
-            familyId: family.id,
-
-            schoolYearId: currentYear.id,
-
-            paymentId: paymentRecord.id,
-
-            type: selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE' ? 'ESPECES' : selectedPaymentMethod,
-
-            status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
-
-            installmentsCount,
-
-            scheduleDay,
-
-            totalAmount: toDecimal(paymentTotal),
-
-            metadata: {
-
-              createdFrom: 'existing_family_wizard',
-
-              sepaFee: pricing.fraisPrelevement,
-
-              ...bankDebitMetadata,
-
-            },
-
-          },
-
-        });
-
-      } else {
-
-        // Ensure metadata includes expected fields
-
-        await tx.payment.update({
-
-          where: { id: paymentRecord.id },
-
-          data: {
-
-            metadata: {
-
-              ...(paymentRecord.metadata || {}),
-
-              enrollmentIds,
-
-              checkoutMethod: selectedPaymentMethod,
-
-              sepaFee: pricing.fraisPrelevement,
-
-              ipAddress,
-
-              draftId: payload.draftId || null,
-
-              payerName: payment.payerName || null,
-              ...bankDebitMetadata,
-
-            },
-
-          },
-
-        });
-
+      const alreadyPaidPerPoleMap = {};
+      for (const p of existingFamilyPaymentsList) {
+        let pid = p.metadata?.poleId || null;
+        if (!pid && Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.length > 0) {
+          pid = legacyEidPoleMap[p.metadata.enrollmentIds[0]] || null;
+        }
+        if (pid) {
+          alreadyPaidPerPoleMap[pid] = (alreadyPaidPerPoleMap[pid] || 0) + Number(p.totalAmount || 0);
+        }
       }
 
-
-
-      const installments = await tx.installment.findMany({ where: { paymentId: paymentRecord.id } });
-
-      const paymentPlan = await tx.paymentPlan.findUnique({ where: { paymentId: paymentRecord.id } });
-
-
-
-      if (provider === 'OFFLINE') {
-
-        const isCheque = paymentMethod === 'CHEQUE';
-        const isBankDebit = paymentMethod === 'VIREMENT' && selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE';
-
-        await tx.paymentTransaction.create({
-
-          data: {
-
-            paymentId: paymentRecord.id,
-
-            provider: 'OFFLINE',
-
-            method: paymentMethod,
-
-            amount: toDecimal(paymentTotal),
-
-            status: 'INITIATED',
-
-            payerName: `${req.user.firstName} ${req.user.lastName}`,
-
-            description: isCheque
-              ? 'Paiement par chÃ¨que en attente'
-              : isBankDebit
-                ? 'PrÃ©lÃ¨vement bancaire en attente'
-                : 'Paiement en espÃ¨ces en attente',
-
-            metadata: {
-
-              instructions: isCheque
-                ? 'DÃ©poser les chÃ¨ques selon lâ€™Ã©chÃ©ancier communiquÃ© par association PARTAGE.'
-                : isBankDebit
-                  ? 'Le RIB est enregistrÃ© pour traitement. Le prÃ©lÃ¨vement sera mis en place par le service trÃ©sorerie.'
-                  : 'Veuillez dÃ©poser le montant en espÃ¨ces selon lâ€™Ã©chÃ©ancier fourni.',
-
-            },
-
-          },
-
-        });
-
+      // Group enrollments by pole for per-pole payment creation
+      const enrollmentsByPole = new Map();
+      for (const enrollment of createdEnrollments) {
+        const { poleId, poleName } = enrollmentPoleMap.get(enrollment.id) || { poleId: 'unknown', poleName: 'Pole' };
+        const key = poleId || 'unknown';
+        if (!enrollmentsByPole.has(key)) {
+          enrollmentsByPole.set(key, { poleName, enrollmentIds: [] });
+        }
+        enrollmentsByPole.get(key).enrollmentIds.push(enrollment.id);
       }
+
+      const allPaymentRecords = [];
+      let isFirstPole = true;
+      for (const [poleId, { poleName, enrollmentIds: poleEnrollmentIds }] of enrollmentsByPole) {
+        const poleEnrollmentsForPricing = enrollmentForPricing.filter((e) => e.poleId === poleId);
+        const result_pole = await createPolePricingAndPayment(tx, {
+          familyId: family.id,
+          schoolYearId: currentYear.id,
+          poleId,
+          poleName,
+          poleEnrollmentIds: poleEnrollmentIds.sort(),
+          poleEnrollmentsForPricing,
+          pricingConfig,
+          isFirstPole,
+          existingArabicCount,
+          totalFamilyEnrollmentsByPole,
+          installmentsCount,
+          scheduleDay,
+          selectedPaymentMethod,
+          paymentMethod,
+          provider,
+          bankDebitMetadata,
+          draftId: payload.draftId || null,
+          payerName: payment.payerName || `${req.user.firstName} ${req.user.lastName}`,
+          source: 'existing_family_wizard',
+          alreadyPaidForPole: alreadyPaidPerPoleMap[poleId] || 0,
+          skipRegistrationFeeForFamily: existingEnrollmentsCount > 0,
+        });
+        allPaymentRecords.push(result_pole);
+        isFirstPole = false;
+      }
+
+      // Find first non-null payment bundle (in case some poles were already paid = null record)
+      const primaryPaymentBundle = allPaymentRecords.find((r) => r.paymentRecord !== null) || allPaymentRecords[0];
+      const paymentRecord = primaryPaymentBundle?.paymentRecord;
+      const paymentPlan = primaryPaymentBundle?.paymentPlan;
+      const installments = primaryPaymentBundle?.installments || [];
+      // Compute combined total across all poles for online checkout
+      const combinedPoleTotal = allPaymentRecords.reduce((sum, r) => sum + (r.poleTotal || 0), 0);
 
 
 
@@ -1837,11 +1879,15 @@ async function completeExistingFamilyRegistration(req, res) {
 
         payment: paymentRecord,
 
+        allPayments: allPaymentRecords,
+
         paymentPlan,
 
         installments,
 
-        shouldCreateCheckout: provider !== 'OFFLINE',
+        combinedPoleTotal,
+
+        shouldCreateCheckout: provider !== 'OFFLINE' && combinedPoleTotal > 0,
 
       };
 
@@ -1849,11 +1895,11 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-    if (result.payment.provider !== 'OFFLINE' && result.shouldCreateCheckout) {
+    if (result.payment?.provider !== 'OFFLINE' && result.shouldCreateCheckout) {
 
       try {
 
-        if (result.payment.provider === 'STRIPE' && result.payment.paymentMethod === 'SEPA') {
+        if (result.payment?.provider === 'STRIPE' && result.payment?.paymentMethod === 'SEPA') {
 
           const stripeCustomer = await createStripeCustomer({
 
@@ -2009,7 +2055,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             provider,
 
-            amount: paymentTotal,
+            amount: result.combinedPoleTotal,
 
             paymentMethodType: paymentMethod === 'SEPA' ? 'sepa_debit' : 'card',
 
@@ -2097,7 +2143,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
                 method: paymentMethod,
 
-                amount: toDecimal(paymentTotal),
+                amount: toDecimal(result.combinedPoleTotal),
 
                 status: checkout.configured ? 'INITIATED' : 'FAILED',
 
@@ -2143,7 +2189,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
             method: paymentMethod,
 
-            amount: toDecimal(paymentTotal),
+            amount: toDecimal(result.combinedPoleTotal),
 
             status: 'FAILED',
 
@@ -2167,7 +2213,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-    if (result.payment.provider !== 'OFFLINE' && result.shouldCreateCheckout && !result.checkout) {
+    if (result.payment?.provider !== 'OFFLINE' && result.shouldCreateCheckout && !result.checkout) {
 
       throw new Error('Le paiement Stripe nâ€™a pas pu Ãªtre initialisÃ©. Veuillez rÃ©essayer plus tard.');
 
@@ -2193,7 +2239,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
     const paymentDetailsHtml = `<div style="margin:18px 0;padding:18px;background:#f8fafc;border-radius:12px;">
 
-      <strong>Montant total :</strong> ${Number(result.payment.totalAmount || 0).toFixed(2)} â‚¬<br/>
+      <strong>Montant total :</strong> ${Number(result.payment?.totalAmount || 0).toFixed(2)} â‚¬<br/>
 
       <strong>Mode :</strong> ${payment.method || 'CHEQUE'}<br/>
 
@@ -2211,7 +2257,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-    if (result.payment.provider === 'STRIPE') {
+    if (result.payment?.provider === 'STRIPE') {
 
       sendStripePaymentPendingEmail(req.user, {
 
@@ -2291,13 +2337,20 @@ async function completeExistingFamilyRegistration(req, res) {
 
       payment: {
 
-        id: result.payment.id,
+        id: result.payment?.id,
 
-        planId: result.paymentPlan.id,
+        planId: result.paymentPlan?.id,
 
         installments: result.installments,
 
         checkout: result.checkout,
+
+        allPayments: (result.allPayments || []).map((p) => ({
+          id: p.paymentRecord?.id,
+          poleId: p.paymentRecord?.metadata?.poleId,
+          poleName: p.paymentRecord?.metadata?.poleName,
+          total: Number(p.paymentRecord?.totalAmount || 0).toFixed(2),
+        })),
 
       },
 
@@ -3057,6 +3110,8 @@ async function completeFamilyRegistration(req, res) {
 
       const usedRegistrationCodes = new Set();
 
+      const enrollmentPoleMap = new Map();
+
       for (const selection of courseSelections) {
 
         const cls = classById.get(selection.classId);
@@ -3123,6 +3178,8 @@ async function completeFamilyRegistration(req, res) {
 
         createdEnrollments.push(enrollment);
 
+        enrollmentPoleMap.set(enrollment.id, { poleId: cls.level?.pole?.id || '', poleName: cls.level?.pole?.name || '' });
+
       }
 
 
@@ -3155,6 +3212,9 @@ async function completeFamilyRegistration(req, res) {
           await tx.class.update({ where: { id: resolvedFictiveClass.id }, data: { enrolledCount: { increment: 1 } } });
 
           createdEnrollments.push(enrollment);
+
+          const selForFallback = (courseSelections || []).find((s) => Number(s.memberIndex) === i);
+          enrollmentPoleMap.set(enrollment.id, { poleId: selForFallback?.poleId || '', poleName: poleById.get(selForFallback?.poleId)?.name || '' });
 
         }
 
@@ -3378,240 +3438,50 @@ async function completeFamilyRegistration(req, res) {
 
 
 
-      // Idempotence: reuse an existing payment if it matches these enrollments
-
-      const enrollmentIds = createdEnrollments.map((e) => e.id).sort();
-
-      let paymentRecord = null;
-
-      const candidatePayments = await tx.payment.findMany({
-
-        where: {
-
-          familyId: family.id,
-
-          schoolYearId: currentYear.id,
-
-          status: { not: 'CANCELLED' },
-
-        },
-
-      });
-
-
-
-      for (const p of candidatePayments) {
-
-        const pIds = Array.isArray(p.metadata?.enrollmentIds) ? p.metadata.enrollmentIds.slice().sort() : [];
-
-        if (pIds.length === enrollmentIds.length && pIds.join(',') === enrollmentIds.join(',')) {
-
-          paymentRecord = p;
-
-          break;
-
+      // Group enrollments by pole for per-pole payment creation
+      const enrollmentsByPole = new Map();
+      for (const enrollment of createdEnrollments) {
+        const { poleId, poleName } = enrollmentPoleMap.get(enrollment.id) || { poleId: 'unknown', poleName: 'Pole' };
+        const key = poleId || 'unknown';
+        if (!enrollmentsByPole.has(key)) {
+          enrollmentsByPole.set(key, { poleName, enrollmentIds: [] });
         }
-
+        enrollmentsByPole.get(key).enrollmentIds.push(enrollment.id);
       }
 
-
-
-      if (!paymentRecord) {
-
-        paymentRecord = await tx.payment.create({
-
-          data: {
-
-            familyId: family.id,
-
-            schoolYearId: currentYear.id,
-
-            totalAmount: toDecimal(paymentTotal),
-
-            registrationFee: toDecimal(pricing.registrationFee),
-
-            arabicFee: toDecimal(pricing.arabicFee),
-
-            coranScienceFee: toDecimal(pricing.coranScienceFee),
-
-            paymentMethod,
-
-            provider,
-
-            numberOfInstallments: installmentsCount,
-
-            status: 'PENDING',
-
-            metadata: {
-
-              enrollmentIds,
-
-              checkoutMethod: selectedPaymentMethod,
-
-              sepaFee: pricing.fraisPrelevement,
-
-              ipAddress,
-
-              draftId: payload.draftId || null,
-
-              payerName: payment.payerName || null,
-              ...bankDebitMetadata,
-
-            },
-
-          },
-
+      const allPaymentRecords = [];
+      let isFirstPole = true;
+      for (const [poleId, { poleName, enrollmentIds: poleEnrollmentIds }] of enrollmentsByPole) {
+        const poleEnrollmentsForPricing = enrollmentForPricing.filter((e) => e.poleId === poleId);
+        const result_pole = await createPolePricingAndPayment(tx, {
+          familyId: family.id,
+          schoolYearId: currentYear.id,
+          poleId,
+          poleName,
+          poleEnrollmentIds: poleEnrollmentIds.sort(),
+          poleEnrollmentsForPricing,
+          pricingConfig,
+          isFirstPole,
+          existingArabicCount: 0,
+          totalFamilyEnrollmentsByPole: {},
+          installmentsCount,
+          scheduleDay,
+          selectedPaymentMethod,
+          paymentMethod,
+          provider,
+          bankDebitMetadata,
+          draftId: payload.draftId || null,
+          payerName: payment.payerName || `${user.firstName} ${user.lastName}`,
+          source: 'public_family_wizard',
         });
-
-
-
-        const installments = buildInstallmentSchedule(paymentTotal, installmentsCount, {
-
-          dayOfMonth: scheduleDay,
-
-          startDate: new Date(),
-
-        });
-
-
-
-        await tx.installment.createMany({
-
-          data: installments.map((inst) => ({
-
-            paymentId: paymentRecord.id,
-
-            installmentNumber: inst.installmentNumber,
-
-            amount: toDecimal(inst.amount),
-
-            dueDate: inst.dueDate,
-
-            status: 'UPCOMING',
-
-          })),
-
-        });
-
-
-
-        await tx.paymentPlan.create({
-
-          data: {
-
-            familyId: family.id,
-
-            schoolYearId: currentYear.id,
-
-            paymentId: paymentRecord.id,
-
-            type: selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE' ? 'ESPECES' : selectedPaymentMethod,
-
-            status: provider === 'OFFLINE' ? 'ACTIVE' : 'PENDING',
-
-            installmentsCount,
-
-            scheduleDay,
-
-            totalAmount: toDecimal(paymentTotal),
-
-            metadata: {
-
-              createdFrom: 'public_family_wizard',
-
-              sepaFee: pricing.fraisPrelevement,
-
-              ...bankDebitMetadata,
-
-            },
-
-          },
-
-        });
-
-      } else {
-
-        await tx.payment.update({
-
-          where: { id: paymentRecord.id },
-
-          data: {
-
-            metadata: {
-
-              ...(paymentRecord.metadata || {}),
-
-              enrollmentIds,
-
-              checkoutMethod: selectedPaymentMethod,
-
-              sepaFee: pricing.fraisPrelevement,
-
-              ipAddress,
-
-              draftId: payload.draftId || null,
-
-              payerName: payment.payerName || null,
-              ...bankDebitMetadata,
-
-            },
-
-          },
-
-        });
-
+        allPaymentRecords.push(result_pole);
+        isFirstPole = false;
       }
 
-
-
-      const installments = await tx.installment.findMany({ where: { paymentId: paymentRecord.id } });
-
-      const paymentPlan = await tx.paymentPlan.findUnique({ where: { paymentId: paymentRecord.id } });
-
-
-
-      if (provider === 'OFFLINE') {
-
-        const isCheque = paymentMethod === 'CHEQUE';
-        const isBankDebit = paymentMethod === 'VIREMENT' && selectedPaymentMethod === 'PRELEVEMENT_BANCAIRE';
-
-        await tx.paymentTransaction.create({
-
-          data: {
-
-            paymentId: paymentRecord.id,
-
-            provider: 'OFFLINE',
-
-            method: paymentMethod,
-
-            amount: toDecimal(paymentTotal),
-
-            status: 'INITIATED',
-
-            payerName: `${user.firstName} ${user.lastName}`,
-
-            description: isCheque
-              ? 'Paiement par chÃ¨que en attente'
-              : isBankDebit
-                ? 'PrÃ©lÃ¨vement bancaire en attente'
-                : 'Paiement en espÃ¨ces en attente',
-
-            metadata: {
-
-              instructions: isCheque
-                ? 'DÃ©poser les chÃ¨ques selon lâ€™Ã©chÃ©ancier communiquÃ© par association PARTAGE.'
-                : isBankDebit
-                  ? 'Le RIB est enregistrÃ© pour traitement. Le prÃ©lÃ¨vement sera mis en place par le service trÃ©sorerie.'
-                  : 'Veuillez dÃ©poser le montant en espÃ¨ces selon lâ€™Ã©chÃ©ancier fourni.',
-
-            },
-
-          },
-
-        });
-
-      }
+      const primaryPaymentBundle = allPaymentRecords[0];
+      const paymentRecord = primaryPaymentBundle?.paymentRecord;
+      const paymentPlan = primaryPaymentBundle?.paymentPlan;
+      const installments = primaryPaymentBundle?.installments || [];
 
 
 
@@ -3638,6 +3508,8 @@ async function completeFamilyRegistration(req, res) {
         enrollments: createdEnrollments,
 
         payment: paymentRecord,
+
+        allPayments: allPaymentRecords,
 
         paymentPlan,
 
@@ -4114,6 +3986,13 @@ async function completeFamilyRegistration(req, res) {
         installments: result.installments,
 
         checkout: result.checkout,
+
+        allPayments: (result.allPayments || []).map((p) => ({
+          id: p.paymentRecord.id,
+          poleId: p.paymentRecord.metadata?.poleId,
+          poleName: p.paymentRecord.metadata?.poleName,
+          total: Number(p.paymentRecord.totalAmount || 0).toFixed(2),
+        })),
 
       },
 

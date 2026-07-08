@@ -9,6 +9,14 @@ const CURSUS_OPTIONS = [
   { value: 'lycee', label: 'Lycée' },
 ];
 
+const PERIOD_OPTIONS = [
+  { value: 'ANNUEL', label: 'Annuel' },
+  { value: 'SEMESTRIEL', label: 'Semestriel' },
+  { value: 'TRIMESTRIEL', label: 'Trimestriel' },
+];
+
+const PERIOD_LABEL = { ANNUEL: 'Annuel', SEMESTRIEL: 'Semestriel', TRIMESTRIEL: 'Trimestriel', MENSUEL: 'Mensuel' };
+
 const isSoutienPoleName = (name) => String(name || '').toLowerCase().includes('soutien');
 
 const emptyLevelForm = {
@@ -293,6 +301,17 @@ export default function AdminLevels() {
                           style={{ cursor: 'pointer' }}
                         />
                         Bloquer les nouvelles inscriptions
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#374151', userSelect: 'none' }}>
+                        Période :
+                        <select
+                          className="form-control"
+                          style={{ padding: '3px 8px', fontSize: 13, width: 'auto', minWidth: 120 }}
+                          value={pole.period || 'ANNUEL'}
+                          onChange={(e) => togglePoleBlocking(pole.id, 'period', e.target.value)}
+                        >
+                          {PERIOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
                       </label>
                     </div>
                   </div>
