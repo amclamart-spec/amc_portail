@@ -12,11 +12,19 @@ const statusOptions = [
 ];
 
 const transactionStatusOptions = [
-  { value: '', label: 'Tous' },
+  { value: '', label: 'Tous les statuts' },
   { value: 'INITIATED', label: 'Initié' },
   { value: 'SUCCEEDED', label: 'Payé' },
   { value: 'FAILED', label: 'Échoué' },
   { value: 'CANCELLED', label: 'Annulé' },
+];
+
+const transactionMethodOptions = [
+  { value: '', label: 'Tous les modes' },
+  { value: 'PRELEVEMENT', label: 'Prélèvement' },
+  { value: 'CHEQUE', label: 'Chèque' },
+  { value: 'ESPECES', label: 'Espèces' },
+  { value: 'CB', label: 'Carte bancaire' },
 ];
 
 export default function TresorierPayments({ scope = 'all' }) {
@@ -37,7 +45,7 @@ export default function TresorierPayments({ scope = 'all' }) {
     firstPaymentDate: '',
     numberOfInstallments: '1',
   });
-  const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
+  const [filters, setFilters] = useState({ familyName: '', payerName: '', status: '', method: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' });
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 1 });
   const [expandedFamilies, setExpandedFamilies] = useState({});
   const [selectedTransaction, setSelectedTransaction] = useState(null);
@@ -173,7 +181,7 @@ export default function TresorierPayments({ scope = 'all' }) {
   };
 
   const resetFilters = () => {
-    const reset = { familyName: '', payerName: '', status: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
+    const reset = { familyName: '', payerName: '', status: '', method: '', startDate: '', endDate: '', minAmount: '', maxAmount: '' };
     setFilters(reset);
     setPagination((prev) => ({ ...prev, page: 1 }));
     load(reset, 1, pagination.limit);
@@ -374,7 +382,7 @@ export default function TresorierPayments({ scope = 'all' }) {
       <div className="card" style={{ marginTop: scope === 'plans' ? 0 : undefined }}>
         <h3>{scope === 'plans' ? 'Paiements chèque' : 'Historique transactions'}</h3>
         <form onSubmit={(e) => { e.preventDefault(); applyFilters(); }} style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', gap: 12 }}>
             <input
               className="form-control"
               placeholder="Famille"
@@ -393,6 +401,15 @@ export default function TresorierPayments({ scope = 'all' }) {
               onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
             >
               {transactionStatusOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <select
+              className="form-control"
+              value={filters.method}
+              onChange={(e) => setFilters((prev) => ({ ...prev, method: e.target.value }))}
+            >
+              {transactionMethodOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>

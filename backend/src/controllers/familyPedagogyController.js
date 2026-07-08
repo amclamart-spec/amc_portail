@@ -3,6 +3,7 @@ const {
   fetchStudentAbsences,
   fetchStudentHomework,
   fetchStudentNotes,
+  submitFamilyJustification,
 } = require('../services/familyPedagogyService');
 
 async function getPedagogyStudents(req, res) {
@@ -63,9 +64,23 @@ async function getPedagogyNotes(req, res) {
   }
 }
 
+async function postPedagogyJustification(req, res) {
+  try {
+    const { evaluationId } = req.params;
+    const { comment } = req.body;
+    await submitFamilyJustification({ familyUserId: req.user.id, evaluationId, comment });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Erreur postPedagogyJustification:', error);
+    const status = error.statusCode || (error.message.includes('introuvable') ? 404 : 500);
+    return res.status(status).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   getPedagogyStudents,
   getPedagogyAbsences,
   getPedagogyHomework,
   getPedagogyNotes,
+  postPedagogyJustification,
 };

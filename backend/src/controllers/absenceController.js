@@ -1,5 +1,8 @@
 const PDFDocument = require('pdfkit');
+const { PrismaClient } = require('@prisma/client');
 const { fetchAbsenceRoster, fetchAbsenceHistory, fetchLessonAttendanceSheet, saveAbsences, fetchClassStudents } = require('../services/evaluationService');
+
+const prisma = new PrismaClient();
 
 async function getAbsences(req, res) {
   try {
@@ -165,10 +168,84 @@ async function postAbsences(req, res) {
   }
 }
 
+async function getJustifications(req, res) {
+  try {
+    const { status } = req.query;
+    const statusFilter = status || 'PENDING';
+
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT
+        e.id,
+        e.student_id AS "studentId",
+        e.lesson_id AS "lessonId",
+        e.family_justification AS "familyJustification",
+        e.justification_status AS "justificationStatus",
+        e.justification,
+        s.first_name AS "studentFirstName",
+        s.last_name AS "studentLastName",
+        l.date AS "lessonDate",
+        l.title AS "lessonTitle",
+        c.id AS "classId",
+        lv.name AS "levelName",
+        p.name AS "poleName",
+        f.family_name AS "familyName"
+      FROM evaluations e
+      JOIN students s ON s.id = e.student_id
+      JOIN lessons l ON l.id = e.lesson_id
+      JOIN classes c ON c.id = l.class_id
+      LEFT JOIN levels lv ON lv.id = c.level_id
+      LEFT JOIN poles p ON p.id = lv.pole_id
+      LEFT JOIN families f ON f.id = s.family_id
+      WHERE e.justification_status = $1
+        AND e.status = 'missing'
+      ORDER BY l.date DESC
+    `, statusFilter);
+
+    return res.json({
+      justifications: rows.map((r) => ({
+        id: r.id,
+        studentId: r.studentId,
+        studentName: `${r.studentFirstName || ''} ${r.studentLastName || ''}`.trim(),
+        familyName: r.familyName || '-',
+        lessonDate: r.lessonDate,
+        lessonTitle: r.lessonTitle,
+        classLabel: [r.poleName, r.levelName].filter(Boolean).join(' - ') || '-',
+        familyJustification: r.familyJustification,
+        justificationStatus: r.justificationStatus,
+        teacherJustification: r.justification,
+      })),
+    });
+  } catch (error) {
+    console.error('Erreur getJustifications:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function patchJustification(req, res) {
+  try {
+    const { evaluationId } = req.params;
+    const { status } = req.body;
+    if (!['VALIDATED', 'REJECTED'].includes(status)) {
+      return res.status(400).json({ error: 'Statut invalide (VALIDATED ou REJECTED)' });
+    }
+    await prisma.$queryRawUnsafe(
+      `UPDATE evaluations SET justification_status = $1 WHERE id = $2`,
+      status,
+      evaluationId,
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Erreur patchJustification:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   getAbsences,
   getClassStudents,
   getAbsenceHistory,
   exportLessonAttendancePdf,
   postAbsences,
+  getJustifications,
+  patchJustification,
 };
