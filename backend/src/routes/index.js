@@ -17,6 +17,7 @@ const absencesRoutes = require('./absences');
 const homeworkRoutes = require('./homework');
 const chatRoutes = require('./chat');
 const familyWizardRoutes = require('./familyWizard');
+const socialRoutes = require('./social');
 
 const router = Router();
 
@@ -37,6 +38,7 @@ router.use('/payments', paymentRoutes);
 router.use('/api/webhooks', webhookRoutes);
 router.use('/family-wizard', familyWizardRoutes);
 router.use('/finance', financeRoutes);
+router.use('/social', socialRoutes);
 
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'AMC Portail API' });

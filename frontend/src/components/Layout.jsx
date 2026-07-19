@@ -184,6 +184,35 @@ const navSectionsByRole = {
       ],
     },
   ],
+  RESPONSABLE_POLE_SOCIAL: [
+    {
+      title: 'Pôle Social',
+      items: [
+        { path: '/social',               icon: FiHome,        label: 'Tableau de bord' },
+        { path: '/social/beneficiaries', icon: FiUsers,       label: 'Bénéficiaires' },
+        { path: '/social/cases',         icon: FiClipboard,   label: 'Dossiers' },
+        { path: '/social/distributions', icon: FiBookOpen,    label: 'Distributions' },
+        { path: '/social/collections',   icon: FiBarChart2,   label: 'Collectes' },
+        { path: '/social/stock',         icon: FiSettings,    label: 'Stock & Produits' },
+        { path: '/social/eligibility',   icon: FiShield,      label: 'Critères éligibilité' },
+        { path: '/social/purchases',     icon: FiCreditCard,  label: 'Achats' },
+        { path: '/social/budget',        icon: FiBarChart2,   label: 'Budget' },
+      ],
+    },
+  ],
+  OPERATEUR_SOCIAL: [
+    {
+      title: 'Pôle Social',
+      items: [
+        { path: '/social',               icon: FiHome,       label: 'Tableau de bord' },
+        { path: '/social/beneficiaries', icon: FiUsers,      label: 'Bénéficiaires' },
+        { path: '/social/cases',         icon: FiClipboard,  label: 'Dossiers' },
+        { path: '/social/distributions', icon: FiBookOpen,   label: 'Distributions' },
+        { path: '/social/collections',   icon: FiBarChart2,  label: 'Collectes' },
+        { path: '/social/stock',         icon: FiSettings,   label: 'Stock & Produits' },
+      ],
+    },
+  ],
 };
 
 // Sections de navigation communes aux responsables de pôle (même que ADMIN sans Finance/Tarifs)

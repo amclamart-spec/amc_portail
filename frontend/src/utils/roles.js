@@ -4,10 +4,12 @@ export const ROLE_HOME = {
   TRESORIER: '/tresorier',
   PROFESSEUR: '/professeur',
   FAMILLE: '/famille',
-  RESPONSABLE_POLE_CORAN:      '/admin',
-  RESPONSABLE_POLE_ARABE:      '/admin',
+  RESPONSABLE_POLE_CORAN:       '/admin',
+  RESPONSABLE_POLE_ARABE:       '/admin',
   RESPONSABLE_POLE_SOUTIEN_SCO: '/admin',
   RESPONSABLE_POLE_SCIENCE_IS:  '/admin',
+  RESPONSABLE_POLE_SOCIAL:      '/social',
+  OPERATEUR_SOCIAL:             '/social',
 };
 
 export const ROLE_LABEL = {
@@ -20,6 +22,8 @@ export const ROLE_LABEL = {
   RESPONSABLE_POLE_ARABE:       'Responsable Pôle Arabe',
   RESPONSABLE_POLE_SOUTIEN_SCO: 'Responsable Pôle Soutien Scolaire',
   RESPONSABLE_POLE_SCIENCE_IS:  'Responsable Pôle Sciences Islamiques',
+  RESPONSABLE_POLE_SOCIAL:      'Responsable Pôle Social',
+  OPERATEUR_SOCIAL:             'Opérateur Social',
 };
 
 export const RESPONSABLE_POLE_ROLES = [

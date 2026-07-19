@@ -4,15 +4,55 @@ import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
 
-const STUDENT_COLUMNS = [
-  { key: 'name', label: 'Nom élève' },
-  { key: 'dob', label: 'Date de naissance' },
-  { key: 'class', label: 'Classe' },
-  { key: 'schedule', label: 'Créneau' },
-  { key: 'parentContacts', label: 'Contacts parents' },
-  { key: 'medicalInfo', label: 'Infos médicales' },
-  { key: 'paymentStatus', label: 'Statut paiement' },
+const STUDENT_COLUMN_GROUPS = [
+  {
+    label: 'Élève',
+    columns: [
+      { key: 'name', label: 'Nom élève' },
+      { key: 'dob', label: 'Date de naissance' },
+      { key: 'gender', label: 'Genre' },
+      { key: 'schoolGrade', label: 'Niveau scolaire' },
+      { key: 'isReturningStudent', label: 'Ancien élève' },
+      { key: 'class', label: 'Classe' },
+      { key: 'schedule', label: 'Créneau' },
+      { key: 'registrationCode', label: "Code(s) d'inscription" },
+      { key: 'enrollmentStatus', label: 'Statut inscription' },
+    ],
+  },
+  {
+    label: 'Famille',
+    columns: [
+      { key: 'familyName', label: 'Nom de famille' },
+      { key: 'familyAddress', label: 'Adresse' },
+      { key: 'familyPhones', label: 'Téléphones' },
+      { key: 'familyEmail', label: 'Email famille' },
+      { key: 'familyAccountStatus', label: 'Statut compte famille' },
+      { key: 'parentContacts', label: 'Contacts parents' },
+    ],
+  },
+  {
+    label: 'Santé',
+    columns: [
+      { key: 'medicalInfo', label: 'Infos médicales (fiche élève)' },
+      { key: 'healthFormDetails', label: 'Fiche sanitaire détaillée' },
+      { key: 'emergencyContacts', label: "Contacts d'urgence" },
+      { key: 'pickupAuthorizations', label: 'Personnes autorisées à récupérer' },
+    ],
+  },
+  {
+    label: 'Consentements & paiement',
+    columns: [
+      { key: 'consents', label: 'Consentements signés' },
+      { key: 'paymentStatus', label: 'Statut paiement' },
+      { key: 'paymentPlan', label: 'Plan de paiement' },
+      { key: 'installments', label: 'Échéances' },
+      { key: 'transactions', label: 'Transactions' },
+      { key: 'refunds', label: 'Remboursements' },
+    ],
+  },
 ];
+
+const STUDENT_COLUMNS = STUDENT_COLUMN_GROUPS.flatMap((group) => group.columns);
 
 function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob);
@@ -128,7 +168,7 @@ export default function AdminExports() {
     setLoading(true);
     try {
       const response = await api.post('/admin/exports/students', studentForm, { responseType: 'blob' });
-      const extension = studentForm.format === 'pdf' ? 'pdf' : 'xlsx';
+      const extension = studentForm.format === 'pdf' ? 'pdf' : studentForm.format === 'csv' ? 'csv' : 'xlsx';
       downloadBlob(response.data, `liste-eleves.${extension}`);
       toast.success('Export élèves généré');
     } catch (error) {
@@ -270,21 +310,47 @@ export default function AdminExports() {
               <label>Format</label>
               <select className="form-control" value={studentForm.format} onChange={(e) => setStudentForm((p) => ({ ...p, format: e.target.value }))}>
                 <option value="excel">Excel</option>
+                <option value="csv">CSV</option>
                 <option value="pdf">PDF</option>
               </select>
             </div>
           </div>
 
           <div className="form-group">
-            <label>Colonnes</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {STUDENT_COLUMNS.map((column) => (
-                <label key={column.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input type="checkbox" checked={studentForm.columns.includes(column.key)} onChange={() => toggleColumn(column.key)} />
-                  {column.label}
-                </label>
-              ))}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <label style={{ margin: 0 }}>Colonnes (fiche complète élève + famille)</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ padding: '4px 10px', fontSize: 12 }}
+                  onClick={() => setStudentForm((p) => ({ ...p, columns: STUDENT_COLUMNS.map((c) => c.key) }))}
+                >
+                  Tout sélectionner
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ padding: '4px 10px', fontSize: 12 }}
+                  onClick={() => setStudentForm((p) => ({ ...p, columns: [] }))}
+                >
+                  Tout désélectionner
+                </button>
+              </div>
             </div>
+            {STUDENT_COLUMN_GROUPS.map((group) => (
+              <div key={group.label} style={{ marginBottom: 10 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: '#555', marginBottom: 4 }}>{group.label}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {group.columns.map((column) => (
+                    <label key={column.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input type="checkbox" checked={studentForm.columns.includes(column.key)} onChange={() => toggleColumn(column.key)} />
+                      {column.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           <button className="btn btn-primary" onClick={handleStudentExport} disabled={loading}>{loading ? 'Génération...' : 'Générer export élèves'}</button>
