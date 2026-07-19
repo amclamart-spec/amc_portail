@@ -9,12 +9,78 @@ const prisma = new PrismaClient();
 const STUDENT_COLUMN_LABELS = {
   name: 'Élève',
   dob: 'Date de naissance',
+  gender: 'Genre',
+  schoolGrade: 'Niveau scolaire',
+  isReturningStudent: 'Ancien élève',
   class: 'Classe',
   schedule: 'Créneau',
+  registrationCode: "Code(s) d'inscription",
+  enrollmentStatus: 'Statut inscription',
+  familyName: 'Nom de famille',
+  familyAddress: 'Adresse',
+  familyPhones: 'Téléphones',
+  familyEmail: 'Email famille',
+  familyAccountStatus: 'Statut compte famille',
   parentContacts: 'Contacts parents',
   medicalInfo: 'Infos médicales',
+  healthFormDetails: 'Fiche sanitaire détaillée',
+  emergencyContacts: "Contacts d'urgence",
+  pickupAuthorizations: 'Personnes autorisées à récupérer',
+  consents: 'Consentements signés',
   paymentStatus: 'Statut paiement',
+  paymentPlan: 'Plan de paiement',
+  installments: 'Échéances',
+  transactions: 'Transactions',
+  refunds: 'Remboursements',
 };
+
+function formatParentLink(link) {
+  const labels = { PERE: 'Père', MERE: 'Mère', TUTEUR_LEGAL: 'Tuteur légal' };
+  return labels[link] || link || '-';
+}
+
+function formatConsentType(type) {
+  const labels = { SANITARY_FORM: 'Fiche sanitaire', ENGAGEMENT: 'Engagement' };
+  return labels[type] || type || '-';
+}
+
+function formatPaymentPlanType(type) {
+  const labels = {
+    STRIPE_CARD: 'Carte bancaire',
+    STRIPE_SEPA: 'Prélèvement SEPA (Stripe)',
+    GO_CARDLESS_SEPA: 'Prélèvement SEPA (GoCardless)',
+    CHEQUE: 'Chèque',
+    ESPECES: 'Espèces',
+  };
+  return labels[type] || type || '-';
+}
+
+function formatPaymentPlanStatus(status) {
+  const labels = {
+    DRAFT: 'Brouillon',
+    PENDING: 'En attente',
+    ACTIVE: 'Actif',
+    COMPLETED: 'Terminé',
+    FAILED: 'Échoué',
+    CANCELLED: 'Annulé',
+  };
+  return labels[status] || status || '-';
+}
+
+function formatInstallmentStatus(status) {
+  const labels = { UPCOMING: 'À venir', PAID: 'Payée', FAILED: 'Échouée', CANCELLED: 'Annulée' };
+  return labels[status] || status || '-';
+}
+
+function formatRefundStatus(status) {
+  const labels = { PENDING: 'En attente', PROCESSED: 'Traité', REJECTED: 'Rejeté' };
+  return labels[status] || status || '-';
+}
+
+function formatExportEnrollmentStatus(status) {
+  const labels = { PENDING: 'En attente', CONFIRMED: 'Confirmée', CANCELLED: 'Annulée', ARCHIVED: 'Archivée' };
+  return labels[status] || status || '-';
+}
 
 function toNumber(value) {
   const num = Number(value || 0);
@@ -194,7 +260,8 @@ function sendSimplePdf(res, filename, title, headers, rows) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
 
-  const doc = new PDFDocument({ margin: 36, size: 'A4' });
+  const columnCount = headers.length;
+  const doc = new PDFDocument({ margin: 36, size: 'A4', layout: columnCount > 6 ? 'landscape' : 'portrait' });
   doc.pipe(res);
 
   const titleColor = '#1D4F91';
@@ -212,9 +279,10 @@ function sendSimplePdf(res, filename, title, headers, rows) {
 
   const pageLeft = doc.page.margins.left;
   const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const columnCount = headers.length;
-  const columnWidth = Math.max(80, Math.floor(pageWidth / columnCount));
-  const availableWidth = Math.min(pageWidth, columnWidth * columnCount);
+  // Divide evenly with no artificial minimum: a floored min would push columnWidth * columnCount
+  // past pageWidth, making the last column's computed width go negative when there are many columns.
+  const columnWidth = Math.max(1, Math.floor(pageWidth / columnCount));
+  const availableWidth = pageWidth;
   const rowPadding = 6;
 
   let y = doc.y;
@@ -280,7 +348,7 @@ async function exportTabular(res, { format, filename, title, worksheetName, head
 }
 
 function getStudentColumns(columns) {
-  const defaultColumns = ['name', 'dob', 'class', 'schedule', 'parentContacts', 'medicalInfo', 'paymentStatus'];
+  const defaultColumns = Object.keys(STUDENT_COLUMN_LABELS);
   const selected = Array.isArray(columns) && columns.length > 0 ? columns : defaultColumns;
   return selected.filter((col) => STUDENT_COLUMN_LABELS[col]);
 }
@@ -291,16 +359,52 @@ function studentValueByColumn(student, column) {
       return `${student.lastName} ${student.firstName}`;
     case 'dob':
       return new Date(student.dateOfBirth).toLocaleDateString('fr-FR');
+    case 'gender':
+      return student.gender === 'FILLE' ? 'Fille' : 'Garçon';
+    case 'schoolGrade':
+      return student.schoolGrade || '—';
+    case 'isReturningStudent':
+      return student.isReturningStudent ? 'Oui' : 'Non';
     case 'class':
       return student.classesSummary || '—';
     case 'schedule':
       return student.schedulesSummary || '—';
+    case 'registrationCode':
+      return student.registrationCodesSummary || '—';
+    case 'enrollmentStatus':
+      return student.enrollmentStatusesSummary || '—';
+    case 'familyName':
+      return student.familyName || '—';
+    case 'familyAddress':
+      return student.familyAddress || '—';
+    case 'familyPhones':
+      return student.familyPhones || '—';
+    case 'familyEmail':
+      return student.familyEmail || '—';
+    case 'familyAccountStatus':
+      return student.familyAccountStatus || '—';
     case 'parentContacts':
       return student.parentsSummary || '—';
     case 'medicalInfo':
       return student.medicalSummary || 'RAS';
+    case 'healthFormDetails':
+      return student.healthFormDetails || 'RAS';
+    case 'emergencyContacts':
+      return student.emergencyContactsSummary || '—';
+    case 'pickupAuthorizations':
+      return student.pickupAuthorizationsSummary || '—';
+    case 'consents':
+      return student.consentsSummary || '—';
     case 'paymentStatus':
       return student.paymentSummary || '—';
+    case 'paymentPlan':
+      return student.paymentPlanSummary || '—';
+    case 'installments':
+      return student.installmentsSummary || '—';
+    case 'transactions':
+      return student.transactionsSummary || '—';
+    case 'refunds':
+      return student.refundsSummary || '—';
     default:
       return '—';
   }
@@ -341,8 +445,29 @@ async function buildStudentExportData(filters = {}) {
               payments: {
                 where: schoolYearId ? { schoolYearId } : {},
                 orderBy: { createdAt: 'desc' },
+                include: {
+                  installments: { orderBy: { installmentNumber: 'asc' } },
+                  transactions: { orderBy: { createdAt: 'asc' } },
+                  refunds: { orderBy: { createdAt: 'asc' } },
+                },
+              },
+              paymentPlans: {
+                where: schoolYearId ? { schoolYearId } : {},
+                orderBy: { createdAt: 'desc' },
               },
             },
+          },
+          healthForms: {
+            where: schoolYearId ? { schoolYearId } : {},
+            orderBy: { createdAt: 'desc' },
+            include: {
+              emergencyContacts: true,
+              pickupAuthorizations: true,
+            },
+          },
+          enrollmentConsents: {
+            where: schoolYearId ? { schoolYearId } : {},
+            orderBy: { createdAt: 'desc' },
           },
         },
       },
@@ -358,33 +483,107 @@ async function buildStudentExportData(filters = {}) {
         ...enrollment.student,
         classes: [],
         schedules: [],
+        registrationCodes: [],
+        enrollmentStatuses: [],
       });
     }
     const holder = grouped.get(key);
     holder.classes.push(`${enrollment.class.level.pole?.name || 'Pôle'} - ${enrollment.class.level.name}`);
     holder.schedules.push(`${enrollment.class.dayOfWeek} ${enrollment.class.startTime}-${enrollment.class.endTime}`);
+    holder.registrationCodes.push(enrollment.registrationCode || '-');
+    holder.enrollmentStatuses.push(formatExportEnrollmentStatus(enrollment.status));
   }
 
   return Array.from(grouped.values()).map((student) => {
-    const payments = student.family?.payments || [];
+    const family = student.family;
+    const payments = family?.payments || [];
     const total = payments.reduce((acc, payment) => acc + toNumber(payment.totalAmount), 0);
     const paid = payments.reduce((acc, payment) => acc + toNumber(payment.paidAmount), 0);
 
-    const parentsSummary = (student.family?.parents || [])
-      .map((p) => `${p.firstName} ${p.lastName} (${p.phone}${p.email ? ` / ${p.email}` : ''})`)
+    const parentsSummary = (family?.parents || [])
+      .map((p) => `${p.civility === 'MME' ? 'Mme' : 'M.'} ${p.firstName} ${p.lastName} (${formatParentLink(p.link)}${p.isLegalGuardian ? ', tuteur légal' : ''}) - Tél: ${p.phone}${p.email ? ` - Email: ${p.email}` : ''}`)
       .join(' | ');
 
     const medicalSummary = [student.allergies, student.currentTreatments, student.emergencyContactName, student.emergencyContactPhone]
       .filter(Boolean)
       .join(' | ');
 
+    const familyAddress = family
+      ? [family.addressLine1, family.addressLine2, [family.postalCode, family.city].filter(Boolean).join(' '), family.country].filter(Boolean).join(', ')
+      : '-';
+    const familyPhones = family ? [family.phonePrimary, family.phoneSecondary].filter(Boolean).join(' / ') : '-';
+    const familyEmail = family?.user?.email || '-';
+
+    const healthForms = student.healthForms || [];
+    const healthFormDetails = healthForms
+      .map((form) => [
+        form.hasChronicDisease ? `Maladie chronique: ${form.chronicDiseaseDetails || 'oui'}` : null,
+        form.hasMedicalTreatment ? `Traitement médical: ${form.medicalTreatmentDetails || 'oui'}` : null,
+        form.hasAllergy ? `Allergie: ${form.allergyDetails || 'oui'}` : null,
+        form.hasDisability ? `Handicap: ${form.disabilityDetails || 'oui'}` : null,
+        form.otherUsefulHealthInfo ? `Autre: ${form.otherUsefulHealthInfo}` : null,
+        form.canLeaveAloneAfterClass !== null && form.canLeaveAloneAfterClass !== undefined
+          ? `Peut partir seul: ${form.canLeaveAloneAfterClass ? 'oui' : 'non'}`
+          : null,
+      ].filter(Boolean).join('; '))
+      .filter(Boolean)
+      .join(' | ') || 'RAS';
+
+    const emergencyContactsSummary = healthForms
+      .flatMap((form) => form.emergencyContacts || [])
+      .map((c) => `${c.firstName} ${c.lastName} (${c.relationship}) - ${c.phone}`)
+      .join(' | ') || '-';
+
+    const pickupAuthorizationsSummary = healthForms
+      .flatMap((form) => form.pickupAuthorizations || [])
+      .map((p) => `${p.fullName} (${p.relationship}) - ${p.phone}`)
+      .join(' | ') || '-';
+
+    const consentsSummary = (student.enrollmentConsents || [])
+      .map((c) => `${formatConsentType(c.consentType)}: ${c.accepted ? 'accepté' : 'refusé'}${c.signedAt ? ` le ${new Date(c.signedAt).toLocaleDateString('fr-FR')}` : ''}`)
+      .join(' | ') || '-';
+
+    const paymentPlanSummary = (family?.paymentPlans || [])
+      .map((plan) => `${formatPaymentPlanType(plan.type)} - ${formatPaymentPlanStatus(plan.status)} - ${plan.installmentsCount} échéance(s) - ${formatCurrency(plan.totalAmount)}`)
+      .join(' | ') || '-';
+
+    const installmentsSummary = payments
+      .flatMap((payment) => payment.installments || [])
+      .map((inst) => `#${inst.installmentNumber}: ${formatCurrency(inst.amount)} - échéance ${new Date(inst.dueDate).toLocaleDateString('fr-FR')} - ${formatInstallmentStatus(inst.status)}`)
+      .join(' | ') || '-';
+
+    const transactionsSummary = payments
+      .flatMap((payment) => payment.transactions || [])
+      .map((tx) => `${new Date(tx.createdAt).toLocaleDateString('fr-FR')}: ${formatCurrency(tx.amount)} (${formatExportPaymentMethod(tx.method)}, ${formatExportPaymentStatus(tx.status)})`)
+      .join(' | ') || '-';
+
+    const refundsSummary = payments
+      .flatMap((payment) => payment.refunds || [])
+      .map((r) => `${formatCurrency(r.amount)} - ${r.reason} (${formatRefundStatus(r.status)})`)
+      .join(' | ') || '-';
+
     return {
       ...student,
       classesSummary: [...new Set(student.classes)].join(' ; '),
       schedulesSummary: [...new Set(student.schedules)].join(' ; '),
+      registrationCodesSummary: [...new Set(student.registrationCodes)].join(' ; '),
+      enrollmentStatusesSummary: [...new Set(student.enrollmentStatuses)].join(' ; '),
       parentsSummary,
       medicalSummary,
       paymentSummary: `${formatCurrency(paid)} / ${formatCurrency(total)} (${Math.max(total - paid, 0).toFixed(2)}€ impayés)`,
+      familyName: family?.familyName || '-',
+      familyAddress,
+      familyPhones,
+      familyEmail,
+      familyAccountStatus: family?.accountStatus || '-',
+      healthFormDetails,
+      emergencyContactsSummary,
+      pickupAuthorizationsSummary,
+      consentsSummary,
+      paymentPlanSummary,
+      installmentsSummary,
+      transactionsSummary,
+      refundsSummary,
     };
   });
 }
@@ -392,7 +591,7 @@ async function buildStudentExportData(filters = {}) {
 async function exportStudents(req, res) {
   try {
     const { schoolYearId, poleId, levelId, classId, columns } = req.body || {};
-    const format = parseFormat(req.body?.format, ['excel', 'pdf']);
+    const format = parseFormat(req.body?.format, ['excel', 'pdf', 'csv']);
 
     const rowsData = await buildStudentExportData({ schoolYearId, poleId, levelId, classId });
     const selectedColumns = getStudentColumns(columns);

@@ -288,6 +288,45 @@ async function rejectUser(req, res) {
 }
 
 /**
+ * GET /api/admin/stats/communes
+ * Returns enrollment counts grouped by city + postalCode for map display
+ */
+async function getEnrollmentsByCommune(req, res) {
+  try {
+    const { scope } = req.query;
+    const activeStatuses = ['PENDING', 'CONFIRMED'];
+
+    let schoolYearFilter = '';
+    if (scope !== 'global') {
+      const currentYear = await prisma.schoolYear.findFirst({ where: { isCurrent: true } });
+      if (currentYear) {
+        schoolYearFilter = `AND e.school_year_id = '${currentYear.id}'`;
+      }
+    }
+
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT
+        INITCAP(MIN(TRIM(f.city)))  AS city,
+        TRIM(f.postal_code)         AS "postalCode",
+        COUNT(e.id)::int            AS count
+      FROM enrollments e
+      JOIN students s   ON s.id = e.student_id
+      JOIN families f   ON f.id = s.family_id
+      WHERE e.status::text = ANY(ARRAY['PENDING','CONFIRMED'])
+        AND (e.is_waitlist IS NULL OR e.is_waitlist = false)
+        ${schoolYearFilter}
+      GROUP BY LOWER(TRIM(f.city)), TRIM(f.postal_code)
+      ORDER BY count DESC
+    `);
+
+    return res.json({ communes: rows });
+  } catch (error) {
+    console.error('Erreur getEnrollmentsByCommune:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
  * GET /api/admin/stats
  */
 async function getStats(req, res) {
@@ -3401,6 +3440,7 @@ module.exports = {
   approveUser,
   rejectUser,
   getStats,
+  getEnrollmentsByCommune,
   getEnrollments,
   getSchoolYears,
   createSchoolYear,

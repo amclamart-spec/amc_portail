@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { FiUsers, FiUserCheck, FiBookOpen, FiClipboard, FiCheckCircle, FiClock, FiAlertTriangle } from 'react-icons/fi';
+import MapInscriptions from '../../components/MapInscriptions';
 
 export default function AdminDashboard() {
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [scope, setScope] = useState('current');
+  const [stats,    setStats]    = useState(null);
+  const [communes, setCommunes] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [scope,    setScope]    = useState('current');
 
   useEffect(() => {
     setLoading(true);
-    api.get('/admin/stats', { params: { scope } }).then(({ data }) => {
-      setStats(data.stats);
+    Promise.all([
+      api.get('/admin/stats',           { params: { scope } }),
+      api.get('/admin/stats/communes',  { params: { scope } }),
+    ]).then(([statsRes, communesRes]) => {
+      setStats(statsRes.data.stats);
+      setCommunes(communesRes.data.communes || []);
     }).catch(console.error).finally(() => setLoading(false));
   }, [scope]);
 
@@ -84,6 +90,8 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      <MapInscriptions communes={communes} scope={scope} />
 
       <div className="card">
         <div className="card-header">

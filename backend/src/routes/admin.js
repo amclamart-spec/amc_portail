@@ -8,6 +8,7 @@ const {
   approveUser,
   rejectUser,
   getStats,
+  getEnrollmentsByCommune,
   getEnrollments,
   getRegistrationBlockStatus,
   updateRegistrationBlockStatus,
@@ -120,6 +121,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/stats', authorizePermission(PERMISSIONS.FINANCE_VIEW), getStats);
+router.get('/stats/communes', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollmentsByCommune);
 
 router.get('/users', authorizePermission(PERMISSIONS.USERS_MANAGE), getAllUsers);
 router.get('/users/pending', authorizePermission(PERMISSIONS.USERS_APPROVE), getPendingUsers);

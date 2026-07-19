@@ -17,11 +17,13 @@
     "exceljs": "^4.3.1",
     "file-saver": "^2.0.5",
     "html-to-image": "^1.11.12",
+    "leaflet": "^1.9.4",
     "papaparse": "^5.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.4.1",
     "react-icons": "^5.3.0",
+    "react-leaflet": "^4.2.1",
     "react-router-dom": "^6.27.0",
     "recharts": "^2.10.0",
     "tailwindcss": "^3.3.0"
