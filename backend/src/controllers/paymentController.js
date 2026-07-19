@@ -2410,20 +2410,13 @@ async function generatePaymentReceiptPDF(req, res) {
       console.warn('Impossible de récupérer les enfants pour le reçu (paymentController):', err?.message || err);
     }
 
-    const enrollmentIdsFromMetadata = Array.isArray(payment.metadata?.enrollmentIds)
-      ? payment.metadata.enrollmentIds
-      : [];
-    const enrollmentWhere = enrollmentIdsFromMetadata.length > 0
-      ? { id: { in: enrollmentIdsFromMetadata }, isWaitlist: false }
-      : {
-          student: { familyId: payment.familyId },
-          schoolYearId: payment.schoolYearId,
-          status: { in: ['PENDING', 'CONFIRMED'] },
-          isWaitlist: false,
-        };
-
     const activeEnrollments = await prisma.enrollment.findMany({
-      where: enrollmentWhere,
+      where: {
+        student: { familyId: payment.familyId },
+        schoolYearId: payment.schoolYearId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+        isWaitlist: false,
+      },
       include: {
         class: {
           include: {
@@ -2432,6 +2425,7 @@ async function generatePaymentReceiptPDF(req, res) {
         },
         student: true,
       },
+      orderBy: [{ student: { lastName: 'asc' } }, { createdAt: 'asc' }],
     });
 
     const familyPayments = await prisma.payment.findMany({

@@ -882,16 +882,19 @@ async function updateEnrollmentPayment(req, res) {
       updateData.status = status === 'validé' ? 'SUCCEEDED' : status === 'annulé' ? 'CANCELLED' : 'INITIATED';
 
       if (updateData.status === 'SUCCEEDED') {
+        // Scope the level-validation check to enrollments linked to THIS payment only
+        const thisPayment = await prisma.payment.findUnique({ where: { id: transaction.paymentId } });
+        const thisPaymentEnrollmentIds = Array.isArray(thisPayment?.metadata?.enrollmentIds) && thisPayment.metadata.enrollmentIds.length > 0
+          ? thisPayment.metadata.enrollmentIds : null;
         const unvalidatedActiveCount = await prisma.enrollment.count({
           where: {
-            student: { familyId: enrollment.student.familyId },
-            schoolYearId: enrollment.schoolYearId,
+            ...(thisPaymentEnrollmentIds ? { id: { in: thisPaymentEnrollmentIds } } : { student: { familyId: enrollment.student.familyId }, schoolYearId: enrollment.schoolYearId }),
             status: { in: ['PENDING', 'CONFIRMED'] },
             levelValidated: false,
           },
         });
         if (unvalidatedActiveCount > 0) {
-          return res.status(400).json({ error: "Au moins une inscription active de la famille n'a pas le niveau validé — impossible de valider le paiement." });
+          return res.status(400).json({ error: "Au moins une inscription liée à ce paiement n'a pas le niveau validé — impossible de valider le paiement." });
         }
       }
     }
@@ -1239,16 +1242,18 @@ async function createEnrollmentPayment(req, res) {
         metadata: { ...targetPayment.metadata, enrollmentIds, ...paymentMetadata },
       };
       if (transactionStatus === 'SUCCEEDED') {
+        // Scope to enrollments of THIS payment
+        const scopedEnrollmentIds = Array.isArray(targetPayment.metadata?.enrollmentIds) && targetPayment.metadata.enrollmentIds.length > 0
+          ? targetPayment.metadata.enrollmentIds : null;
         const unvalidatedActiveCount = await prisma.enrollment.count({
           where: {
-            student: { familyId: enrollment.student.familyId },
-            schoolYearId: enrollment.schoolYearId,
+            ...(scopedEnrollmentIds ? { id: { in: scopedEnrollmentIds } } : { student: { familyId: enrollment.student.familyId }, schoolYearId: enrollment.schoolYearId }),
             status: { in: ['PENDING', 'CONFIRMED'] },
             levelValidated: false,
           },
         });
         if (unvalidatedActiveCount > 0) {
-          return res.status(400).json({ error: "Au moins une inscription active de la famille n'a pas le niveau validé — impossible de marquer ce paiement comme validé." });
+          return res.status(400).json({ error: "Au moins une inscription liée à ce paiement n'a pas le niveau validé — impossible de marquer ce paiement comme validé." });
         }
 
         const newPaidAmount = new Prisma.Decimal(targetPayment.paidAmount).plus(parsedAmount);

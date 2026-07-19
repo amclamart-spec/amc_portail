@@ -194,7 +194,10 @@ export default function SuiviPedagogique() {
       { label: 'Semestre 1', value: 'SEMESTRE_1' },
       { label: 'Semestre 2', value: 'SEMESTRE_2' },
     ];
-    return [];
+    if (classPeriod === 'ANNUEL') return [
+      { label: 'Année complète', value: 'ANNUEL' },
+    ];
+    return [{ label: 'Année complète', value: 'ANNUEL' }];
   }, [classPeriod]);
 
   const {
@@ -242,18 +245,15 @@ export default function SuiviPedagogique() {
     }
   }, [activeModule, selectedClassId, fetchHomeworkHistory]);
 
-  /* ── load students list ── */
+  /* ── load students whenever class changes ── */
   useEffect(() => {
-    if (!selectedClassId) return;
-    if (activeModule === 'absences') {
-      fetchClassStudents({ classId: selectedClassId }).then((students) => {
-        setRows((students || []).map((s) => ({ ...s, status: s.status || 'on_time', justification: '' })));
-      });
-    }
-    if (activeModule === 'notes') {
-      fetchClassStudents({ classId: selectedClassId }).then((s) => setClassStudents(s || []));
-    }
-  }, [activeModule, selectedClassId, fetchClassStudents]);
+    if (!selectedClassId) { setClassStudents([]); setRows([]); return; }
+    fetchClassStudents({ classId: selectedClassId }).then((students) => {
+      const list = students || [];
+      setClassStudents(list);
+      setRows(list.map((s) => ({ ...s, status: s.status || 'on_time', justification: '' })));
+    });
+  }, [selectedClassId, fetchClassStudents]);
 
   /* ── load data by module ── */
   useEffect(() => {
@@ -438,6 +438,11 @@ export default function SuiviPedagogique() {
                   {cls.level?.pole?.name?.slice(0, 3) || ''}
                 </span>
                 {cls.level?.name || 'Classe'} — {cls.dayOfWeek?.slice(0, 3)} {cls.startTime}
+                {cls.level?.pole?.period && cls.level.pole.period !== 'ANNUEL' && (
+                  <span style={{ fontSize: 9, background: active ? 'rgba(255,255,255,.2)' : '#E0F2FE', color: active ? '#fff' : '#0369A1', padding: '1px 5px', borderRadius: 3, fontWeight: 600, marginLeft: 2 }}>
+                    {cls.level.pole.period === 'TRIMESTRIEL' ? 'Trim.' : 'Sem.'}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -584,7 +589,7 @@ export default function SuiviPedagogique() {
           {/* Call sheet */}
           <div className="ep-sec">
             <SecHead>
-              📋 Feuille d'appel
+              📋 Feuille d'appel — {rows.length} élève{rows.length !== 1 ? 's' : ''}
               {dateFilter && <span style={{ fontWeight: 400, fontSize: 12, color: '#6B7280' }}>{fmtDate(dateFilter, { day: '2-digit', month: 'long', year: 'numeric' })}</span>}
             </SecHead>
             <div className="ep-sec-body">
@@ -592,6 +597,11 @@ export default function SuiviPedagogique() {
                 <EmptyState icon="👥" text="Aucun élève trouvé pour cette classe" />
               ) : (
                 <>
+                  {!dateFilter && (
+                    <div style={{ marginBottom: 12, padding: '8px 12px', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 'var(--amc-border-radius)', fontSize: 12, color: '#92400E' }}>
+                      Sélectionnez une date ci-dessus pour enregistrer l'appel
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap', fontSize: 12, color: '#6B7280' }}>
                     <span>✅ Présent</span>
                     <span>❌ Absent</span>
@@ -681,8 +691,33 @@ export default function SuiviPedagogique() {
               </div>
             </div>
 
-            {/* History list */}
+            {/* Student list */}
             <div className="ep-sec" style={{ alignSelf: 'start' }}>
+              <SecHead>
+                👥 Élèves de la classe
+                <span style={{ fontWeight: 400, fontSize: 12, color: '#6B7280' }}>{classStudents.length} élève{classStudents.length !== 1 ? 's' : ''}</span>
+              </SecHead>
+              <div className="ep-sec-body">
+                {classStudents.length === 0 ? (
+                  <EmptyState icon="👥" text="Aucun élève inscrit" />
+                ) : (
+                  classStudents.map((s) => {
+                    const name = s.studentName || `${s.firstName || ''} ${s.lastName || ''}`.trim();
+                    return (
+                      <div key={s.studentId || s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--amc-border)' }}>
+                        <Avatar name={name} size={26} />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: T.dark }}>{name}</span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* History section below */}
+          <div style={{ marginTop: 14 }}>
+            <div className="ep-sec">
               <SecHead>📋 Historique des devoirs</SecHead>
               <div className="ep-sec-body">
                 {(homeworkHistory || []).length === 0 ? (
@@ -767,10 +802,15 @@ export default function SuiviPedagogique() {
           </div>
 
           <div className="ep-2col">
-            {/* Notes table */}
-            {noteColumns.length > 0 ? (
-              <div className="ep-sec" style={{ overflowX: 'auto' }}>
-                <SecHead>📊 Notes enregistrées</SecHead>
+            {/* Notes table — always show student grid */}
+            <div className="ep-sec" style={{ overflowX: 'auto' }}>
+              <SecHead>
+                👥 Élèves — Notes
+                <span style={{ fontWeight: 400, fontSize: 12, color: '#6B7280' }}>{classStudents.length} élève{classStudents.length !== 1 ? 's' : ''}</span>
+              </SecHead>
+              {classStudents.length === 0 ? (
+                <EmptyState icon="👥" text="Aucun élève inscrit dans cette classe" />
+              ) : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
@@ -779,42 +819,52 @@ export default function SuiviPedagogique() {
                         {noteColumns.map((c) => (
                           <th key={c.accessorKey} style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>{c.header}</th>
                         ))}
-                        <th style={{ padding: '8px 10px', background: T.dark, color: '#fff', fontWeight: 700, fontSize: 12 }}>Moy.</th>
+                        {noteColumns.length > 0 && (
+                          <th style={{ padding: '8px 10px', background: T.dark, color: '#fff', fontWeight: 700, fontSize: 12 }}>Moy.</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
-                      {noteRows.map((row) => {
-                        const grades = noteColumns.map((c) => row[c.accessorKey]).filter((g) => g != null && g !== '');
+                      {classStudents.map((student) => {
+                        const sId = String(student.studentId || student.id);
+                        const noteRow = noteRows.find((r) => String(r.id) === sId);
+                        const grades = noteColumns.map((c) => noteRow?.[c.accessorKey]).filter((g) => g != null && g !== '');
                         const avg = grades.length > 0 ? (grades.reduce((s, g) => s + Number(g), 0) / grades.length).toFixed(1) : null;
+                        const name = student.studentName || `${student.firstName || ''} ${student.lastName || ''}`.trim();
                         return (
-                          <tr key={row.id}>
+                          <tr key={sId}>
                             <td style={{ padding: '7px 12px', fontWeight: 600, fontSize: 13, borderBottom: '1px solid var(--amc-border)', whiteSpace: 'nowrap' }}>
-                              {row.studentName}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <Avatar name={name} size={24} />
+                                {name}
+                              </div>
                             </td>
                             {noteColumns.map((c) => {
-                              const g = row[c.accessorKey];
+                              const g = noteRow?.[c.accessorKey];
                               return (
                                 <td key={c.accessorKey} style={{ padding: '7px 10px', textAlign: 'center', borderBottom: '1px solid var(--amc-border)', background: gradeBg(g) }}>
                                   <span style={{ fontWeight: 700, fontSize: 13, color: gradeColor(g) }}>{g != null && g !== '' ? g : '—'}</span>
                                 </td>
                               );
                             })}
-                            <td style={{ padding: '7px 10px', textAlign: 'center', fontWeight: 800, fontSize: 13, borderBottom: '1px solid var(--amc-border)', background: gradeBg(avg), color: gradeColor(avg) }}>
-                              {avg ?? '—'}
-                            </td>
+                            {noteColumns.length > 0 && (
+                              <td style={{ padding: '7px 10px', textAlign: 'center', fontWeight: 800, fontSize: 13, borderBottom: '1px solid var(--amc-border)', background: gradeBg(avg), color: gradeColor(avg) }}>
+                                {avg ?? '—'}
+                              </td>
+                            )}
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
+                  {noteColumns.length === 0 && (
+                    <div style={{ padding: '10px 14px', fontSize: 12, color: '#6B7280', borderTop: '1px solid var(--amc-border)', background: '#FAFAFA' }}>
+                      {selectedPeriod ? 'Aucune note enregistrée pour cette période.' : 'Sélectionnez une période pour afficher les notes.'}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ) : (
-              <div className="ep-sec">
-                <SecHead>📊 Notes enregistrées</SecHead>
-                <EmptyState icon="📝" text={selectedPeriod ? 'Aucune note pour cette période' : 'Sélectionnez une période'} />
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Add note form */}
             <div className="ep-sec" style={{ alignSelf: 'start' }}>
