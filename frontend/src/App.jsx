@@ -38,6 +38,16 @@ import TresorierDashboard from './pages/tresorier/Dashboard';
 import TresorierPayments from './pages/tresorier/Payments';
 import TresorierRefunds from './pages/tresorier/Refunds';
 
+import SocialDashboard    from './pages/social/Dashboard';
+import SocialBeneficiaries from './pages/social/Beneficiaries';
+import SocialCases         from './pages/social/Cases';
+import SocialStock         from './pages/social/Stock';
+import SocialDistributions from './pages/social/Distributions';
+import SocialCollections   from './pages/social/Collections';
+import SocialPurchases     from './pages/social/Purchases';
+import SocialBudget        from './pages/social/Budget';
+import SocialEligibility   from './pages/social/Eligibility';
+
 import ProfesseurDashboard from './pages/professeur/Dashboard';
 import SuiviPedagogique from './pages/professeur/SuiviPedagogique';
 import ProfesseurProfile from './pages/professeur/Profile';
@@ -50,9 +60,12 @@ import FamilyPayments from './pages/family/Payments';
 import FamilyPedagogy from './pages/family/SuiviPedagogique';
 import FamilyChat from './pages/family/Chat';
 
-// Rôles ayant accès à l'espace admin (sauf paiements/tarifs pour les responsables)
+// Rôles ayant accès à l'espace admin
 const ADMIN_ROLES = ['ADMIN', 'SUPER_ADMIN', 'RESPONSABLE_POLE_CORAN', 'RESPONSABLE_POLE_ARABE', 'RESPONSABLE_POLE_SOUTIEN_SCO', 'RESPONSABLE_POLE_SCIENCE_IS'];
 const ADMIN_ONLY  = ['ADMIN', 'SUPER_ADMIN'];
+// Pôle Social
+const SOCIAL_ROLES        = ['RESPONSABLE_POLE_SOCIAL', 'OPERATEUR_SOCIAL', 'SUPER_ADMIN'];
+const SOCIAL_MANAGE_ROLES = ['RESPONSABLE_POLE_SOCIAL', 'SUPER_ADMIN'];
 
 function App() {
   const { isAuthenticated, user } = useAuth();
@@ -101,6 +114,17 @@ function App() {
       <Route path="/tresorier/echeanciers" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments scope="plans" /></Layout></PrivateRoute>} />
       <Route path="/tresorier/prelevements" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierPayments scope="debits" /></Layout></PrivateRoute>} />
       <Route path="/tresorier/remboursements" element={<PrivateRoute roles={['TRESORIER', 'SUPER_ADMIN']}><Layout><TresorierRefunds /></Layout></PrivateRoute>} />
+
+      {/* ── Pôle Social ── */}
+      <Route path="/social"               element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialDashboard /></Layout></PrivateRoute>} />
+      <Route path="/social/beneficiaries" element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialBeneficiaries /></Layout></PrivateRoute>} />
+      <Route path="/social/cases"         element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialCases /></Layout></PrivateRoute>} />
+      <Route path="/social/stock"         element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialStock /></Layout></PrivateRoute>} />
+      <Route path="/social/distributions" element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialDistributions /></Layout></PrivateRoute>} />
+      <Route path="/social/collections"   element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialCollections /></Layout></PrivateRoute>} />
+      <Route path="/social/eligibility"   element={<PrivateRoute roles={SOCIAL_MANAGE_ROLES}><Layout><SocialEligibility /></Layout></PrivateRoute>} />
+      <Route path="/social/purchases"     element={<PrivateRoute roles={SOCIAL_MANAGE_ROLES}><Layout><SocialPurchases /></Layout></PrivateRoute>} />
+      <Route path="/social/budget"        element={<PrivateRoute roles={SOCIAL_MANAGE_ROLES}><Layout><SocialBudget /></Layout></PrivateRoute>} />
 
       <Route path="/professeur" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurDashboard /></Layout></PrivateRoute>} />
       <Route path="/suivi-pedagogique" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><SuiviPedagogique /></Layout></PrivateRoute>} />

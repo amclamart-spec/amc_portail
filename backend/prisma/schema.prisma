@@ -17,6 +17,8 @@ enum Role {
   RESPONSABLE_POLE_ARABE
   RESPONSABLE_POLE_SOUTIEN_SCO
   RESPONSABLE_POLE_SCIENCE_IS
+  RESPONSABLE_POLE_SOCIAL
+  OPERATEUR_SOCIAL
 }
 
 enum ValidationStatus {
@@ -54,6 +56,15 @@ model User {
   refundCodesUsed      RefundSecurityCode[] @relation("RefundCodeUser")
   sentMessages         ChatMessage[]        @relation("ChatMessageSender")
   receivedMessages     ChatMessage[]        @relation("ChatMessageRecipient")
+  beneficiariesCreated SocialBeneficiary[]  @relation("BeneficiaryCreator")
+  casesCreated         SocialCase[]         @relation("CaseCreator")
+  casesProcessed       SocialCase[]         @relation("CaseProcessor")
+  caseDecisions        CaseDecision[]       @relation("DecisionMaker")
+  stockMovements       StockMovement[]      @relation("StockMover")
+  socialDistributions  Distribution[]       @relation("DistributionOperator")
+  socialCollections    SocialCollection[]   @relation("CollectionOperator")
+  purchases            Purchase[]           @relation("PurchaseOperator")
+  socialBudgets        SocialBudget[]       @relation("BudgetManager")
 
   @@map("users")
 }
@@ -840,4 +851,314 @@ model AppSetting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("app_settings")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PÔLE SOCIAL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum SocialCaseStatus {
+  DRAFT
+  SUBMITTED
+  ACCEPTED
+  REFUSED
+  SUSPENDED
+  EXPIRED
+}
+
+enum StockMovementType {
+  COLLECTE
+  ACHAT
+  DISTRIBUTION
+  CORRECTION
+  RETOUR
+}
+
+enum DistributionStatus {
+  VALIDATED
+  CANCELLED
+}
+
+enum SocialCollectionStatus {
+  DRAFT
+  VALIDATED
+  CANCELLED
+}
+
+enum PurchaseStatus {
+  DRAFT
+  VALIDATED
+  CANCELLED
+}
+
+model SocialBeneficiary {
+  id            String   @id @default(uuid())
+  firstName     String   @map("first_name")
+  lastName      String   @map("last_name")
+  email         String?
+  phone         String?
+  addressLine1  String?  @map("address_line1")
+  postalCode    String?  @map("postal_code")
+  city          String?
+  adultsCount   Int      @default(1) @map("adults_count")
+  childrenCount Int      @default(0) @map("children_count")
+  monthlyIncome Decimal? @map("monthly_income") @db.Decimal(10, 2)
+  observations  String?
+  createdBy     String   @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  creator       User           @relation("BeneficiaryCreator", fields: [createdBy], references: [id])
+  cases         SocialCase[]
+  distributions Distribution[]
+
+  @@index([lastName, firstName])
+  @@map("social_beneficiaries")
+}
+
+model SocialCase {
+  id            String            @id @default(uuid())
+  beneficiaryId String            @map("beneficiary_id")
+  status        SocialCaseStatus  @default(DRAFT)
+  autoDecision  SocialCaseStatus? @map("auto_decision")
+  autoScore     Json?             @map("auto_score")
+  observations  String?
+  createdBy     String            @map("created_by")
+  processedBy   String?           @map("processed_by")
+  processedAt   DateTime?         @map("processed_at")
+  expiresAt     DateTime?         @map("expires_at")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  beneficiary SocialBeneficiary @relation(fields: [beneficiaryId], references: [id], onDelete: Cascade)
+  creator     User              @relation("CaseCreator", fields: [createdBy], references: [id])
+  processor   User?             @relation("CaseProcessor", fields: [processedBy], references: [id])
+  decisions   CaseDecision[]
+
+  @@index([beneficiaryId, status])
+  @@map("social_cases")
+}
+
+model CaseDecision {
+  id               String           @id @default(uuid())
+  caseId           String           @map("case_id")
+  decision         SocialCaseStatus
+  isAuto           Boolean          @default(false) @map("is_auto")
+  reason           String?
+  criteriaSnapshot Json?            @map("criteria_snapshot")
+  userId           String           @map("user_id")
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  case SocialCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  user User       @relation("DecisionMaker", fields: [userId], references: [id])
+
+  @@index([caseId])
+  @@map("case_decisions")
+}
+
+model EligibilityCriteria {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  label       String
+  description String?
+  type        String
+  operator    String   @default("LTE")
+  numValue    Decimal? @map("num_value") @db.Decimal(10, 2)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("eligibility_criteria")
+}
+
+model SocialProductCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  products SocialProduct[]
+
+  @@map("social_product_categories")
+}
+
+model SocialProduct {
+  id             String   @id @default(uuid())
+  categoryId     String   @map("category_id")
+  name           String
+  unit           String   @default("unité")
+  stockQty       Decimal  @default(0) @map("stock_qty") @db.Decimal(10, 2)
+  alertThreshold Decimal  @default(0) @map("alert_threshold") @db.Decimal(10, 2)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  category          SocialProductCategory @relation(fields: [categoryId], references: [id])
+  stockMovements    StockMovement[]
+  distributionLines DistributionLine[]
+  collectionLines   CollectionLine[]
+  purchaseLines     PurchaseLine[]
+
+  @@index([categoryId, isActive])
+  @@map("social_products")
+}
+
+model StockMovement {
+  id            String            @id @default(uuid())
+  productId     String            @map("product_id")
+  type          StockMovementType
+  quantity      Decimal           @db.Decimal(10, 2)
+  unit          String
+  referenceId   String?           @map("reference_id")
+  referenceType String?           @map("reference_type")
+  comment       String?
+  userId        String            @map("user_id")
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  product SocialProduct @relation(fields: [productId], references: [id])
+  user    User          @relation("StockMover", fields: [userId], references: [id])
+
+  @@index([productId, type])
+  @@index([referenceId, referenceType])
+  @@map("stock_movements")
+}
+
+model Distribution {
+  id            String             @id @default(uuid())
+  beneficiaryId String             @map("beneficiary_id")
+  caseId        String?            @map("case_id")
+  status        DistributionStatus @default(VALIDATED)
+  distributedAt DateTime           @map("distributed_at")
+  observations  String?
+  cancelledAt   DateTime?          @map("cancelled_at")
+  cancelReason  String?            @map("cancel_reason")
+  userId        String             @map("user_id")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+
+  beneficiary SocialBeneficiary @relation(fields: [beneficiaryId], references: [id])
+  user        User              @relation("DistributionOperator", fields: [userId], references: [id])
+  lines       DistributionLine[]
+
+  @@index([beneficiaryId, status])
+  @@index([distributedAt])
+  @@map("distributions")
+}
+
+model DistributionLine {
+  id             String  @id @default(uuid())
+  distributionId String  @map("distribution_id")
+  productId      String  @map("product_id")
+  quantity       Decimal @db.Decimal(10, 2)
+  unit           String
+
+  distribution Distribution  @relation(fields: [distributionId], references: [id], onDelete: Cascade)
+  product      SocialProduct @relation(fields: [productId], references: [id])
+
+  @@map("distribution_lines")
+}
+
+model SocialCollection {
+  id           String                 @id @default(uuid())
+  reference    String?
+  label        String
+  type         String                 @default("GENERAL")
+  location     String?
+  status       SocialCollectionStatus @default(DRAFT)
+  collectedAt  DateTime               @map("collected_at")
+  observations String?
+  userId       String                 @map("user_id")
+  createdAt    DateTime               @default(now()) @map("created_at")
+  updatedAt    DateTime               @updatedAt @map("updated_at")
+
+  user  User             @relation("CollectionOperator", fields: [userId], references: [id])
+  lines CollectionLine[]
+
+  @@index([status, collectedAt])
+  @@map("social_collections")
+}
+
+model CollectionLine {
+  id           String  @id @default(uuid())
+  collectionId String  @map("collection_id")
+  productId    String  @map("product_id")
+  quantity     Decimal @db.Decimal(10, 2)
+  unit         String
+
+  collection SocialCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  product    SocialProduct    @relation(fields: [productId], references: [id])
+
+  @@map("collection_lines")
+}
+
+model Supplier {
+  id           String   @id @default(uuid())
+  name         String
+  contact      String?
+  phone        String?
+  email        String?
+  address      String?
+  isActive     Boolean  @default(true) @map("is_active")
+  observations String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  purchases Purchase[]
+
+  @@map("suppliers")
+}
+
+model Purchase {
+  id           String         @id @default(uuid())
+  reference    String?
+  supplierId   String?        @map("supplier_id")
+  budgetId     String?        @map("budget_id")
+  status       PurchaseStatus @default(DRAFT)
+  purchasedAt  DateTime       @map("purchased_at")
+  totalAmount  Decimal        @map("total_amount") @db.Decimal(10, 2)
+  description  String?
+  observations String?
+  validatedAt  DateTime?      @map("validated_at")
+  userId       String         @map("user_id")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  supplier Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  budget   SocialBudget? @relation(fields: [budgetId], references: [id], onDelete: SetNull)
+  user     User          @relation("PurchaseOperator", fields: [userId], references: [id])
+  lines    PurchaseLine[]
+
+  @@index([status, purchasedAt])
+  @@map("purchases")
+}
+
+model PurchaseLine {
+  id         String  @id @default(uuid())
+  purchaseId String  @map("purchase_id")
+  productId  String  @map("product_id")
+  quantity   Decimal @db.Decimal(10, 2)
+  unit       String
+  unitPrice  Decimal @map("unit_price") @db.Decimal(10, 2)
+  totalPrice Decimal @map("total_price") @db.Decimal(10, 2)
+
+  purchase Purchase      @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product  SocialProduct @relation(fields: [productId], references: [id])
+
+  @@map("purchase_lines")
+}
+
+model SocialBudget {
+  id           String   @id @default(uuid())
+  year         Int      @unique
+  totalAmount  Decimal  @map("total_amount") @db.Decimal(10, 2)
+  observations String?
+  userId       String   @map("user_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user      User       @relation("BudgetManager", fields: [userId], references: [id])
+  purchases Purchase[]
+
+  @@map("social_budgets")
 }
