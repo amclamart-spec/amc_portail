@@ -9,6 +9,7 @@ const prisma = new PrismaClient();
 const STUDENT_COLUMN_LABELS = {
   name: 'Élève',
   dob: 'Date de naissance',
+  age: 'Âge',
   gender: 'Genre',
   schoolGrade: 'Niveau scolaire',
   isReturningStudent: 'Ancien élève',
@@ -85,6 +86,16 @@ function formatExportEnrollmentStatus(status) {
 function toNumber(value) {
   const num = Number(value || 0);
   return Number.isFinite(num) ? num : 0;
+}
+
+function computeAge(dateOfBirth) {
+  const dob = new Date(dateOfBirth);
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const hasHadBirthdayThisYear = today.getMonth() > dob.getMonth()
+    || (today.getMonth() === dob.getMonth() && today.getDate() >= dob.getDate());
+  if (!hasHadBirthdayThisYear) age -= 1;
+  return age;
 }
 
 function toIsoDate(value) {
@@ -359,6 +370,8 @@ function studentValueByColumn(student, column) {
       return `${student.lastName} ${student.firstName}`;
     case 'dob':
       return new Date(student.dateOfBirth).toLocaleDateString('fr-FR');
+    case 'age':
+      return `${computeAge(student.dateOfBirth)} ans`;
     case 'gender':
       return student.gender === 'FILLE' ? 'Fille' : 'Garçon';
     case 'schoolGrade':

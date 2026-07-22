@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
+import CoranFamilyPanel from '../../components/coran/CoranFamilyPanel';
 
 /* ─── styles ────────────────────────────────────────────────────────────────── */
 const STYLES = `
@@ -263,6 +264,8 @@ export default function FamilyPedagogy() {
     return acc;
   }, {});
   const pendingCount = absences.filter((a) => a.justificationStatus === 'PENDING').length;
+  const hasCoranEnrollment = (selectedStudent?.enrollments || []).some((e) => (e.classLabel || '').toLowerCase().includes('coran'));
+  const visibleTabs = hasCoranEnrollment ? [...TABS, { id: 'coran', label: 'Suivi Coran', icon: '📖' }] : TABS;
 
   if (loading) return <p style={{ padding: 32, color: '#6B7280', textAlign: 'center' }}>Chargement…</p>;
 
@@ -302,8 +305,8 @@ export default function FamilyPedagogy() {
       </div>
 
       {/* ── tabs ── */}
-      <div className="sp-tabs">
-        {TABS.map((t) => (
+      <div className="sp-tabs" style={{ gridTemplateColumns: `repeat(${visibleTabs.length},1fr)` }}>
+        {visibleTabs.map((t) => (
           <button key={t.id} className={`sp-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
             <span className="sp-tab-icon">{t.icon}</span>
             <span className="sp-tab-label">
@@ -571,6 +574,16 @@ export default function FamilyPedagogy() {
                   </div>
                 ))
               )}
+            </div>
+          )}
+
+          {/* ════════ SUIVI CORAN ════════ */}
+          {tab === 'coran' && hasCoranEnrollment && (
+            <div>
+              <h3 style={{ margin: '0 0 14px', color: 'var(--amc-primary)', fontSize: 16 }}>
+                Suivi Coran — {selectedStudent?.firstName}
+              </h3>
+              <CoranFamilyPanel studentId={selectedStudentId} />
             </div>
           )}
         </>

@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
+const { upsertSourates } = require('./seeds/sourates');
 
 const prisma = new PrismaClient();
 
@@ -155,6 +156,9 @@ async function main() {
       },
     });
   }
+
+  const sourateCount = await upsertSourates(prisma);
+  console.log(`✅ ${sourateCount} sourates du Coran seedées.`);
 
   console.log('✅ Seed terminé. Utilisez Admin2025! pour les comptes créés.');
 }

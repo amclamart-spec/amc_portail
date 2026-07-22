@@ -3,6 +3,8 @@ import { FiLoader, FiPrinter, FiDownload, FiCheck, FiX, FiSave, FiEdit2, FiTrash
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import useEvaluations from '../../hooks/useEvaluations';
+import CoranTeacherPanel from '../../components/coran/CoranTeacherPanel';
+import CoranBulletin from '../../components/coran/CoranBulletin';
 
 /* ─── Teal teacher palette ─────────────────────────────────────────────────── */
 const T = {
@@ -183,6 +185,10 @@ export default function SuiviPedagogique() {
 
   /* ── derived ── */
   const selectedClass  = classes.find((c) => String(c.id) === String(selectedClassId)) || null;
+  const isCoranClass   = (selectedClass?.level?.pole?.name || '').toLowerCase().includes('coran');
+  const visibleTabs    = isCoranClass
+    ? [...TABS.filter((t) => t.id !== 'notes'), { id: 'coran', label: 'Suivi Coran', icon: '📖' }]
+    : TABS;
   const classPeriod    = selectedClass?.level?.pole?.period;
   const periodOptions  = useMemo(() => {
     if (classPeriod === 'TRIMESTRIEL') return [
@@ -300,6 +306,18 @@ export default function SuiviPedagogique() {
   }, [classPeriod, periodOptions]);
 
   useEffect(() => { if (error) toast.error(error); }, [error]);
+
+  /* ── leave the Coran tab if the selected class isn't a Coran class ── */
+  useEffect(() => {
+    if (tab === 'coran' && !isCoranClass) setTab('dashboard');
+    if (tab === 'notes' && isCoranClass) setTab('dashboard');
+  }, [selectedClassId, isCoranClass, tab]);
+
+  /* ── reset bulletin selection when the class changes ── */
+  useEffect(() => {
+    setBulletinStudentId('');
+    setBulletinAppreciation('');
+  }, [selectedClassId]);
 
   /* ── day-of-week validation for absence date ── */
   const DAY_MAP = { DIMANCHE: 0, LUNDI: 1, MARDI: 2, MERCREDI: 3, JEUDI: 4, VENDREDI: 5, SAMEDI: 6 };
@@ -450,8 +468,8 @@ export default function SuiviPedagogique() {
       </div>
 
       {/* ── tab bar ── */}
-      <div className="ep-tabs">
-        {TABS.map((t) => (
+      <div className="ep-tabs" style={{ gridTemplateColumns: `repeat(${visibleTabs.length},1fr)` }}>
+        {visibleTabs.map((t) => (
           <button
             key={t.id}
             className={`ep-tab${tab === t.id ? ' active' : ''}`}
@@ -906,7 +924,54 @@ export default function SuiviPedagogique() {
       )}
 
       {/* ══════════════════════ BULLETIN ══════════════════════════════ */}
-      {tab === 'bulletin' && (
+      {tab === 'bulletin' && isCoranClass && (
+        <div>
+          <div className="ep-sec" style={{ marginBottom: 14 }}>
+            <SecHead>⚙️ Paramètres du bulletin</SecHead>
+            <div className="ep-sec-body">
+              <div className="ep-2col">
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: 'block' }}>Élève</label>
+                  <select
+                    className="form-control"
+                    style={{ width: 'auto', minWidth: 180, maxWidth: '100%' }}
+                    value={bulletinStudentId}
+                    onChange={(e) => { setBulletinStudentId(e.target.value); setBulletinAppreciation(''); }}
+                  >
+                    <option value="">— Sélectionner —</option>
+                    {classStudents.map((s) => <option key={s.studentId} value={s.studentId}>{s.studentName}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+                  <button
+                    className="btn ep-no-print"
+                    style={{ background: T.primary, color: '#fff' }}
+                    disabled={!bulletinStudentId}
+                    onClick={() => window.print()}
+                  >
+                    <FiPrinter size={14} /> Imprimer
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {!bulletinStudentId ? (
+            <EmptyState icon="📄" text="Sélectionnez un élève pour générer le bulletin" />
+          ) : (
+            <CoranBulletin
+              studentId={bulletinStudentId}
+              studentName={classStudents.find((s) => s.studentId === bulletinStudentId)?.studentName || ''}
+              classLabel={`${selectedClass?.level?.name || ''} — ${selectedClass?.level?.pole?.name || ''}`}
+              classId={selectedClassId}
+              appreciation={bulletinAppreciation}
+              onAppreciationChange={setBulletinAppreciation}
+            />
+          )}
+        </div>
+      )}
+
+      {tab === 'bulletin' && !isCoranClass && (
         <div>
           {/* Controls */}
           <div className="ep-sec" style={{ marginBottom: 14 }}>
@@ -1076,6 +1141,11 @@ export default function SuiviPedagogique() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ══════════════════════ SUIVI CORAN ══════════════════════ */}
+      {tab === 'coran' && isCoranClass && (
+        <CoranTeacherPanel classId={selectedClassId} />
       )}
 
       {/* ── Absence history modal ── */}

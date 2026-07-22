@@ -10,6 +10,7 @@ const STUDENT_COLUMN_GROUPS = [
     columns: [
       { key: 'name', label: 'Nom élève' },
       { key: 'dob', label: 'Date de naissance' },
+      { key: 'age', label: 'Âge' },
       { key: 'gender', label: 'Genre' },
       { key: 'schoolGrade', label: 'Niveau scolaire' },
       { key: 'isReturningStudent', label: 'Ancien élève' },
