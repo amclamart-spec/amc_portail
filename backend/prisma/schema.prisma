@@ -172,11 +172,16 @@ model Student {
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
-  family             Family              @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  enrollments        Enrollment[]
-  healthForms        StudentHealthForm[]
-  enrollmentConsents EnrollmentConsent[]
-  evaluations        Evaluation[]
+  family               Family                @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  enrollments          Enrollment[]
+  healthForms          StudentHealthForm[]
+  enrollmentConsents   EnrollmentConsent[]
+  evaluations          Evaluation[]
+  coranSeances         CoranSeance[]
+  coranRevisions       CoranRevision[]
+  coranRepetitions     CoranRepetition[]
+  coranLectures        CoranLecture[]
+  coranBulletinUploads CoranBulletinUpload[]
 
   @@map("students")
 }
@@ -314,10 +319,10 @@ model Pole {
   blockNewEnrollments Boolean          @default(false) @map("block_new_enrollments")
   createdAt           DateTime         @default(now()) @map("created_at")
 
-  levels     Level[]
-  classes    Class[]
-  timeSlots  TimeSlot[]
-  teachers   Teacher[]
+  levels    Level[]
+  classes   Class[]
+  timeSlots TimeSlot[]
+  teachers  Teacher[]
 
   @@map("poles")
 }
@@ -348,41 +353,43 @@ enum ClassStatus {
 }
 
 model Class {
-  id            String      @id @default(uuid())
-  schoolYearId  String      @map("school_year_id")
-  poleId        String?     @map("pole_id")
-  levelId       String      @map("level_id")
-  timeSlotId    String?     @map("time_slot_id")
-  roomId        String?     @map("room_id")
-  teacherId     String?     @map("teacher_id")
-  dayOfWeek     String      @map("day_of_week")
-  startTime     String      @map("start_time")
-  endTime       String      @map("end_time")
-  room          String?
-  teacherName   String?     @map("teacher_name")
-  teacherUserId String?     @map("teacher_user_id")
-  capacity      Int         @default(20)
-  enrolledCount Int         @default(0) @map("enrolled_count")
-  status        ClassStatus @default(OPEN)
-  validFrom            DateTime? @map("valid_from")
-  validTo              DateTime? @map("valid_to")
-  applyEnrollmentFee   Boolean   @default(true) @map("apply_enrollment_fee")
-  examPreparation      Boolean   @default(false) @map("exam_preparation")
-  isProvisional        Boolean   @default(false) @map("is_provisional")
-  genre                String    @default("Tout") @map("genre")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
+  id                 String      @id @default(uuid())
+  schoolYearId       String      @map("school_year_id")
+  poleId             String?     @map("pole_id")
+  levelId            String      @map("level_id")
+  timeSlotId         String?     @map("time_slot_id")
+  roomId             String?     @map("room_id")
+  teacherId          String?     @map("teacher_id")
+  dayOfWeek          String      @map("day_of_week")
+  startTime          String      @map("start_time")
+  endTime            String      @map("end_time")
+  room               String?
+  teacherName        String?     @map("teacher_name")
+  teacherUserId      String?     @map("teacher_user_id")
+  capacity           Int         @default(20)
+  enrolledCount      Int         @default(0) @map("enrolled_count")
+  status             ClassStatus @default(OPEN)
+  validFrom          DateTime?   @map("valid_from")
+  validTo            DateTime?   @map("valid_to")
+  applyEnrollmentFee Boolean     @default(true) @map("apply_enrollment_fee")
+  examPreparation    Boolean     @default(false) @map("exam_preparation")
+  isProvisional      Boolean     @default(false) @map("is_provisional")
+  genre              String      @default("Tout") @map("genre")
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
 
-  schoolYear       SchoolYear        @relation(fields: [schoolYearId], references: [id])
-  pole             Pole?             @relation(fields: [poleId], references: [id])
-  level            Level             @relation(fields: [levelId], references: [id])
-  timeSlot         TimeSlot?         @relation(fields: [timeSlotId], references: [id])
-  roomRef          Room?             @relation(fields: [roomId], references: [id])
-  teacher          Teacher?          @relation(fields: [teacherId], references: [id])
-  enrollments      Enrollment[]
-  lessons          Lesson[]
-  homeworkMessages HomeworkMessage[]
-  classTimeSlots   ClassTimeSlot[]
+  schoolYear           SchoolYear            @relation(fields: [schoolYearId], references: [id])
+  pole                 Pole?                 @relation(fields: [poleId], references: [id])
+  level                Level                 @relation(fields: [levelId], references: [id])
+  timeSlot             TimeSlot?             @relation(fields: [timeSlotId], references: [id])
+  roomRef              Room?                 @relation(fields: [roomId], references: [id])
+  teacher              Teacher?              @relation(fields: [teacherId], references: [id])
+  enrollments          Enrollment[]
+  lessons              Lesson[]
+  homeworkMessages     HomeworkMessage[]
+  classTimeSlots       ClassTimeSlot[]
+  coranSeances         CoranSeance[]
+  coranBulletinUploads CoranBulletinUpload[]
 
   @@index([schoolYearId, poleId, levelId])
   @@index([timeSlotId])
@@ -414,18 +421,18 @@ model Lesson {
 }
 
 model Evaluation {
-  id            String           @id @default(uuid())
-  studentId     String           @map("student_id")
-  lessonId      String           @map("lesson_id")
-  grade         Float
-  appreciation  String?
-  submitted     Boolean          @default(false)
-  status               EvaluationStatus @default(on_time)
-  justification        String?
-  familyJustification  String?          @map("family_justification")
-  justificationStatus  String           @default("NONE") @map("justification_status")
-  createdAt            DateTime         @default(now()) @map("created_at")
-  updatedAt            DateTime         @updatedAt @map("updated_at")
+  id                  String           @id @default(uuid())
+  studentId           String           @map("student_id")
+  lessonId            String           @map("lesson_id")
+  grade               Float
+  appreciation        String?
+  submitted           Boolean          @default(false)
+  status              EvaluationStatus @default(on_time)
+  justification       String?
+  familyJustification String?          @map("family_justification")
+  justificationStatus String           @default("NONE") @map("justification_status")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   lesson  Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
@@ -792,13 +799,13 @@ model Refund {
 }
 
 model RefundSecurityCode {
-  id            String    @id @default(uuid())
-  code          String    @unique
-  generatedBy   String    @map("generated_by")
-  usedBy        String?   @map("used_by")
-  usedAt        DateTime? @map("used_at")
-  expiresAt     DateTime  @map("expires_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
+  id          String    @id @default(uuid())
+  code        String    @unique
+  generatedBy String    @map("generated_by")
+  usedBy      String?   @map("used_by")
+  usedAt      DateTime? @map("used_at")
+  expiresAt   DateTime  @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   generator User  @relation("RefundCodeGenerator", fields: [generatedBy], references: [id])
   user      User? @relation("RefundCodeUser", fields: [usedBy], references: [id])
@@ -1037,8 +1044,8 @@ model Distribution {
   createdAt     DateTime           @default(now()) @map("created_at")
   updatedAt     DateTime           @updatedAt @map("updated_at")
 
-  beneficiary SocialBeneficiary @relation(fields: [beneficiaryId], references: [id])
-  user        User              @relation("DistributionOperator", fields: [userId], references: [id])
+  beneficiary SocialBeneficiary  @relation(fields: [beneficiaryId], references: [id])
+  user        User               @relation("DistributionOperator", fields: [userId], references: [id])
   lines       DistributionLine[]
 
   @@index([beneficiaryId, status])
@@ -1124,9 +1131,9 @@ model Purchase {
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
 
-  supplier Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  budget   SocialBudget? @relation(fields: [budgetId], references: [id], onDelete: SetNull)
-  user     User          @relation("PurchaseOperator", fields: [userId], references: [id])
+  supplier Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  budget   SocialBudget?  @relation(fields: [budgetId], references: [id], onDelete: SetNull)
+  user     User           @relation("PurchaseOperator", fields: [userId], references: [id])
   lines    PurchaseLine[]
 
   @@index([status, purchasedAt])
@@ -1161,4 +1168,138 @@ model SocialBudget {
   purchases Purchase[]
 
   @@map("social_budgets")
+}
+
+// ---------------------------------------------------------------------------
+// Module Suivi Coran
+// ---------------------------------------------------------------------------
+
+enum CoranAppreciation {
+  TRES_BIEN
+  BIEN
+  A_REVOIR
+}
+
+enum CoranRevisionType {
+  NOUVELLE_PAGE
+  ANCIENNE_PAGE
+}
+
+model SourateCoran {
+  id            String   @id @default(uuid())
+  numero        Int      @unique
+  nomArabe      String   @map("nom_arabe")
+  nomFr         String   @map("nom_fr")
+  nombreVersets Int      @map("nombre_versets")
+  nombrePages   Float    @map("nombre_pages")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  seances     CoranSeance[]
+  revisions   CoranRevision[]
+  repetitions CoranRepetition[]
+  lectures    CoranLecture[]
+
+  @@map("sourates_coran")
+}
+
+model CoranSeance {
+  id                   String             @id @default(uuid())
+  studentId            String             @map("student_id")
+  classId              String             @map("class_id")
+  sourateId            String             @map("sourate_id")
+  date                 DateTime
+  pageDebut            Int                @map("page_debut")
+  pageFin              Int                @map("page_fin")
+  noteMemorisation     CoranAppreciation? @map("note_memorisation")
+  noteRevisionNouvelle CoranAppreciation? @map("note_revision_nouvelle")
+  noteRevisionAncienne CoranAppreciation? @map("note_revision_ancienne")
+  noteTajwid           CoranAppreciation? @map("note_tajwid")
+  commentaire          String?
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  class   Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  sourate SourateCoran @relation(fields: [sourateId], references: [id])
+
+  @@index([studentId, date])
+  @@index([classId])
+  @@map("coran_seances")
+}
+
+model CoranRevision {
+  id              String             @id @default(uuid())
+  studentId       String             @map("student_id")
+  sourateId       String             @map("sourate_id")
+  pageDebut       Int                @map("page_debut")
+  pageFin         Int                @map("page_fin")
+  type            CoranRevisionType
+  date            DateTime
+  appreciation    CoranAppreciation?
+  commentaireProf String?            @map("commentaire_prof")
+  evaluatedAt     DateTime?          @map("evaluated_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sourate SourateCoran @relation(fields: [sourateId], references: [id])
+
+  @@index([studentId, date])
+  @@map("coran_revisions")
+}
+
+model CoranRepetition {
+  id              String             @id @default(uuid())
+  studentId       String             @map("student_id")
+  numeroPage      Int                @map("numero_page")
+  sourateId       String?            @map("sourate_id")
+  compteur        Int                @default(0)
+  derniereDate    DateTime?          @map("derniere_date")
+  appreciation    CoranAppreciation?
+  commentaireProf String?            @map("commentaire_prof")
+  evaluatedAt     DateTime?          @map("evaluated_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  student Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sourate SourateCoran? @relation(fields: [sourateId], references: [id])
+
+  @@unique([studentId, numeroPage])
+  @@map("coran_repetitions")
+}
+
+model CoranLecture {
+  id              String             @id @default(uuid())
+  studentId       String             @map("student_id")
+  sourateId       String             @map("sourate_id")
+  pageDebut       Int                @map("page_debut")
+  pageFin         Int                @map("page_fin")
+  date            DateTime
+  dureeMinutes    Int?               @map("duree_minutes")
+  commentaire     String?
+  appreciation    CoranAppreciation?
+  commentaireProf String?            @map("commentaire_prof")
+  evaluatedAt     DateTime?          @map("evaluated_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sourate SourateCoran @relation(fields: [sourateId], references: [id])
+
+  @@index([studentId, date])
+  @@map("coran_lectures")
+}
+
+model CoranBulletinUpload {
+  id           String   @id @default(uuid())
+  studentId    String   @map("student_id")
+  classId      String   @map("class_id")
+  fileUrl      String   @map("file_url")
+  fileName     String   @map("file_name")
+  uploadedById String   @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, createdAt])
+  @@map("coran_bulletin_uploads")
 }
