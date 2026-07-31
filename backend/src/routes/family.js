@@ -9,6 +9,7 @@ const {
   getPedagogyHomework,
   getPedagogyNotes,
   postPedagogyJustification,
+  putHomeworkCompletion,
 } = require('../controllers/familyPedagogyController');
 
 const router = Router();
@@ -20,6 +21,7 @@ router.get('/profile', getProfile);
 router.get('/pedagogy/students', getPedagogyStudents);
 router.get('/pedagogy/absences', getPedagogyAbsences);
 router.get('/pedagogy/homework', getPedagogyHomework);
+router.put('/pedagogy/homework/:homeworkId/completion', putHomeworkCompletion);
 router.get('/pedagogy/notes', getPedagogyNotes);
 router.post('/pedagogy/absences/:evaluationId/justify', postPedagogyJustification);
 router.post('/profile', requireApproved, createOrUpdateProfile);

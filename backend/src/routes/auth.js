@@ -14,6 +14,8 @@ const {
   getProfile,
   updateProfile,
   logout,
+  getMyRoleRequests,
+  requestRole,
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 
@@ -28,7 +30,7 @@ const registerValidation = [
     .matches(/[0-9]/).withMessage('Au moins un chiffre'),
   body('firstName').trim().notEmpty().withMessage('Prénom requis'),
   body('lastName').trim().notEmpty().withMessage('Nom requis'),
-  body('role').optional().isIn(['FAMILLE', 'PROFESSEUR', 'ADMIN', 'TRESORIER', 'RESPONSABLE_POLE_CORAN', 'RESPONSABLE_POLE_ARABE', 'RESPONSABLE_POLE_SOUTIEN_SCO', 'RESPONSABLE_POLE_SCIENCE_IS']).withMessage('Profil invalide'),
+  body('role').optional().isIn(['FAMILLE', 'PROFESSEUR', 'TRESORIER', 'BENEVOLE', 'RESPONSABLE_POLE_CORAN', 'RESPONSABLE_POLE_ARABE', 'RESPONSABLE_POLE_SOUTIEN_SCO', 'RESPONSABLE_POLE_SCIENCE_IS']).withMessage('Profil invalide'),
 ];
 
 const loginValidation = [
@@ -82,6 +84,8 @@ router.post('/forgot-password', forgotPasswordValidation, validate, forgotPasswo
 router.post('/reset-password', resetPasswordValidation, validate, resetPassword);
 router.get('/verify-email/:token', verifyEmail);
 router.get('/me', authenticate, getMe);
+router.get('/me/roles', authenticate, getMyRoleRequests);
+router.post('/me/roles', authenticate, requestRole);
 router.get('/profile', authenticate, getProfile);
 router.put('/profile', authenticate, updateProfile);
 router.post('/change-password', authenticate, changePasswordValidation, validate, changePassword);

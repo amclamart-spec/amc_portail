@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import CoranFamilyPanel from '../../components/coran/CoranFamilyPanel';
+import FamilyAppreciationsPanel from '../../components/appreciations/FamilyAppreciationsPanel';
+import NotesScolaireFamilyPanel from '../../components/notesScolaires/NotesScolaireFamilyPanel';
+import FamilyBulletinsPanel from '../../components/bulletins/FamilyBulletinsPanel';
 
 /* ─── styles ────────────────────────────────────────────────────────────────── */
 const STYLES = `
@@ -33,9 +36,18 @@ const STYLES = `
   .sp-ab-meta   { font-size:12px; color:#6B7280; margin-top:2px; }
   .sp-ab-justif { padding:10px 14px; background:#F8FAFC; border-top:1px solid var(--amc-border); }
   .sp-justify-form { padding:10px 14px; border-top:1px solid var(--amc-border); }
-  .sp-hw-full   { padding:10px 14px; border-radius:var(--amc-border-radius-lg); border:1px solid var(--amc-border); box-shadow:var(--amc-shadow); background:#fff; margin-bottom:12px; }
-  .sp-hw-header { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:9px 14px; background:#DBEAFE; border-bottom:1px solid #BFDBFE; border-radius:var(--amc-border-radius-lg) var(--amc-border-radius-lg) 0 0; }
+  .sp-hw-full   { padding:0; border-radius:var(--amc-border-radius-lg); border:1px solid var(--amc-border); box-shadow:var(--amc-shadow); background:#fff; margin-bottom:12px; overflow:hidden; }
+  .sp-hw-header { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:9px 14px; background:var(--amc-light-bg-2); border-bottom:1px solid var(--amc-border); }
   .sp-hw-body   { padding:12px 14px; }
+  .sp-hw-done-toggle { display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:10px; border-top:1px solid var(--amc-border); font-size:13px; font-weight:600; color:var(--amc-text); cursor:pointer; user-select:none; }
+  .sp-hw-done-toggle input { width:16px; height:16px; cursor:pointer; accent-color:var(--amc-success); flex-shrink:0; }
+  .sp-devoirs-content, .sp-absences-content { max-width:760px; }
+  .sp-pole-group      { margin-bottom:22px; }
+  .sp-pole-group:last-child { margin-bottom:0; }
+  .sp-pole-group-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 2px; margin-bottom:10px; }
+  .sp-pole-group-title{ display:flex; align-items:center; gap:8px; font-weight:800; font-size:14px; color:var(--amc-text); }
+  .sp-pole-icon        { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
+  .badge-teal   { background:#CCFBF1; color:#134E4A; }
 
   @media(max-width:600px){
     .sp-tab-label { font-size:9px; }
@@ -48,6 +60,19 @@ const STYLES = `
 `;
 
 /* ─── helpers ───────────────────────────────────────────────────────────────── */
+function getPeriodOptions(period) {
+  if (period === 'TRIMESTRIEL') return [
+    { label: 'Trimestre 1', value: 'TRIMESTRE_1' },
+    { label: 'Trimestre 2', value: 'TRIMESTRE_2' },
+    { label: 'Trimestre 3', value: 'TRIMESTRE_3' },
+  ];
+  if (period === 'SEMESTRIEL') return [
+    { label: 'Semestre 1', value: 'SEMESTRE_1' },
+    { label: 'Semestre 2', value: 'SEMESTRE_2' },
+  ];
+  return [{ label: 'Année complète', value: 'ANNUEL' }];
+}
+
 function gradeColor(g, max = 10) {
   if (g == null) return '#6B7280';
   const pct = (g / max) * 100;
@@ -61,6 +86,34 @@ function gradeBg(g, max = 10) {
 function fmtDate(d, opts) {
   if (!d) return '';
   return new Date(d).toLocaleDateString('fr-FR', opts || { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/* ─── regroupement des devoirs par pôle ──────────────────────────────────────── */
+/* Couleurs alignées sur les jetons déjà utilisés dans le portail (.badge-*, .stat-icon.*) : */
+const POLE_ORDER = ['Arabe', 'Coran', 'Soutien scolaire'];
+const POLE_META = {
+  'Arabe':           { icon: '🗣️', color: 'var(--amc-primary)', bg: '#DBEAFE', badgeClass: 'badge-info' },
+  'Coran':           { icon: '📖', color: '#134E4A',            bg: '#CCFBF1', badgeClass: 'badge-teal' },
+  'Soutien scolaire':{ icon: '📝', color: '#92400E',            bg: '#FEF3C7', badgeClass: 'badge-warning' },
+};
+const DEFAULT_POLE_META = { icon: '📚', color: '#4B5563', bg: '#F3F4F6', badgeClass: 'badge-gray' };
+
+function groupHomeworksByPole(list) {
+  const groups = new Map();
+  list.forEach((hw) => {
+    const key = hw.poleName || 'Autre';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(hw);
+  });
+  const others = [...groups.keys()]
+    .filter((k) => !POLE_ORDER.includes(k) && k !== 'Autre')
+    .sort((a, b) => a.localeCompare(b));
+  const orderedKeys = [...POLE_ORDER.filter((k) => groups.has(k)), ...others, ...(groups.has('Autre') ? ['Autre'] : [])];
+  return orderedKeys.map((key) => ({
+    poleName: key,
+    meta: POLE_META[key] || DEFAULT_POLE_META,
+    items: [...groups.get(key)].sort((a, b) => new Date(b.date) - new Date(a.date)),
+  }));
 }
 
 /* ─── sub-components ────────────────────────────────────────────────────────── */
@@ -101,6 +154,7 @@ const TABS = [
   { id: 'absences',  label: 'Absences',         icon: '📅' },
   { id: 'notes',     label: 'Notes',             icon: '⭐' },
   { id: 'devoirs',   label: 'Devoirs',           icon: '📚' },
+  { id: 'bulletins', label: 'Bulletins',         icon: '📄' },
 ];
 
 /* ─── AbsenceCard ───────────────────────────────────────────────────────────── */
@@ -138,11 +192,14 @@ function AbsenceCard({ absence, onJustified }) {
       <div className="sp-ab-head">
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {absence.lessonTitle || 'Leçon'}
+            {absence.status === 'late' ? '⏰ ' : ''}{absence.lessonTitle || 'Leçon'}
           </div>
           <div className="sp-ab-meta">{absence.classLabel} · {fmtDate(absence.date, { day: '2-digit', month: 'long', year: 'numeric' })}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <span className={`badge ${absence.status === 'late' ? 'badge-warning' : 'badge-danger'}`}>
+            {absence.status === 'late' ? 'Retard' : 'Absence'}
+          </span>
           <JustifBadge status={absence.justificationStatus} />
           {canJustify && (
             <button type="button" className="btn btn-outline btn-sm" onClick={() => setOpen((v) => !v)}>
@@ -249,6 +306,16 @@ export default function FamilyPedagogy() {
       .then(({ data }) => setAbsences(data.absences || []));
   };
 
+  const handleToggleHomeworkDone = (homework) => {
+    const nextDone = !homework.done;
+    setHomeworks((prev) => prev.map((h) => (h.id === homework.id ? { ...h, done: nextDone } : h)));
+    api.put(`/family/pedagogy/homework/${homework.id}/completion`, { studentId: selectedStudentId, done: nextDone })
+      .catch((e) => {
+        setHomeworks((prev) => prev.map((h) => (h.id === homework.id ? { ...h, done: homework.done } : h)));
+        toast.error(e.response?.data?.error || 'Impossible de mettre à jour le devoir');
+      });
+  };
+
   /* ── derived ── */
   const selectedStudent  = students.find((s) => s.id === selectedStudentId);
   const validGrades      = notes.filter((n) => n.grade != null);
@@ -263,9 +330,28 @@ export default function FamilyPedagogy() {
     acc[k].push(n);
     return acc;
   }, {});
+  const courseAverages = Object.entries(notesByMatiere)
+    .map(([course, courseNotes]) => {
+      const valid = courseNotes.filter((n) => n.grade != null);
+      const avg = valid.length > 0 ? valid.reduce((s, n) => s + Number(n.grade), 0) / valid.length : null;
+      return { course, avg };
+    })
+    .filter((c) => c.avg != null);
   const pendingCount = absences.filter((a) => a.justificationStatus === 'PENDING').length;
+  const missingCount = absences.filter((a) => a.status !== 'late').length;
+  const lateCount    = absences.filter((a) => a.status === 'late').length;
   const hasCoranEnrollment = (selectedStudent?.enrollments || []).some((e) => (e.classLabel || '').toLowerCase().includes('coran'));
-  const visibleTabs = hasCoranEnrollment ? [...TABS, { id: 'coran', label: 'Suivi Coran', icon: '📖' }] : TABS;
+  const soutienScolaireEnrollment = (selectedStudent?.enrollments || []).find((e) => (e.classLabel || '').toLowerCase().includes('soutien'));
+  const hasSoutienScolaireEnrollment = !!soutienScolaireEnrollment;
+  const soutienScolairePeriodOptions = getPeriodOptions(soutienScolaireEnrollment?.period);
+  const visibleTabs = [
+    ...TABS,
+    ...(hasCoranEnrollment ? [{ id: 'coran', label: 'Suivi Coran', icon: '📖' }] : []),
+    ...(hasSoutienScolaireEnrollment ? [
+      { id: 'appreciations', label: 'Appréciations régulières', icon: '⭐' },
+      { id: 'notesScolaires', label: 'Notes Scolaire', icon: '📓' },
+    ] : []),
+  ];
 
   if (loading) return <p style={{ padding: 32, color: '#6B7280', textAlign: 'center' }}>Chargement…</p>;
 
@@ -340,15 +426,25 @@ export default function FamilyPedagogy() {
                     <p>Absence{absences.length !== 1 ? 's' : ''}</p>
                   </div>
                 </div>
-                <div className="stat-card">
-                  <div className="stat-icon warning">⭐</div>
-                  <div className="stat-info">
-                    <h4 style={{ color: avgGrade != null ? gradeColor(Number(avgGrade)) : '#6B7280' }}>
-                      {avgGrade != null ? `${avgGrade}/10` : '—'}
-                    </h4>
-                    <p>Moyenne générale</p>
+                {courseAverages.length > 0 ? (
+                  courseAverages.map((c) => (
+                    <div key={c.course} className="stat-card" style={{ cursor: 'pointer' }} onClick={() => setTab('notes')}>
+                      <div className="stat-icon warning">⭐</div>
+                      <div className="stat-info">
+                        <h4 style={{ color: gradeColor(c.avg) }}>{c.avg.toFixed(1)}/10</h4>
+                        <p>{c.course}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="stat-card">
+                    <div className="stat-icon warning">⭐</div>
+                    <div className="stat-info">
+                      <h4 style={{ color: '#6B7280' }}>—</h4>
+                      <p>Moyenne générale</p>
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="stat-card" style={{ cursor: 'pointer' }} onClick={() => setTab('devoirs')}>
                   <div className="stat-icon primary">📚</div>
                   <div className="stat-info">
@@ -377,12 +473,12 @@ export default function FamilyPedagogy() {
                       </div>
                     </div>
                   )}
-                  {recentNotes.length > 0 && (
-                    <div className="sp-sec">
-                      <div className="sp-sec-head">
-                        ⭐ Dernières notes
-                        <button className="sp-link-btn" onClick={() => setTab('notes')}>Voir tout →</button>
-                      </div>
+                  <div className="sp-sec">
+                    <div className="sp-sec-head">
+                      ⭐ Dernières notes
+                      {recentNotes.length > 0 && <button className="sp-link-btn" onClick={() => setTab('notes')}>Voir tout →</button>}
+                    </div>
+                    {recentNotes.length > 0 ? (
                       <div className="sp-sec-body">
                         {recentNotes.map((n) => (
                           <div key={n.id} className="sp-note-row" style={{ background: gradeBg(n.grade) }}>
@@ -394,15 +490,17 @@ export default function FamilyPedagogy() {
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <div style={{ padding: '16px 12px', textAlign: 'center', color: '#6B7280', fontSize: 13 }}>Aucune note pour le moment.</div>
+                    )}
+                  </div>
                   {/* Absences récentes dans le dashboard */}
-                  {absences.length > 0 && (
-                    <div className="sp-sec">
-                      <div className="sp-sec-head">
-                        📅 Absences récentes
-                        <button className="sp-link-btn" onClick={() => setTab('absences')}>Voir tout →</button>
-                      </div>
+                  <div className="sp-sec">
+                    <div className="sp-sec-head">
+                      📅 Absences récentes
+                      {absences.length > 0 && <button className="sp-link-btn" onClick={() => setTab('absences')}>Voir tout →</button>}
+                    </div>
+                    {absences.length > 0 ? (
                       <div className="sp-sec-body">
                         {[...absences].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 3).map((a) => (
                           <div key={a.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--amc-border)' }}>
@@ -411,15 +509,17 @@ export default function FamilyPedagogy() {
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <div style={{ padding: '16px 12px', textAlign: 'center', color: '#16A34A', fontSize: 13, fontWeight: 600 }}>✅ Aucune absence enregistrée.</div>
+                    )}
+                  </div>
                 </div>
-                {recentHomeworks.length > 0 && (
-                  <div className="sp-sec" style={{ alignSelf: 'start' }}>
-                    <div className="sp-sec-head">
-                      📚 Derniers devoirs
-                      <button className="sp-link-btn" onClick={() => setTab('devoirs')}>Voir tout →</button>
-                    </div>
+                <div className="sp-sec" style={{ alignSelf: 'start' }}>
+                  <div className="sp-sec-head">
+                    📚 Derniers devoirs
+                    {recentHomeworks.length > 0 && <button className="sp-link-btn" onClick={() => setTab('devoirs')}>Voir tout →</button>}
+                  </div>
+                  {recentHomeworks.length > 0 ? (
                     <div className="sp-sec-body">
                       {recentHomeworks.map((hw) => (
                         <div key={hw.id} className="sp-hw-card">
@@ -433,28 +533,25 @@ export default function FamilyPedagogy() {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
-              </div>
-              {recentNotes.length === 0 && recentHomeworks.length === 0 && absences.length === 0 && (
-                <div className="sp-empty">
-                  <div style={{ fontSize: 32, marginBottom: 10 }}>📋</div>
-                  <p style={{ color: '#6B7280', fontSize: 14 }}>Aucune donnée pédagogique disponible pour le moment.</p>
+                  ) : (
+                    <div style={{ padding: '16px 12px', textAlign: 'center', color: '#6B7280', fontSize: 13 }}>Aucun devoir pour le moment.</div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           )}
 
           {/* ════════ ABSENCES ════════ */}
           {tab === 'absences' && (
-            <div>
+            <div className="sp-absences-content">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
                 <h3 style={{ margin: 0, color: 'var(--amc-primary)', fontSize: 16 }}>
                   Absences — {selectedStudent?.firstName}
                 </h3>
                 {absences.length > 0 && (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <span className="badge badge-danger">{absences.length} absence{absences.length > 1 ? 's' : ''}</span>
+                    {missingCount > 0 && <span className="badge badge-danger">{missingCount} absence{missingCount > 1 ? 's' : ''}</span>}
+                    {lateCount > 0 && <span className="badge badge-warning">{lateCount} retard{lateCount > 1 ? 's' : ''}</span>}
                     {pendingCount > 0 && <span className="badge badge-warning">{pendingCount} en attente</span>}
                   </div>
                 )}
@@ -542,8 +639,8 @@ export default function FamilyPedagogy() {
 
           {/* ════════ DEVOIRS ════════ */}
           {tab === 'devoirs' && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+            <div className="sp-devoirs-content">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
                 <h3 style={{ margin: 0, color: 'var(--amc-primary)', fontSize: 16 }}>Devoirs — {selectedStudent?.firstName}</h3>
                 {homeworks.length > 0 && <span className="badge badge-info">{homeworks.length} message{homeworks.length > 1 ? 's' : ''}</span>}
               </div>
@@ -553,27 +650,55 @@ export default function FamilyPedagogy() {
                   <p style={{ color: '#6B7280', fontSize: 14 }}>Aucun devoir disponible pour le moment.</p>
                 </div>
               ) : (
-                [...homeworks].sort((a, b) => new Date(b.date) - new Date(a.date)).map((hw) => (
-                  <div key={hw.id} className="sp-hw-full">
-                    <div className="sp-hw-header">
-                      <div>
-                        <strong style={{ color: 'var(--amc-primary)', fontSize: 13 }}>{hw.classLabel || 'Classe'}</strong>
-                        <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>{fmtDate(hw.date, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}</div>
+                groupHomeworksByPole(homeworks).map((group) => (
+                  <div key={group.poleName} className="sp-pole-group">
+                    <div className="sp-pole-group-head">
+                      <span className="sp-pole-group-title">
+                        <span className="sp-pole-icon" style={{ background: group.meta.bg, color: group.meta.color }}>{group.meta.icon}</span>
+                        {group.poleName}
+                      </span>
+                      <span className={`badge ${group.meta.badgeClass}`}>{group.items.length} devoir{group.items.length > 1 ? 's' : ''}</span>
+                    </div>
+                    {group.items.map((hw) => (
+                      <div key={hw.id} className="sp-hw-full" style={{ borderLeft: `3px solid ${group.meta.color}` }}>
+                        <div className="sp-hw-header">
+                          <div>
+                            <strong style={{ color: 'var(--amc-primary)', fontSize: 13 }}>{hw.classLabel || 'Classe'}</strong>
+                            <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>{fmtDate(hw.date, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}</div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                            {hw.done && <span className="badge badge-success">✓ Fait</span>}
+                            {hw.attachmentUrl && (
+                              <a href={hw.attachmentUrl} download={hw.attachmentFilename || 'piece-jointe'} className="btn btn-outline btn-sm">
+                                📥 Pièce jointe
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                        <div className="sp-hw-body">
+                          <p style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 14, color: 'var(--amc-text)', lineHeight: 1.7 }}>
+                            {hw.body}
+                          </p>
+                          <label className="sp-hw-done-toggle">
+                            <input type="checkbox" checked={!!hw.done} onChange={() => handleToggleHomeworkDone(hw)} />
+                            <span>{hw.done ? `Fait le ${fmtDate(hw.completedAt, { day: '2-digit', month: 'short', year: 'numeric' })}` : 'Marquer ce devoir comme fait'}</span>
+                          </label>
+                        </div>
                       </div>
-                      {hw.attachmentUrl && (
-                        <a href={hw.attachmentUrl} download={hw.attachmentFilename || 'piece-jointe'} className="btn btn-outline btn-sm">
-                          📥 Pièce jointe
-                        </a>
-                      )}
-                    </div>
-                    <div className="sp-hw-body">
-                      <p style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 14, color: 'var(--amc-text)', lineHeight: 1.7 }}>
-                        {hw.body}
-                      </p>
-                    </div>
+                    ))}
                   </div>
                 ))
               )}
+            </div>
+          )}
+
+          {/* ════════ BULLETINS ════════ */}
+          {tab === 'bulletins' && (
+            <div>
+              <h3 style={{ margin: '0 0 14px', color: 'var(--amc-primary)', fontSize: 16 }}>
+                Bulletins — {selectedStudent?.firstName}
+              </h3>
+              <FamilyBulletinsPanel studentId={selectedStudentId} />
             </div>
           )}
 
@@ -584,6 +709,26 @@ export default function FamilyPedagogy() {
                 Suivi Coran — {selectedStudent?.firstName}
               </h3>
               <CoranFamilyPanel studentId={selectedStudentId} />
+            </div>
+          )}
+
+          {/* ════════ APPRÉCIATIONS RÉGULIÈRES ════════ */}
+          {tab === 'appreciations' && hasSoutienScolaireEnrollment && (
+            <div>
+              <h3 style={{ margin: '0 0 14px', color: 'var(--amc-primary)', fontSize: 16 }}>
+                Appréciations régulières — {selectedStudent?.firstName}
+              </h3>
+              <FamilyAppreciationsPanel studentId={selectedStudentId} />
+            </div>
+          )}
+
+          {/* ════════ NOTES SCOLAIRE ════════ */}
+          {tab === 'notesScolaires' && hasSoutienScolaireEnrollment && (
+            <div>
+              <h3 style={{ margin: '0 0 14px', color: 'var(--amc-primary)', fontSize: 16 }}>
+                Notes Scolaire — {selectedStudent?.firstName}
+              </h3>
+              <NotesScolaireFamilyPanel studentId={selectedStudentId} periodOptions={soutienScolairePeriodOptions} />
             </div>
           )}
         </>

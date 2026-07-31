@@ -2,7 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import PrivateRoute from './components/PrivateRoute';
-import { getHomeForRole } from './utils/roles';
+import { getHomeForRole, RESPONSABLE_POLE_ROLES } from './utils/roles';
 
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
@@ -40,6 +40,7 @@ import TresorierRefunds from './pages/tresorier/Refunds';
 
 import SocialDashboard    from './pages/social/Dashboard';
 import SocialBeneficiaries from './pages/social/Beneficiaries';
+import SocialBeneficiaryDetail from './pages/social/BeneficiaryDetail';
 import SocialCases         from './pages/social/Cases';
 import SocialStock         from './pages/social/Stock';
 import SocialDistributions from './pages/social/Distributions';
@@ -47,9 +48,26 @@ import SocialCollections   from './pages/social/Collections';
 import SocialPurchases     from './pages/social/Purchases';
 import SocialBudget        from './pages/social/Budget';
 import SocialEligibility   from './pages/social/Eligibility';
+import SocialOperators     from './pages/social/Operators';
+
+import VolunteersDashboard from './pages/volunteers/Dashboard';
+import VolunteersManage    from './pages/volunteers/Manage';
+import VolunteerGroups     from './pages/volunteers/Groups';
+import VolunteerEvents     from './pages/volunteers/Events';
+import VolunteerProfile    from './pages/volunteers/Profile';
+import VolunteerCard       from './pages/volunteers/Card';
+
+import HrDashboard   from './pages/hr/Dashboard';
+import HrEmployees   from './pages/hr/Employees';
+import HrPayslips    from './pages/hr/Payslips';
+import HrProfile     from './pages/hr/Profile';
+import HrMyLeaves    from './pages/hr/MyLeaves';
+import HrLeaveRequests from './pages/hr/LeaveRequests';
+import MyRoles from './pages/MyRoles';
 
 import ProfesseurDashboard from './pages/professeur/Dashboard';
 import SuiviPedagogique from './pages/professeur/SuiviPedagogique';
+import ResponsablePoleSuiviPedagogique from './pages/responsable/SuiviPedagogique';
 import ProfesseurProfile from './pages/professeur/Profile';
 
 import FamilyDashboard from './pages/family/Dashboard';
@@ -61,11 +79,18 @@ import FamilyPedagogy from './pages/family/SuiviPedagogique';
 import FamilyChat from './pages/family/Chat';
 
 // Rôles ayant accès à l'espace admin
-const ADMIN_ROLES = ['ADMIN', 'SUPER_ADMIN', 'RESPONSABLE_POLE_CORAN', 'RESPONSABLE_POLE_ARABE', 'RESPONSABLE_POLE_SOUTIEN_SCO', 'RESPONSABLE_POLE_SCIENCE_IS'];
-const ADMIN_ONLY  = ['ADMIN', 'SUPER_ADMIN'];
+const ADMIN_ROLES = ['ADMIN', 'RESPONSABLE_POLE_CORAN', 'RESPONSABLE_POLE_ARABE', 'RESPONSABLE_POLE_SOUTIEN_SCO', 'RESPONSABLE_POLE_SCIENCE_IS'];
+const ADMIN_ONLY  = ['ADMIN'];
 // Pôle Social
 const SOCIAL_ROLES        = ['RESPONSABLE_POLE_SOCIAL', 'OPERATEUR_SOCIAL', 'SUPER_ADMIN'];
 const SOCIAL_MANAGE_ROLES = ['RESPONSABLE_POLE_SOCIAL', 'SUPER_ADMIN'];
+// Pôle Bénévoles
+const VOLUNTEERS_ROLES        = ['RESPONSABLE_POLE_BENEVOLES', 'BENEVOLE', 'SUPER_ADMIN'];
+const VOLUNTEERS_MANAGE_ROLES = ['RESPONSABLE_POLE_BENEVOLES', 'SUPER_ADMIN'];
+const VOLUNTEERS_SELF_ROLES   = ['BENEVOLE', 'SUPER_ADMIN'];
+// Ressources Humaines
+const HR_MANAGE_ROLES = ['RESPONSABLE_RH', 'SUPER_ADMIN'];
+const HR_SELF_ROLES   = ['SALARIE', 'SUPER_ADMIN'];
 
 function App() {
   const { isAuthenticated, user } = useAuth();
@@ -82,6 +107,7 @@ function App() {
       <Route path="/reglement-interieur" element={<ReglementInterieur />} />
       <Route path="/auth/google/callback" element={<GoogleCallback />} />
       <Route path="/super-admin" element={<PrivateRoute roles={['SUPER_ADMIN']}><Layout><SuperAdminDashboard /></Layout></PrivateRoute>} />
+      <Route path="/mes-roles" element={<PrivateRoute><Layout><MyRoles /></Layout></PrivateRoute>} />
 
       <Route path="/admin" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><EnrollmentDashboard /></Layout></PrivateRoute>} />
       <Route path="/admin/users" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminUsers /></Layout></PrivateRoute>} />
@@ -118,6 +144,7 @@ function App() {
       {/* ── Pôle Social ── */}
       <Route path="/social"               element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialDashboard /></Layout></PrivateRoute>} />
       <Route path="/social/beneficiaries" element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialBeneficiaries /></Layout></PrivateRoute>} />
+      <Route path="/social/beneficiaries/:id" element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialBeneficiaryDetail /></Layout></PrivateRoute>} />
       <Route path="/social/cases"         element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialCases /></Layout></PrivateRoute>} />
       <Route path="/social/stock"         element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialStock /></Layout></PrivateRoute>} />
       <Route path="/social/distributions" element={<PrivateRoute roles={SOCIAL_ROLES}><Layout><SocialDistributions /></Layout></PrivateRoute>} />
@@ -125,9 +152,27 @@ function App() {
       <Route path="/social/eligibility"   element={<PrivateRoute roles={SOCIAL_MANAGE_ROLES}><Layout><SocialEligibility /></Layout></PrivateRoute>} />
       <Route path="/social/purchases"     element={<PrivateRoute roles={SOCIAL_MANAGE_ROLES}><Layout><SocialPurchases /></Layout></PrivateRoute>} />
       <Route path="/social/budget"        element={<PrivateRoute roles={SOCIAL_MANAGE_ROLES}><Layout><SocialBudget /></Layout></PrivateRoute>} />
+      <Route path="/social/operators"     element={<PrivateRoute roles={SOCIAL_MANAGE_ROLES}><Layout><SocialOperators /></Layout></PrivateRoute>} />
+
+      {/* ── Pôle Bénévoles ── */}
+      <Route path="/volunteers"         element={<PrivateRoute roles={VOLUNTEERS_MANAGE_ROLES}><Layout><VolunteersDashboard /></Layout></PrivateRoute>} />
+      <Route path="/volunteers/manage"  element={<PrivateRoute roles={VOLUNTEERS_MANAGE_ROLES}><Layout><VolunteersManage /></Layout></PrivateRoute>} />
+      <Route path="/volunteers/groups"  element={<PrivateRoute roles={VOLUNTEERS_MANAGE_ROLES}><Layout><VolunteerGroups /></Layout></PrivateRoute>} />
+      <Route path="/volunteers/events"  element={<PrivateRoute roles={VOLUNTEERS_ROLES}><Layout><VolunteerEvents /></Layout></PrivateRoute>} />
+      <Route path="/volunteers/profile" element={<PrivateRoute roles={VOLUNTEERS_SELF_ROLES}><Layout><VolunteerProfile /></Layout></PrivateRoute>} />
+      <Route path="/volunteers/card"    element={<PrivateRoute roles={VOLUNTEERS_SELF_ROLES}><Layout><VolunteerCard /></Layout></PrivateRoute>} />
+
+      {/* ── Ressources Humaines ── */}
+      <Route path="/hr"           element={<PrivateRoute roles={HR_MANAGE_ROLES}><Layout><HrDashboard /></Layout></PrivateRoute>} />
+      <Route path="/hr/employees" element={<PrivateRoute roles={HR_MANAGE_ROLES}><Layout><HrEmployees /></Layout></PrivateRoute>} />
+      <Route path="/hr/payslips"  element={<PrivateRoute roles={HR_SELF_ROLES}><Layout><HrPayslips /></Layout></PrivateRoute>} />
+      <Route path="/hr/profile"   element={<PrivateRoute roles={HR_SELF_ROLES}><Layout><HrProfile /></Layout></PrivateRoute>} />
+      <Route path="/hr/leaves"    element={<PrivateRoute roles={HR_SELF_ROLES}><Layout><HrMyLeaves /></Layout></PrivateRoute>} />
+      <Route path="/hr/leave-requests" element={<PrivateRoute roles={HR_MANAGE_ROLES}><Layout><HrLeaveRequests /></Layout></PrivateRoute>} />
 
       <Route path="/professeur" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurDashboard /></Layout></PrivateRoute>} />
       <Route path="/suivi-pedagogique" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><SuiviPedagogique /></Layout></PrivateRoute>} />
+      <Route path="/responsable/suivi-pedagogique" element={<PrivateRoute roles={RESPONSABLE_POLE_ROLES}><Layout><ResponsablePoleSuiviPedagogique /></Layout></PrivateRoute>} />
       <Route path="/professeur/profil" element={<PrivateRoute roles={['PROFESSEUR']}><Layout><ProfesseurProfile /></Layout></PrivateRoute>} />
 
       <Route path="/famille" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyDashboard /></Layout></PrivateRoute>} />

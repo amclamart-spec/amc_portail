@@ -1,7 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
-const CONFIRMED_ENROLLMENT_STATUS = 'CONFIRMED';
+// Le suivi pédagogique (absences, notes, devoirs) ne doit être visible en espace
+// famille que pour les inscriptions confirmées administrativement — une inscription
+// PENDING n'est pas encore validée et ne doit rien afficher côté famille.
+const FAMILY_VISIBLE_ENROLLMENT_STATUSES = ['CONFIRMED'];
 
 function formatClassLabel(cls) {
   if (!cls) return null;
@@ -18,7 +21,7 @@ async function fetchFamilyStudents({ familyUserId }) {
     where: { familyId: family.id },
     include: {
       enrollments: {
-        where: { status: CONFIRMED_ENROLLMENT_STATUS },
+        where: { status: { in: FAMILY_VISIBLE_ENROLLMENT_STATUSES } },
         include: {
           class: {
             include: {
@@ -33,12 +36,12 @@ async function fetchFamilyStudents({ familyUserId }) {
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
   });
 
-  // Filtrer pour garder seulement les élèves qui ont au moins une inscription confirmée
-  const studentsWithConfirmedEnrollments = students.filter(
+  // Filtrer pour garder seulement les élèves qui ont au moins une inscription active
+  const studentsWithVisibleEnrollments = students.filter(
     (student) => student.enrollments.length > 0
   );
 
-  return studentsWithConfirmedEnrollments.map((student) => ({
+  return studentsWithVisibleEnrollments.map((student) => ({
     id: student.id,
     firstName: student.firstName,
     lastName: student.lastName,
@@ -48,6 +51,7 @@ async function fetchFamilyStudents({ familyUserId }) {
       status: enrollment.status,
       classId: enrollment.classId,
       classLabel: formatClassLabel(enrollment.class),
+      period: enrollment.class?.level?.pole?.period || null,
       schoolYear: enrollment.schoolYear ? {
         id: enrollment.schoolYear.id,
         label: enrollment.schoolYear.label,
@@ -64,7 +68,7 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
     },
     include: {
       enrollments: {
-        where: { status: CONFIRMED_ENROLLMENT_STATUS },
+        where: { status: { in: FAMILY_VISIBLE_ENROLLMENT_STATUSES } },
       },
     },
   });
@@ -76,7 +80,7 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
   const absences = await prisma.evaluation.findMany({
     where: {
       studentId,
-      status: 'missing',
+      status: { in: ['missing', 'late'] },
       lesson: {
         classId: { in: classIds },
       },
@@ -139,7 +143,7 @@ async function submitFamilyJustification({ familyUserId, evaluationId, comment }
     err.statusCode = 404;
     throw err;
   }
-  if (evaluation.status !== 'missing') {
+  if (evaluation.status !== 'missing' && evaluation.status !== 'late') {
     const err = new Error('Ce relevé n\'est pas une absence');
     err.statusCode = 400;
     throw err;
@@ -162,7 +166,7 @@ async function fetchStudentHomework({ familyUserId, studentId }) {
     },
     include: {
       enrollments: {
-        where: { status: CONFIRMED_ENROLLMENT_STATUS },
+        where: { status: { in: FAMILY_VISIBLE_ENROLLMENT_STATUSES } },
       },
     },
   });
@@ -179,6 +183,9 @@ async function fetchStudentHomework({ familyUserId, studentId }) {
           level: { include: { pole: true } },
         },
       },
+      completions: {
+        where: { studentId },
+      },
     },
     orderBy: { date: 'desc' },
   });
@@ -190,7 +197,45 @@ async function fetchStudentHomework({ familyUserId, studentId }) {
     attachmentUrl: homework.attachmentUrl,
     attachmentFilename: homework.attachmentFilename,
     classLabel: formatClassLabel(homework.class),
+    poleName: homework.class?.level?.pole?.name || null,
+    done: homework.completions.length > 0,
+    completedAt: homework.completions[0]?.completedAt || null,
   }));
+}
+
+async function setHomeworkCompletion({ familyUserId, studentId, homeworkId, done }) {
+  const student = await prisma.student.findFirst({
+    where: {
+      id: studentId,
+      family: { userId: familyUserId },
+    },
+    include: {
+      enrollments: {
+        where: { status: { in: FAMILY_VISIBLE_ENROLLMENT_STATUSES } },
+      },
+    },
+  });
+  if (!student) throw new Error('Élève introuvable pour cette famille');
+
+  const classIds = student.enrollments.map((enrollment) => enrollment.classId);
+  const homework = await prisma.homeworkMessage.findUnique({ where: { id: homeworkId } });
+  if (!homework || !classIds.includes(homework.classId)) {
+    const err = new Error('Devoir introuvable');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (done) {
+    await prisma.homeworkCompletion.upsert({
+      where: { homeworkId_studentId: { homeworkId, studentId } },
+      create: { homeworkId, studentId },
+      update: {},
+    });
+  } else {
+    await prisma.homeworkCompletion.deleteMany({ where: { homeworkId, studentId } });
+  }
+
+  return { done };
 }
 
 async function fetchStudentNotes({ familyUserId, studentId }) {
@@ -201,7 +246,7 @@ async function fetchStudentNotes({ familyUserId, studentId }) {
     },
     include: {
       enrollments: {
-        where: { status: CONFIRMED_ENROLLMENT_STATUS },
+        where: { status: { in: FAMILY_VISIBLE_ENROLLMENT_STATUSES } },
       },
     },
   });
@@ -210,12 +255,16 @@ async function fetchStudentNotes({ familyUserId, studentId }) {
   const classIds = student.enrollments.map((enrollment) => enrollment.classId);
   if (classIds.length === 0) return [];
 
-  // Récupérer uniquement les notes/appréciations (exclure les absences et les évaluations vides)
-  const allEvaluations = await prisma.evaluation.findMany({
+  // `grade` n'est jamais null (colonne Float non-nullable, défaut 0) : un ancien filtre
+  // sur `grade !== null` ne pouvait donc rien exclure. Le seul signal fiable qu'une
+  // évaluation est une vraie note saisie par le professeur (et pas une simple ligne
+  // créée par la prise de présence, ex. leçon "Absences <date>") est `submitted: true`.
+  const evaluations = await prisma.evaluation.findMany({
     where: {
       studentId,
+      submitted: true,
       NOT: {
-        status: 'missing',
+        status: { in: ['missing', 'late'] },
       },
       lesson: {
         classId: { in: classIds },
@@ -235,11 +284,6 @@ async function fetchStudentNotes({ familyUserId, studentId }) {
     orderBy: [{ lesson: { date: 'desc' } }],
   });
 
-  // Filtrer au niveau de l'application pour garder seulement les évaluations avec une note ou une appréciation
-  const evaluations = allEvaluations.filter(
-    (evaluation) => evaluation.grade !== null || evaluation.appreciation !== null
-  );
-
   return evaluations.map((evaluation) => ({
     id: evaluation.id,
     grade: evaluation.grade,
@@ -257,4 +301,5 @@ module.exports = {
   fetchStudentHomework,
   fetchStudentNotes,
   submitFamilyJustification,
+  setHomeworkCompletion,
 };

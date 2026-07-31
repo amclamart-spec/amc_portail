@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
-import { FiPlus, FiX } from 'react-icons/fi';
+import { FiPlus, FiX, FiUpload, FiFile } from 'react-icons/fi';
+
+const BACKEND_ORIGIN = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/api$/, '')
+  : (import.meta.env.DEV ? 'http://localhost:4000' : '');
+
+const receiptHref = (url) => (url?.startsWith('http') ? url : `${BACKEND_ORIGIN}${url}`);
 
 function fmtDate(d) { return d ? new Date(d).toLocaleDateString('fr-FR') : '—'; }
 
@@ -19,7 +25,9 @@ export default function SocialPurchases() {
   const [supForm, setSupForm] = useState({ name: '', contact: '', phone: '', email: '', address: '' });
   const [form, setForm] = useState({ supplierId: '', budgetId: '', purchasedAt: new Date().toISOString().slice(0, 10), description: '', observations: '' });
   const [lines, setLines] = useState([{ productId: '', quantity: '', unitPrice: '', unit: '' }]);
+  const [receiptFile, setReceiptFile] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [uploadingReceiptId, setUploadingReceiptId] = useState('');
 
   const load = async (p = page) => {
     setLoading(true);
@@ -70,18 +78,44 @@ export default function SocialPurchases() {
     finally { setSaving(false); }
   };
 
+  const uploadReceiptForPurchase = async (purchaseId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    setUploadingReceiptId(purchaseId);
+    try {
+      await api.post(`/social/purchases/${purchaseId}/receipt`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Erreur lors de l'envoi du ticket de caisse");
+    } finally {
+      setUploadingReceiptId('');
+    }
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
     const validLines = lines.filter((l) => l.productId && l.quantity && l.unitPrice);
     if (!validLines.length) { toast.error('Au moins une ligne valide requise'); return; }
     setSaving(true);
     try {
-      await api.post('/social/purchases', { ...form, lines: validLines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), unit: l.unit })) });
+      const { data } = await api.post('/social/purchases', { ...form, lines: validLines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), unit: l.unit })) });
+      if (receiptFile && data.purchase?.id) {
+        await uploadReceiptForPurchase(data.purchase.id, receiptFile);
+      }
       toast.success('Achat validé et stock mis à jour');
       setModal(false);
+      setReceiptFile(null);
       load();
     } catch (err) { toast.error(err.response?.data?.error || 'Erreur'); }
     finally { setSaving(false); }
+  };
+
+  const handleReceiptRowUpload = (purchaseId) => async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await uploadReceiptForPurchase(purchaseId, file);
+    toast.success('Ticket de caisse ajouté');
+    load(page);
   };
 
   return (
@@ -108,10 +142,10 @@ export default function SocialPurchases() {
         {loading ? <p style={{ padding: 24, textAlign: 'center', color: '#6B7280' }}>Chargement…</p> : (
           <div className="table-container">
             <table>
-              <thead><tr><th>Date</th><th>Référence</th><th>Fournisseur</th><th>Description</th><th>Montant</th><th>Statut</th><th>Opérateur</th></tr></thead>
+              <thead><tr><th>Date</th><th>Référence</th><th>Fournisseur</th><th>Description</th><th>Montant</th><th>Statut</th><th>Opérateur</th><th>Ticket de caisse</th></tr></thead>
               <tbody>
                 {purchases.length === 0 ? (
-                  <tr><td colSpan="7" style={{ textAlign: 'center', padding: 24, color: '#6B7280' }}>Aucun achat</td></tr>
+                  <tr><td colSpan="8" style={{ textAlign: 'center', padding: 24, color: '#6B7280' }}>Aucun achat</td></tr>
                 ) : purchases.map((p) => (
                   <tr key={p.id}>
                     <td>{fmtDate(p.purchasedAt)}</td>
@@ -121,6 +155,19 @@ export default function SocialPurchases() {
                     <td style={{ fontWeight: 700 }}>{Number(p.totalAmount).toFixed(2)} €</td>
                     <td><span className={`badge ${p.status === 'VALIDATED' ? 'badge-success' : 'badge-gray'}`}>{p.status === 'VALIDATED' ? 'Validé' : p.status}</span></td>
                     <td>{p.user?.firstName} {p.user?.lastName}</td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {p.receiptUrl && (
+                          <a href={receiptHref(p.receiptUrl)} target="_blank" rel="noreferrer" title={p.receiptFileName || 'Voir le ticket'} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--amc-primary)', fontWeight: 600, fontSize: 13 }}>
+                            <FiFile size={13} /> Voir
+                          </a>
+                        )}
+                        <label className="btn btn-sm btn-outline" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <FiUpload size={11} /> {uploadingReceiptId === p.id ? 'Envoi…' : (p.receiptUrl ? 'Remplacer' : 'Ajouter')}
+                          <input type="file" accept="application/pdf,image/jpeg,image/png" style={{ display: 'none' }} onChange={handleReceiptRowUpload(p.id)} disabled={uploadingReceiptId === p.id} />
+                        </label>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -186,6 +233,10 @@ export default function SocialPurchases() {
                     {budget && <option value={budget.id}>Budget {budget.year} — restant: {Number(budget.remaining || 0).toFixed(2)} €</option>}
                   </select>
                 </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Ticket de caisse (PDF ou image)</label>
+                  <input className="form-control" type="file" accept="application/pdf,image/jpeg,image/png" onChange={(e) => setReceiptFile(e.target.files?.[0] || null)} />
+                </div>
               </div>
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -207,7 +258,7 @@ export default function SocialPurchases() {
                 <div style={{ textAlign: 'right', fontWeight: 700, fontSize: 15, marginTop: 8 }}>Total : {lineTotal.toFixed(2)} €</div>
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-outline" onClick={() => setModal(false)}>Annuler</button>
+                <button type="button" className="btn btn-outline" onClick={() => { setModal(false); setReceiptFile(null); }}>Annuler</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Validation…' : 'Valider l\'achat'}</button>
               </div>
             </form>

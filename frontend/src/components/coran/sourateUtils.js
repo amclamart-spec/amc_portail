@@ -51,20 +51,24 @@ export function isInBucket(date, bucket) {
   return time >= bucket.start.getTime() && time < bucket.end.getTime() + 86400000;
 }
 
+// Moyenne d'un total sur le nombre de semaines écoulées depuis la première date
+// fournie jusqu'à aujourd'hui (minimum 1 semaine) — partagé entre les 3 périmètres.
+function averagePerWeek(dates, total) {
+  if (dates.length === 0) return 0;
+  const earliest = Math.min(...dates);
+  const weeksSpan = Math.max(1, Math.ceil((Date.now() - earliest) / (7 * 86400000)) + 1);
+  return total / weeksSpan;
+}
+
 // Indicateurs d'avancement partagés entre le panneau professeur (KPI par onglet)
 // et le bulletin Coran (3 périmètres) — une seule formule, pas de duplication.
 export function computeCoranKpis({ repetitions, revisions, lectures }) {
   const pagesApprises = repetitions.length;
   const mastered = repetitions.filter((r) => r.compteur >= 30).length;
+  const avgApprentissagePerWeek = averagePerWeek(repetitions.map((r) => new Date(r.createdAt).getTime()), pagesApprises);
 
   const totalRevisionPages = revisions.reduce((sum, r) => sum + (r.pageFin - r.pageDebut + 1), 0);
-  let avgRevisionPerWeek = 0;
-  if (revisions.length > 0) {
-    const dates = revisions.map((r) => new Date(r.date).getTime());
-    const earliest = Math.min(...dates);
-    const weeksSpan = Math.max(1, Math.ceil((Date.now() - earliest) / (7 * 86400000)) + 1);
-    avgRevisionPerWeek = totalRevisionPages / weeksSpan;
-  }
+  const avgRevisionPerWeek = averagePerWeek(revisions.map((r) => new Date(r.date).getTime()), totalRevisionPages);
 
   const recitedPages = new Set();
   lectures.forEach((l) => {
@@ -77,6 +81,7 @@ export function computeCoranKpis({ repetitions, revisions, lectures }) {
     pagesApprises,
     pctApprises: Math.round((pagesApprises / MAX_MUSHAF_PAGE) * 100),
     mastered,
+    avgApprentissagePerWeek,
     totalRevisions: revisions.length,
     totalRevisionPages,
     avgRevisionPerWeek,

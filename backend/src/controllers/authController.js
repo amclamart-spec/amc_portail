@@ -4,7 +4,7 @@ const passport = require('passport');
 const { v4: uuidv4 } = require('uuid');
 const { PrismaClient } = require('@prisma/client');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
-const { sendVerificationEmail, sendResetPasswordEmail } = require('../services/emailService');
+const { sendVerificationEmail, sendResetPasswordEmail, sendRoleRequestApprovedEmail } = require('../services/emailService');
 const { sendPasswordResetSms } = require('../services/smsService');
 const config = require('../config');
 
@@ -72,7 +72,7 @@ async function register(req, res) {
     const passwordHash = await bcrypt.hash(password, 12);
     const emailVerifyToken = uuidv4();
 
-    const userRole = ['FAMILLE', 'PROFESSEUR', 'ADMIN', 'TRESORIER'].includes(role) ? role : 'FAMILLE';
+    const userRole = ['FAMILLE', 'PROFESSEUR', 'TRESORIER', 'BENEVOLE'].includes(role) ? role : 'FAMILLE';
     const validationStatus = userRole === 'FAMILLE' ? 'APPROVED' : 'PENDING';
     const user = await prisma.user.create({
       data: {
@@ -99,7 +99,7 @@ async function register(req, res) {
     const responsePayload = {
       message: userRole === 'FAMILLE'
         ? 'Inscription réussie ! Votre compte famille est activé automatiquement. Vérifiez votre email pour confirmer votre adresse.'
-        : 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes professeur, administrateur et trésorier doivent être validés par un administrateur.',
+        : 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes professeur, administrateur, trésorier et bénévole doivent être validés par un administrateur.',
       user: {
         id: user.id,
         email: user.email,
@@ -128,7 +128,7 @@ async function login(req, res) {
   try {
     const { email, password } = req.body;
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email }, include: { additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } } } });
     if (!user) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
@@ -166,6 +166,10 @@ async function login(req, res) {
       return res.status(403).json({ error: "Compte en attente d'activation par un administrateur", validationStatus: user.validationStatus });
     }
 
+    if (user.isActive === false) {
+      return res.status(403).json({ error: 'Ce compte a été désactivé. Contactez un administrateur.', code: 'ACCOUNT_DISABLED' });
+    }
+
     let accessToken;
     let refreshToken;
     try {
@@ -184,6 +188,7 @@ async function login(req, res) {
         firstName: user.firstName,
         lastName: user.lastName,
         role: user.role,
+        roles: [user.role, ...user.additionalRoles.map((r) => r.role)],
         validationStatus: user.validationStatus,
         emailVerified: user.emailVerified,
       },
@@ -347,12 +352,15 @@ async function getMe(req, res) {
         provider: true,
         createdAt: true,
         lastLogin: true,
+        additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } },
         family: {
           select: { id: true, familyName: true },
         },
       },
     });
-    res.json({ user });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    const { additionalRoles, ...rest } = user;
+    res.json({ user: { ...rest, roles: [user.role, ...additionalRoles.map((r) => r.role)] } });
   } catch (error) {
     console.error('Erreur getMe:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -542,6 +550,78 @@ async function logout(req, res) {
   }
 }
 
+// ─── GESTION DE MES RÔLES (self-service) ───────────────────────────────────────
+// Un compte (identifié par son email) peut cumuler plusieurs rôles en parallèle.
+// Depuis son espace (rubrique "Mes rôles"), l'utilisateur déjà authentifié peut demander
+// l'ajout d'un rôle supplémentaire à son propre compte — pas besoin de reprouver son identité,
+// il est déjà connecté. Le rôle Famille est ajouté immédiatement (comme à l'inscription initiale) ;
+// Professeur et Bénévole restent PENDING jusqu'à validation par le responsable du pôle concerné,
+// sans jamais bloquer la connexion avec les rôles déjà approuvés du compte.
+const SELF_REQUESTABLE_ROLES = ['FAMILLE', 'PROFESSEUR', 'BENEVOLE', 'OPERATEUR_SOCIAL'];
+const SELF_REQUESTABLE_ROLE_LABEL = { FAMILLE: 'Famille', PROFESSEUR: 'Professeur', BENEVOLE: 'Bénévole', OPERATEUR_SOCIAL: 'Opérateur Social' };
+
+async function getMyRoleRequests(req, res) {
+  try {
+    const roles = await prisma.userRole.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' } });
+    res.json({
+      primaryRole: req.user.role,
+      roles: roles.map((r) => ({
+        role: r.role,
+        status: r.status,
+        createdAt: r.createdAt,
+        decidedAt: r.decidedAt,
+        rejectionReason: r.rejectionReason,
+      })),
+      requestableRoles: SELF_REQUESTABLE_ROLES.filter((r) => r !== req.user.role),
+    });
+  } catch (error) {
+    console.error('Erreur getMyRoleRequests:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function requestRole(req, res) {
+  try {
+    const { role } = req.body;
+    if (!SELF_REQUESTABLE_ROLES.includes(role)) {
+      return res.status(400).json({ error: 'Ce rôle ne peut pas être demandé depuis votre espace' });
+    }
+    if (req.user.role === role) {
+      return res.status(409).json({ error: 'Vous avez déjà ce rôle' });
+    }
+
+    const existing = await prisma.userRole.findUnique({ where: { userId_role: { userId: req.user.id, role } } });
+    if (existing?.status === 'PENDING') {
+      return res.status(409).json({ error: 'Une demande pour ce rôle est déjà en attente de validation' });
+    }
+    if (existing?.status === 'APPROVED') {
+      return res.status(409).json({ error: 'Vous avez déjà ce rôle' });
+    }
+
+    const status = role === 'FAMILLE' ? 'APPROVED' : 'PENDING';
+    const data = { status, decidedBy: null, decidedAt: null, rejectionReason: null };
+    const userRole = existing
+      ? await prisma.userRole.update({ where: { id: existing.id }, data })
+      : await prisma.userRole.create({ data: { userId: req.user.id, role, ...data } });
+
+    if (status === 'APPROVED') {
+      const me = await prisma.user.findUnique({ where: { id: req.user.id } });
+      try { await sendRoleRequestApprovedEmail(me, SELF_REQUESTABLE_ROLE_LABEL[role]); } catch (e) { console.error('Erreur envoi email rôle ajouté:', e); }
+    }
+
+    res.status(201).json({
+      role: userRole.role,
+      status: userRole.status,
+      message: status === 'APPROVED'
+        ? 'Rôle ajouté à votre compte.'
+        : 'Votre demande a été envoyée au responsable concerné pour validation.',
+    });
+  } catch (error) {
+    console.error('Erreur requestRole:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   register,
   login,
@@ -556,4 +636,6 @@ module.exports = {
   getProfile,
   updateProfile,
   logout,
+  getMyRoleRequests,
+  requestRole,
 };

@@ -16,6 +16,12 @@ const PERMISSIONS = {
   SOCIAL_MANAGE: 'social:manage',       // accès complet (RESPONSABLE_POLE_SOCIAL + SUPER_ADMIN)
   SOCIAL_OPERATE: 'social:operate',     // accès opérationnel (OPERATEUR_SOCIAL)
   SOCIAL_BUDGET: 'social:budget',       // budget + achats (RESPONSABLE_POLE_SOCIAL uniquement)
+  // Pôle Bénévoles
+  VOLUNTEERS_MANAGE: 'volunteers:manage', // gestion complète (RESPONSABLE_POLE_BENEVOLES + SUPER_ADMIN)
+  VOLUNTEERS_SELF: 'volunteers:self',     // espace personnel (BENEVOLE)
+  // Ressources Humaines
+  HR_MANAGE: 'hr:manage', // gestion complète (RESPONSABLE_RH + SUPER_ADMIN)
+  HR_SELF: 'hr:self',     // espace personnel (SALARIE)
 };
 
 const ROLE_PERMISSIONS = {
@@ -51,6 +57,18 @@ const ROLE_PERMISSIONS = {
   ],
   OPERATEUR_SOCIAL: [
     PERMISSIONS.SOCIAL_OPERATE,
+  ],
+  RESPONSABLE_POLE_BENEVOLES: [
+    PERMISSIONS.VOLUNTEERS_MANAGE,
+  ],
+  BENEVOLE: [
+    PERMISSIONS.VOLUNTEERS_SELF,
+  ],
+  RESPONSABLE_RH: [
+    PERMISSIONS.HR_MANAGE,
+  ],
+  SALARIE: [
+    PERMISSIONS.HR_SELF,
   ],
 };
 

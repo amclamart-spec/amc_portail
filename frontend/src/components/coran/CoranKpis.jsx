@@ -18,6 +18,18 @@ function formatMinutes(totalMinutes) {
   return `${hours} h ${minutes ? `${minutes} min` : ''}`.trim();
 }
 
+const RADIAN = Math.PI / 180;
+function renderInsidePieLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent, value }) {
+  const radius = innerRadius + (outerRadius - innerRadius) / 2;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  return (
+    <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700}>
+      {`${value} (${Math.round(percent * 100)}%)`}
+    </text>
+  );
+}
+
 function KpiCard({ icon, iconClass, value, label }) {
   return (
     <div className="stat-card">
@@ -62,21 +74,24 @@ export function ApprentissageKpis({ repetitions }) {
       </div>
       <div className="cor-kpi-chart-card">
         <div className="cor-kpi-chart-title">Répartition des pages par niveau de mémorisation</div>
-        <ResponsiveContainer width="100%" height={220}>
-          <PieChart>
+        <ResponsiveContainer width="100%" height={260}>
+          <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
             <Pie
               data={pieData}
               dataKey="value"
               nameKey="name"
-              innerRadius={50}
-              outerRadius={80}
+              cx="50%"
+              cy="45%"
+              innerRadius={55}
+              outerRadius={85}
               paddingAngle={pieData.length > 1 ? 2 : 0}
-              label={({ percent, value }) => `${value} (${Math.round(percent * 100)}%)`}
+              label={renderInsidePieLabel}
+              labelLine={false}
             >
               {pieData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
             </Pie>
             <Tooltip formatter={(value, name) => [`${value} page${value > 1 ? 's' : ''}`, name]} />
-            <Legend verticalAlign="bottom" height={36} />
+            <Legend verticalAlign="bottom" height={48} wrapperStyle={{ fontSize: 12, lineHeight: '18px' }} />
           </PieChart>
         </ResponsiveContainer>
       </div>

@@ -1,9 +1,10 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const { PrismaClient, Prisma } = require('@prisma/client');
 const { v4: uuidv4 } = require('uuid');
-const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail } = require('../services/emailService');
+const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendAccountInvitationEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail, sendRoleRequestApprovedEmail, sendRoleRequestRejectedEmail } = require('../services/emailService');
 const { finalizeStripePayment, cancelStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { saveBase64File } = require('../utils/fileUtils');
@@ -178,20 +179,67 @@ async function getPendingUsers(req, res) {
 /**
  * GET /api/admin/users
  */
+const ADMIN_VISIBLE_ROLES = ['FAMILLE', 'PROFESSEUR', 'TRESORIER'];
+
+// Chaque responsable de pôle pédagogique ne gère que les Familles ayant au moins une
+// inscription dans son pôle, et les Professeurs affectés à son pôle.
+const ROLE_POLE_NAME = {
+  RESPONSABLE_POLE_CORAN: 'Coran',
+  RESPONSABLE_POLE_ARABE: 'Arabe',
+  RESPONSABLE_POLE_SOUTIEN_SCO: 'Soutien scolaire',
+  RESPONSABLE_POLE_SCIENCE_IS: 'Sciences islamiques',
+};
+
+async function getPoleIdForRole(role) {
+  const poleName = ROLE_POLE_NAME[role];
+  if (!poleName) return null;
+  const pole = await prisma.pole.findFirst({ where: { name: poleName } });
+  return pole ? pole.id : null;
+}
+
+function poleScopeWhere(poleId) {
+  return {
+    OR: [
+      { role: 'FAMILLE', family: { students: { some: { enrollments: { some: { class: { level: { poleId } } } } } } } },
+      // Un professeur non encore rattaché à un pôle (nouvelle inscription en attente, ou compte
+      // historique jamais rattaché) reste visible par tous les responsables tant qu'il n'est pas
+      // affecté — le premier à le valider/l'affecter le rattache à son pôle.
+      {
+        AND: [
+          { role: 'PROFESSEUR' },
+          { OR: [{ teacherProfile: { poleId } }, { teacherProfile: null }, { teacherProfile: { poleId: null } }] },
+        ],
+      },
+    ],
+  };
+}
+
+async function isUserInPoleScope(userId, poleId) {
+  const user = await prisma.user.findFirst({ where: { id: userId, ...poleScopeWhere(poleId) }, select: { id: true } });
+  return !!user;
+}
+
 async function getAllUsers(req, res) {
   try {
     const { status, role, page = 1, limit = 20 } = req.query;
-    const where = {};
-    if (status) where.validationStatus = status;
-    if (role) where.role = role;
+    const poleId = await getPoleIdForRole(req.user.role);
+    const isPoleScoped = !!poleId;
+    const visibleRoles = isPoleScoped ? ['FAMILLE', 'PROFESSEUR'] : ADMIN_VISIBLE_ROLES;
+
+    const conditions = [isPoleScoped ? poleScopeWhere(poleId) : { role: { in: visibleRoles } }];
+    if (status) conditions.push({ validationStatus: status });
+    if (role && visibleRoles.includes(role)) conditions.push({ role });
     const name = String(req.query.name || '').trim();
     if (name) {
-      where.OR = [
-        { firstName: { contains: name, mode: 'insensitive' } },
-        { lastName: { contains: name, mode: 'insensitive' } },
-        { email: { contains: name, mode: 'insensitive' } },
-      ];
+      conditions.push({
+        OR: [
+          { firstName: { contains: name, mode: 'insensitive' } },
+          { lastName: { contains: name, mode: 'insensitive' } },
+          { email: { contains: name, mode: 'insensitive' } },
+        ],
+      });
     }
+    const where = { AND: conditions };
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -204,6 +252,7 @@ async function getAllUsers(req, res) {
           phone: true,
           role: true,
           validationStatus: true,
+          isActive: true,
           emailVerified: true,
           createdAt: true,
           lastLogin: true,
@@ -217,7 +266,7 @@ async function getAllUsers(req, res) {
       prisma.user.count({ where }),
     ]);
 
-    res.json({ users, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
+    res.json({ users, total, page: parseInt(page, 10), limit: parseInt(limit, 10), poleScoped: isPoleScoped, availableRoles: visibleRoles });
   } catch (error) {
     console.error('Erreur getAllUsers:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -229,6 +278,14 @@ async function getAllUsers(req, res) {
  */
 async function approveUser(req, res) {
   try {
+    const poleId = await getPoleIdForRole(req.user.role);
+    if (poleId) {
+      const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+      if (!target || target.role !== 'PROFESSEUR') {
+        return res.status(403).json({ error: 'Vous ne pouvez valider que des comptes Professeur de votre pôle' });
+      }
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.update({
         where: { id: req.params.id },
@@ -246,8 +303,11 @@ async function approveUser(req, res) {
               lastName: user.lastName,
               email: user.email,
               phone: user.phone,
+              poleId: poleId || null,
             },
           });
+        } else if (poleId && !teacher.poleId) {
+          teacher = await tx.teacher.update({ where: { id: teacher.id }, data: { poleId } });
         }
       }
 
@@ -275,6 +335,14 @@ async function approveUser(req, res) {
 async function rejectUser(req, res) {
   try {
     const { reason } = req.body;
+    const poleId = await getPoleIdForRole(req.user.role);
+    if (poleId) {
+      const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+      if (!target || target.role !== 'PROFESSEUR') {
+        return res.status(403).json({ error: 'Vous ne pouvez refuser que des comptes Professeur de votre pôle' });
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: { validationStatus: 'REJECTED' },
@@ -283,6 +351,104 @@ async function rejectUser(req, res) {
     res.json({ message: 'Compte refusé', user: { id: user.id, email: user.email, validationStatus: user.validationStatus } });
   } catch (error) {
     console.error('Erreur rejectUser:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// ─── DEMANDES DE RÔLE PROFESSEUR (self-service depuis "Mes rôles") ────────────────
+// Un compte existant (Famille, Bénévole...) peut demander depuis son espace à devenir
+// Professeur en plus de son rôle actuel. La demande reste PENDING (UserRole.status) jusqu'à
+// validation par un responsable de pôle — même logique "non affecté visible par tous" que les
+// nouvelles inscriptions Professeur classiques (poleScopeWhere), le premier qui valide rattache.
+
+/**
+ * GET /api/admin/role-requests/pending
+ */
+async function getPendingRoleRequests(req, res) {
+  try {
+    const poleId = await getPoleIdForRole(req.user.role);
+    const where = {
+      role: 'PROFESSEUR',
+      status: 'PENDING',
+      ...(poleId ? { OR: [{ poleId }, { poleId: null }] } : {}),
+    };
+    const requests = await prisma.userRole.findMany({
+      where,
+      include: { user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json({ requests });
+  } catch (error) {
+    console.error('Erreur getPendingRoleRequests:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/role-requests/:id/approve
+ */
+async function approveRoleRequest(req, res) {
+  try {
+    const { id } = req.params;
+    const request = await prisma.userRole.findUnique({ where: { id }, include: { user: true } });
+    if (!request || request.role !== 'PROFESSEUR' || request.status !== 'PENDING') {
+      return res.status(404).json({ error: 'Demande introuvable' });
+    }
+    const poleId = await getPoleIdForRole(req.user.role);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.userRole.update({
+        where: { id },
+        data: { status: 'APPROVED', decidedBy: req.user.id, decidedAt: new Date() },
+      });
+
+      let teacher = await tx.teacher.findUnique({ where: { userId: request.userId } });
+      if (!teacher) {
+        teacher = await tx.teacher.create({
+          data: {
+            userId: request.userId,
+            firstName: request.user.firstName,
+            lastName: request.user.lastName,
+            email: request.user.email,
+            phone: request.user.phone,
+            poleId: poleId || null,
+          },
+        });
+      } else if (poleId && !teacher.poleId) {
+        teacher = await tx.teacher.update({ where: { id: teacher.id }, data: { poleId } });
+      }
+
+      return { updated, teacher };
+    });
+
+    await sendRoleRequestApprovedEmail(request.user, 'Professeur');
+    res.json({ request: { id: result.updated.id, status: result.updated.status } });
+  } catch (error) {
+    console.error('Erreur approveRoleRequest:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/role-requests/:id/reject
+ */
+async function rejectRoleRequest(req, res) {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const request = await prisma.userRole.findUnique({ where: { id }, include: { user: true } });
+    if (!request || request.role !== 'PROFESSEUR' || request.status !== 'PENDING') {
+      return res.status(404).json({ error: 'Demande introuvable' });
+    }
+
+    const updated = await prisma.userRole.update({
+      where: { id },
+      data: { status: 'REJECTED', decidedBy: req.user.id, decidedAt: new Date(), rejectionReason: reason || null },
+    });
+    await sendRoleRequestRejectedEmail(request.user, 'Professeur', reason);
+    res.json({ request: { id: updated.id, status: updated.status } });
+  } catch (error) {
+    console.error('Erreur rejectRoleRequest:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -3372,11 +3538,23 @@ async function resetTeacherPassword(req, res) {
   }
 }
 
+async function assertUserInCallerScope(req, res, userId) {
+  const poleId = await getPoleIdForRole(req.user.role);
+  if (!poleId) return true; // ADMIN / SUPER_ADMIN : pas de restriction de pôle
+  const inScope = await isUserInPoleScope(userId, poleId);
+  if (!inScope) {
+    res.status(403).json({ error: 'Cet utilisateur ne fait pas partie de votre pôle' });
+    return false;
+  }
+  return true;
+}
+
 async function unlockUser(req, res) {
   try {
     const { id } = req.params;
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (!(await assertUserInCallerScope(req, res, id))) return;
 
     await prisma.user.update({
       where: { id },
@@ -3395,6 +3573,7 @@ async function resetUserPassword(req, res) {
     const { id } = req.params;
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (!(await assertUserInCallerScope(req, res, id))) return;
 
     const temporaryPassword = `AMC-${uuidv4().slice(0, 10)}`;
     const passwordHash = await bcrypt.hash(temporaryPassword, 12);
@@ -3407,6 +3586,140 @@ async function resetUserPassword(req, res) {
     res.json({ password: temporaryPassword });
   } catch (error) {
     console.error('Erreur resetUserPassword:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/users/:id — modifier les informations de base d'un utilisateur
+ */
+async function updateUserDetails(req, res) {
+  try {
+    const { id } = req.params;
+    const { firstName, lastName, email, phone } = req.body;
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (!(await assertUserInCallerScope(req, res, id))) return;
+
+    if (email && email !== user.email) {
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        ...(firstName !== undefined && { firstName }),
+        ...(lastName !== undefined && { lastName }),
+        ...(email !== undefined && { email }),
+        ...(phone !== undefined && { phone }),
+      },
+    });
+
+    // Garder la fiche Professeur cohérente si elle existe
+    if (updated.role === 'PROFESSEUR') {
+      const teacher = await prisma.teacher.findUnique({ where: { userId: id } });
+      if (teacher) {
+        await prisma.teacher.update({
+          where: { id: teacher.id },
+          data: {
+            ...(firstName !== undefined && { firstName }),
+            ...(lastName !== undefined && { lastName }),
+            ...(email !== undefined && { email }),
+            ...(phone !== undefined && { phone }),
+          },
+        });
+      }
+    }
+
+    res.json({
+      user: {
+        id: updated.id, email: updated.email, firstName: updated.firstName, lastName: updated.lastName,
+        phone: updated.phone, role: updated.role, validationStatus: updated.validationStatus, isActive: updated.isActive,
+      },
+    });
+  } catch (error) {
+    console.error('Erreur updateUserDetails:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/users/:id/active — activer ou désactiver un compte (réversible, sans perte de données)
+ */
+async function toggleUserActive(req, res) {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+    if (typeof isActive !== 'boolean') return res.status(400).json({ error: 'isActive doit être un booléen' });
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (!(await assertUserInCallerScope(req, res, id))) return;
+
+    if (req.user.id === id && !isActive) {
+      return res.status(400).json({ error: 'Vous ne pouvez pas désactiver votre propre compte' });
+    }
+
+    const updated = await prisma.user.update({ where: { id }, data: { isActive } });
+    res.json({ user: { id: updated.id, isActive: updated.isActive } });
+  } catch (error) {
+    console.error('Erreur toggleUserActive:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * POST /api/admin/users — créer un utilisateur (Famille, Professeur ou Trésorier ; Trésorier réservé à Admin/Super Admin)
+ */
+async function createUser(req, res) {
+  try {
+    const { firstName, lastName, email, phone, role } = req.body;
+    if (!firstName || !lastName || !email || !role) {
+      return res.status(400).json({ error: 'Prénom, nom, email et rôle sont requis' });
+    }
+
+    const poleId = await getPoleIdForRole(req.user.role);
+    const allowedRoles = poleId ? ['FAMILLE', 'PROFESSEUR'] : ADMIN_VISIBLE_ROLES;
+    if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 jours
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        provider: 'local',
+        firstName,
+        lastName,
+        phone: phone || null,
+        role,
+        validationStatus: 'APPROVED',
+        emailVerified: true,
+        resetPasswordToken: token,
+        resetPasswordExpires: expires,
+      },
+    });
+
+    if (role === 'PROFESSEUR') {
+      await prisma.teacher.create({
+        data: { userId: user.id, firstName: user.firstName, lastName: user.lastName, email: user.email, phone: user.phone, poleId: poleId || null },
+      });
+    }
+
+    try {
+      await sendAccountInvitationEmail(user, token);
+    } catch (emailError) {
+      console.error('Erreur envoi email invitation compte:', emailError);
+    }
+
+    res.status(201).json({ user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role } });
+  } catch (error) {
+    console.error('Erreur createUser:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -3439,6 +3752,9 @@ module.exports = {
   getAllUsers,
   approveUser,
   rejectUser,
+  getPendingRoleRequests,
+  approveRoleRequest,
+  rejectRoleRequest,
   getStats,
   getEnrollmentsByCommune,
   getEnrollments,
@@ -3491,6 +3807,9 @@ module.exports = {
   deleteTeacher,
   resetUserPassword,
   unlockUser,
+  createUser,
+  updateUserDetails,
+  toggleUserActive,
   getRegistrationBlockStatus,
   updateRegistrationBlockStatus,
   getStudentAcademicRecord,

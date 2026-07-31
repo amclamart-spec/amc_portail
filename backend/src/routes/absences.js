@@ -1,11 +1,13 @@
 const { Router } = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
-const { getAbsences, getClassStudents, getAbsenceHistory, exportLessonAttendancePdf, postAbsences } = require('../controllers/absenceController');
+const { actAsClassTeacher, POLE_MANAGER_ROLES } = require('../middleware/poleManagerDelegation');
+const { getAbsences, getAbsenceRanking, getClassStudents, getAbsenceHistory, exportLessonAttendancePdf, postAbsences } = require('../controllers/absenceController');
 
 const router = Router();
-router.use(authenticate, authorize('PROFESSEUR'));
+router.use(authenticate, authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher);
 
 router.get('/class-students', getClassStudents);
+router.get('/ranking', getAbsenceRanking);
 router.get('/history/:lessonId/export', exportLessonAttendancePdf);
 router.get('/history', getAbsenceHistory);
 router.get('/', getAbsences);

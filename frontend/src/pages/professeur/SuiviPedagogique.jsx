@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import useEvaluations from '../../hooks/useEvaluations';
 import CoranTeacherPanel from '../../components/coran/CoranTeacherPanel';
+import AppreciationsPanel from '../../components/appreciations/AppreciationsPanel';
+import NotesScolaireTeacherPanel from '../../components/notesScolaires/NotesScolaireTeacherPanel';
 import CoranBulletin from '../../components/coran/CoranBulletin';
 
 /* ─── Teal teacher palette ─────────────────────────────────────────────────── */
@@ -39,6 +41,14 @@ const STYLES = `
 
   .ep-2col       { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; }
   .ep-3col       { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+
+  .ep-side-layout { display:grid; grid-template-columns:1fr; gap:16px; align-items:start; }
+  @media(min-width:960px) { .ep-side-layout { grid-template-columns:1fr 280px; } }
+  .ep-rank-list   { display:flex; flex-direction:column; gap:6px; }
+  .ep-rank-item   { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:var(--amc-border-radius); background:var(--amc-light-bg-2); }
+  .ep-rank-pos    { font-weight:800; font-size:12px; color:#6B7280; width:18px; flex-shrink:0; }
+  .ep-rank-name   { flex:1; min-width:0; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ep-rank-counts { display:flex; gap:4px; flex-shrink:0; }
 
   .ep-student-card  { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:var(--amc-border-radius); background:var(--amc-light-bg-2); border:1px solid var(--amc-border); margin-bottom:8px; }
   .ep-student-card:last-child { margin-bottom:0; }
@@ -108,6 +118,14 @@ function fmtDate(d, opts) {
   if (!d) return '';
   return new Date(d).toLocaleDateString('fr-FR', opts || { day: '2-digit', month: 'short', year: 'numeric' });
 }
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result?.toString().split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 
 /* ─── sub-components ───────────────────────────────────────────────────────── */
 function Avatar({ name, size = 30 }) {
@@ -153,9 +171,9 @@ const TABS = [
 ];
 
 /* ─── main component ───────────────────────────────────────────────────────── */
-export default function SuiviPedagogique() {
+export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {}) {
   /* ── existing state ── */
-  const [classes,             setClasses]             = useState([]);
+  const [classes,             setClasses]             = useState(initialClasses || []);
   const [selectedClassId,     setSelectedClassId]     = useState('');
   const [selectedLessonId,    setSelectedLessonId]    = useState('');
   const [selectedPeriod,      setSelectedPeriod]      = useState('');
@@ -177,18 +195,27 @@ export default function SuiviPedagogique() {
   const [historyLoading,      setHistoryLoading]      = useState(false);
   const [editHomework,        setEditHomework]        = useState(null);
   const [editBody,            setEditBody]            = useState('');
+  const [expandedHomeworkId,  setExpandedHomeworkId]  = useState(null);
 
   /* ── new: tab + bulletin state ── */
   const [tab,                 setTab]                 = useState('dashboard');
   const [bulletinStudentId,   setBulletinStudentId]   = useState('');
   const [bulletinAppreciation, setBulletinAppreciation] = useState('');
+  const [publishing,          setPublishing]          = useState(false);
+
+  /* ── absences ranking sidebar (classe Coran) ── */
+  const [absenceRanking,      setAbsenceRanking]      = useState([]);
+  const [loadingRanking,      setLoadingRanking]      = useState(false);
 
   /* ── derived ── */
   const selectedClass  = classes.find((c) => String(c.id) === String(selectedClassId)) || null;
   const isCoranClass   = (selectedClass?.level?.pole?.name || '').toLowerCase().includes('coran');
+  const isSoutienScolaireClass = (selectedClass?.level?.pole?.name || '').toLowerCase().includes('soutien');
   const visibleTabs    = isCoranClass
     ? [...TABS.filter((t) => t.id !== 'notes'), { id: 'coran', label: 'Suivi Coran', icon: '📖' }]
-    : TABS;
+    : isSoutienScolaireClass
+      ? [...TABS, { id: 'appreciations', label: 'Appréciations régulières', icon: '⭐' }, { id: 'notesScolaires', label: 'Notes Scolaire', icon: '📓' }]
+      : TABS;
   const classPeriod    = selectedClass?.level?.pole?.period;
   const periodOptions  = useMemo(() => {
     if (classPeriod === 'TRIMESTRIEL') return [
@@ -221,14 +248,19 @@ export default function SuiviPedagogique() {
     else if (tab === 'notes' || tab === 'bulletin') setActiveModule('notes');
   }, [tab]);
 
-  /* ── load classes ── */
+  /* ── load classes (sauté si initialClasses fourni — ex. espace responsable de pôle) ── */
   useEffect(() => {
+    if (initialClasses) {
+      if (initialClasses.length) setSelectedClassId(String(initialClasses[0].id));
+      return;
+    }
     api.get('/teacher/classes')
       .then(({ data }) => {
         setClasses(data.classes || []);
         if (data.classes?.length) setSelectedClassId(String(data.classes[0].id));
       })
       .catch(() => toast.error('Impossible de charger les classes'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ── load lessons on class/date change ── */
@@ -307,17 +339,34 @@ export default function SuiviPedagogique() {
 
   useEffect(() => { if (error) toast.error(error); }, [error]);
 
-  /* ── leave the Coran tab if the selected class isn't a Coran class ── */
+  /* ── leave the Coran / Appréciations tabs if they no longer apply to the selected class ── */
   useEffect(() => {
     if (tab === 'coran' && !isCoranClass) setTab('dashboard');
     if (tab === 'notes' && isCoranClass) setTab('dashboard');
-  }, [selectedClassId, isCoranClass, tab]);
+    if (tab === 'appreciations' && !isSoutienScolaireClass) setTab('dashboard');
+    if (tab === 'notesScolaires' && !isSoutienScolaireClass) setTab('dashboard');
+  }, [selectedClassId, isCoranClass, isSoutienScolaireClass, tab]);
 
   /* ── reset bulletin selection when the class changes ── */
   useEffect(() => {
     setBulletinStudentId('');
     setBulletinAppreciation('');
   }, [selectedClassId]);
+
+  /* ── absences ranking sidebar (classe Coran uniquement) ── */
+  useEffect(() => {
+    setAbsenceRanking([]);
+    if (!selectedClassId || !isCoranClass) return;
+
+    let cancelled = false;
+    setLoadingRanking(true);
+    api.get('/absences/ranking', { params: { classId: selectedClassId } })
+      .then(({ data }) => { if (!cancelled) setAbsenceRanking(data.ranking || []); })
+      .catch(() => { if (!cancelled) toast.error('Impossible de charger le classement des absences'); })
+      .finally(() => { if (!cancelled) setLoadingRanking(false); });
+
+    return () => { cancelled = true; };
+  }, [selectedClassId, isCoranClass]);
 
   /* ── day-of-week validation for absence date ── */
   const DAY_MAP = { DIMANCHE: 0, LUNDI: 1, MARDI: 2, MERCREDI: 3, JEUDI: 4, VENDREDI: 5, SAMEDI: 6 };
@@ -360,6 +409,11 @@ export default function SuiviPedagogique() {
     if (ok) {
       toast.success('Absences enregistrées');
       fetchAbsences({ classId: selectedClassId, date: dateFilter }).then((data) => { if (data?.students) setRows(data.students.map((s) => ({ ...s }))); });
+      if (isCoranClass) {
+        api.get('/absences/ranking', { params: { classId: selectedClassId } })
+          .then(({ data }) => setAbsenceRanking(data.ranking || []))
+          .catch(() => {});
+      }
     } else { toast.error('Échec de l\'enregistrement'); }
   };
 
@@ -443,28 +497,30 @@ export default function SuiviPedagogique() {
           Suivi pédagogique
           {loading && <FiLoader className="spin" style={{ marginLeft: 10, fontSize: 16 }} />}
         </h2>
-        <div className="ep-pills">
-          {classes.map((cls) => {
-            const active = String(cls.id) === selectedClassId;
-            return (
-              <button
-                key={cls.id}
-                className={`ep-pill${active ? ' active' : ''}`}
-                onClick={() => setSelectedClassId(String(cls.id))}
-              >
-                <span style={{ fontSize: 10, background: active ? 'rgba(255,255,255,.25)' : T.light2, color: active ? '#fff' : T.primary, padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
-                  {cls.level?.pole?.name?.slice(0, 3) || ''}
-                </span>
-                {cls.level?.name || 'Classe'} — {cls.dayOfWeek?.slice(0, 3)} {cls.startTime}
-                {cls.level?.pole?.period && cls.level.pole.period !== 'ANNUEL' && (
-                  <span style={{ fontSize: 9, background: active ? 'rgba(255,255,255,.2)' : '#E0F2FE', color: active ? '#fff' : '#0369A1', padding: '1px 5px', borderRadius: 3, fontWeight: 600, marginLeft: 2 }}>
-                    {cls.level.pole.period === 'TRIMESTRIEL' ? 'Trim.' : 'Sem.'}
+        {!hideClassPicker && (
+          <div className="ep-pills">
+            {classes.map((cls) => {
+              const active = String(cls.id) === selectedClassId;
+              return (
+                <button
+                  key={cls.id}
+                  className={`ep-pill${active ? ' active' : ''}`}
+                  onClick={() => setSelectedClassId(String(cls.id))}
+                >
+                  <span style={{ fontSize: 10, background: active ? 'rgba(255,255,255,.25)' : T.light2, color: active ? '#fff' : T.primary, padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
+                    {cls.level?.pole?.name?.slice(0, 3) || ''}
                   </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+                  {cls.level?.name || 'Classe'} — {cls.dayOfWeek?.slice(0, 3)} {cls.startTime}
+                  {cls.level?.pole?.period && cls.level.pole.period !== 'ANNUEL' && (
+                    <span style={{ fontSize: 9, background: active ? 'rgba(255,255,255,.2)' : '#E0F2FE', color: active ? '#fff' : '#0369A1', padding: '1px 5px', borderRadius: 3, fontWeight: 600, marginLeft: 2 }}>
+                      {cls.level.pole.period === 'TRIMESTRIEL' ? 'Trim.' : 'Sem.'}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* ── tab bar ── */}
@@ -570,6 +626,7 @@ export default function SuiviPedagogique() {
 
       {/* ══════════════════════ ABSENCES ══════════════════════════════ */}
       {tab === 'absences' && (
+        <div className={isCoranClass ? 'ep-side-layout' : undefined}>
         <div>
           {/* Filters */}
           <div className="ep-sec" style={{ marginBottom: 14 }}>
@@ -659,6 +716,33 @@ export default function SuiviPedagogique() {
               )}
             </div>
           </div>
+        </div>
+
+        {isCoranClass && (
+          <div className="ep-sec">
+            <SecHead>📊 Classement absences / retards</SecHead>
+            <div className="ep-sec-body">
+              {loadingRanking ? (
+                <p style={{ textAlign: 'center', color: '#6B7280', fontSize: 13 }}>Chargement…</p>
+              ) : absenceRanking.length === 0 ? (
+                <EmptyState icon="📊" text="Aucun élève dans cette classe" />
+              ) : (
+                <div className="ep-rank-list">
+                  {absenceRanking.map((r, index) => (
+                    <div key={r.studentId} className="ep-rank-item">
+                      <span className="ep-rank-pos">#{index + 1}</span>
+                      <span className="ep-rank-name">{r.studentName}</span>
+                      <div className="ep-rank-counts">
+                        <span className="badge badge-danger" style={{ fontSize: 10 }}>{r.absenceCount} abs.</span>
+                        <span className="badge badge-warning" style={{ fontSize: 10 }}>{r.lateCount} ret.</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         </div>
       )}
 
@@ -783,6 +867,33 @@ export default function SuiviPedagogique() {
                           <a href={hw.attachmentUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: T.primary, marginTop: 6, display: 'inline-block' }}>
                             📎 Pièce jointe
                           </a>
+                        )}
+                        {!editing && (
+                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--amc-border)' }}>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              style={{ fontSize: 11, padding: '2px 8px' }}
+                              onClick={() => setExpandedHomeworkId((prev) => (prev === hw.id ? null : hw.id))}
+                            >
+                              <FiCheck size={12} style={{ marginRight: 4 }} />
+                              {(hw.completions || []).length} / {hw.totalStudents ?? '—'} élève{(hw.completions || []).length > 1 ? 's' : ''} ont fait ce devoir
+                            </button>
+                            {expandedHomeworkId === hw.id && (
+                              <div style={{ marginTop: 8 }}>
+                                {(hw.completions || []).length === 0 ? (
+                                  <div style={{ fontSize: 12, color: '#6B7280' }}>Aucun élève n'a encore marqué ce devoir comme fait.</div>
+                                ) : (
+                                  (hw.completions || []).map((c) => (
+                                    <div key={c.studentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, padding: '4px 0' }}>
+                                      <span>✅ {c.studentName}</span>
+                                      <span style={{ color: '#6B7280' }}>{fmtDate(c.completedAt, { day: '2-digit', month: 'short' })}</span>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     );
@@ -951,6 +1062,79 @@ export default function SuiviPedagogique() {
                   >
                     <FiPrinter size={14} /> Imprimer
                   </button>
+                  <button
+                    className="btn ep-no-print"
+                    style={{ background: T.dark, color: '#fff' }}
+                    disabled={!bulletinStudentId || saving}
+                    onClick={async () => {
+                      setSaving(true);
+                      try {
+                        const studentName = classStudents.find((s) => s.studentId === bulletinStudentId)?.studentName || bulletinStudentId;
+                        const response = await api.post(
+                          '/coran/bulletin/pdf',
+                          {
+                            studentId: bulletinStudentId,
+                            studentName,
+                            classLabel: `${selectedClass?.level?.name || ''} — ${selectedClass?.level?.pole?.name || ''}`,
+                            appreciation: bulletinAppreciation,
+                          },
+                          { responseType: 'blob' },
+                        );
+                        const url = window.URL.createObjectURL(new Blob([response.data]));
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.setAttribute('download', `bulletin-coran-${studentName.replace(/\s+/g, '-')}.pdf`);
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        window.URL.revokeObjectURL(url);
+                      } catch (e) {
+                        console.error('Erreur téléchargement bulletin Coran', e);
+                        toast.error('Impossible de générer le bulletin PDF');
+                      } finally {
+                        setSaving(false);
+                      }
+                    }}
+                  >
+                    <FiDownload size={14} /> {saving ? 'Génération…' : 'Télécharger PDF'}
+                  </button>
+                  <button
+                    className="btn ep-no-print"
+                    style={{ background: '#0891B2', color: '#fff' }}
+                    disabled={!bulletinStudentId || publishing}
+                    onClick={async () => {
+                      setPublishing(true);
+                      try {
+                        const studentName = classStudents.find((s) => s.studentId === bulletinStudentId)?.studentName || bulletinStudentId;
+                        const response = await api.post(
+                          '/coran/bulletin/pdf',
+                          {
+                            studentId: bulletinStudentId,
+                            studentName,
+                            classLabel: `${selectedClass?.level?.name || ''} — ${selectedClass?.level?.pole?.name || ''}`,
+                            appreciation: bulletinAppreciation,
+                          },
+                          { responseType: 'blob' },
+                        );
+                        const fileBase64 = await blobToBase64(response.data);
+                        await api.post('/bulletins/publish', {
+                          studentId: bulletinStudentId,
+                          classId: selectedClassId,
+                          period: 'ANNUEL',
+                          fileName: `bulletin-coran-${studentName.replace(/\s+/g, '-')}.pdf`,
+                          fileBase64,
+                        });
+                        toast.success('Bulletin publié — visible dans l\'espace famille');
+                      } catch (e) {
+                        console.error('Erreur publication bulletin Coran', e);
+                        toast.error(e.response?.data?.error || 'Impossible de publier le bulletin');
+                      } finally {
+                        setPublishing(false);
+                      }
+                    }}
+                  >
+                    📢 {publishing ? 'Publication…' : 'Publier'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1032,6 +1216,38 @@ export default function SuiviPedagogique() {
                   >
                     <FiDownload size={14} /> Télécharger PDF
                   </button>
+                  <button
+                    className="btn ep-no-print"
+                    style={{ background: '#0891B2', color: '#fff' }}
+                    disabled={!bulletinStudentId || !selectedPeriod || publishing}
+                    onClick={async () => {
+                      setPublishing(true);
+                      try {
+                        const response = await api.post(
+                          '/evaluations/bulletin/pdf',
+                          { classId: selectedClassId, period: selectedPeriod, studentId: bulletinStudentId, appreciation: bulletinAppreciation },
+                          { responseType: 'blob' },
+                        );
+                        const studentName = noteRows.find((r) => String(r.id) === bulletinStudentId)?.studentName || bulletinStudentId;
+                        const fileBase64 = await blobToBase64(response.data);
+                        await api.post('/bulletins/publish', {
+                          studentId: bulletinStudentId,
+                          classId: selectedClassId,
+                          period: selectedPeriod,
+                          fileName: `bulletin-${studentName.replace(/\s+/g, '-')}-${selectedPeriod}.pdf`,
+                          fileBase64,
+                        });
+                        toast.success('Bulletin publié — visible dans l\'espace famille');
+                      } catch (e) {
+                        console.error('Erreur publication bulletin', e);
+                        toast.error(e.response?.data?.error || 'Impossible de publier le bulletin');
+                      } finally {
+                        setPublishing(false);
+                      }
+                    }}
+                  >
+                    📢 {publishing ? 'Publication…' : 'Publier'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1045,7 +1261,7 @@ export default function SuiviPedagogique() {
               {/* Bulletin header */}
               <div className="ep-bulletin-header">
                 <div style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>
-                  Association Mosquée Colmar
+                  Association PARTAGE et AMC
                 </div>
                 <h2 style={{ margin: '6px 0', color: T.primary, fontSize: 20 }}>Bulletin de {periodOptions.find((o) => o.value === selectedPeriod)?.label || 'période'}</h2>
                 <div style={{ fontSize: 14, color: 'var(--amc-text)', fontWeight: 600 }}>
@@ -1146,6 +1362,16 @@ export default function SuiviPedagogique() {
       {/* ══════════════════════ SUIVI CORAN ══════════════════════ */}
       {tab === 'coran' && isCoranClass && (
         <CoranTeacherPanel classId={selectedClassId} />
+      )}
+
+      {/* ══════════════════════ APPRÉCIATIONS RÉGULIÈRES ══════════════════════ */}
+      {tab === 'appreciations' && isSoutienScolaireClass && (
+        <AppreciationsPanel classId={selectedClassId} />
+      )}
+
+      {/* ══════════════════════ NOTES SCOLAIRE ══════════════════════ */}
+      {tab === 'notesScolaires' && isSoutienScolaireClass && (
+        <NotesScolaireTeacherPanel classId={selectedClassId} periodOptions={periodOptions} />
       )}
 
       {/* ── Absence history modal ── */}

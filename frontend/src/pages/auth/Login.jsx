@@ -105,7 +105,7 @@ export default function Login() {
             Connexion
           </h2>
           <p style={{ textAlign: 'center', color: '#6B7280', marginBottom: 24, fontSize: 14 }}>
-            Portail d&apos;Inscription Scolaire AMC
+            Portail interne AMC &amp; PARTAGE
           </p>
 
           <button

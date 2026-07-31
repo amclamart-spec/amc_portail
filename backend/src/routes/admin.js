@@ -7,6 +7,12 @@ const {
   getAllUsers,
   approveUser,
   rejectUser,
+  getPendingRoleRequests,
+  approveRoleRequest,
+  rejectRoleRequest,
+  createUser,
+  updateUserDetails,
+  toggleUserActive,
   getStats,
   getEnrollmentsByCommune,
   getEnrollments,
@@ -124,9 +130,16 @@ router.get('/stats', authorizePermission(PERMISSIONS.FINANCE_VIEW), getStats);
 router.get('/stats/communes', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getEnrollmentsByCommune);
 
 router.get('/users', authorizePermission(PERMISSIONS.USERS_MANAGE), getAllUsers);
+router.post('/users', authorizePermission(PERMISSIONS.USERS_MANAGE), createUser);
+router.put('/users/:id', authorizePermission(PERMISSIONS.USERS_MANAGE), updateUserDetails);
+router.put('/users/:id/active', authorizePermission(PERMISSIONS.USERS_MANAGE), toggleUserActive);
 router.get('/users/pending', authorizePermission(PERMISSIONS.USERS_APPROVE), getPendingUsers);
 router.put('/users/:id/approve', authorizePermission(PERMISSIONS.USERS_APPROVE), approveUser);
 router.put('/users/:id/reject', authorizePermission(PERMISSIONS.USERS_APPROVE), rejectUser);
+
+router.get('/role-requests/pending',    authorizePermission(PERMISSIONS.USERS_APPROVE), getPendingRoleRequests);
+router.put('/role-requests/:id/approve', authorizePermission(PERMISSIONS.USERS_APPROVE), approveRoleRequest);
+router.put('/role-requests/:id/reject',  authorizePermission(PERMISSIONS.USERS_APPROVE), rejectRoleRequest);
 router.post('/users/:id/reset-password', authorizePermission(PERMISSIONS.USERS_MANAGE), resetUserPassword);
 router.post('/users/:id/unlock', authorizePermission(PERMISSIONS.USERS_MANAGE), unlockUser);
 
