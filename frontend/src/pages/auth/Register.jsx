@@ -7,7 +7,7 @@ import { useEffect } from 'react';
 const PROFILE_OPTIONS = [
   { value: 'FAMILLE', label: 'Famille' },
   { value: 'PROFESSEUR', label: 'Professeur' },
-  { value: 'ADMIN', label: 'Administrateur' },
+  { value: 'BENEVOLE', label: 'Bénévole' },
   { value: 'TRESORIER', label: 'Trésorier' },
 ];
 
@@ -142,7 +142,7 @@ export default function Register() {
         }}>
           <h2 style={{ textAlign: 'center', color: 'var(--amc-primary)', marginBottom: 8 }}>Créer un compte</h2>
           <p style={{ textAlign: 'center', color: '#6B7280', marginBottom: 24, fontSize: 14 }}>
-            Portail d'Inscription Scolaire AMC
+            Portail interne AMC &amp; PARTAGE
           </p>
 
           {registrationsBlocked && (

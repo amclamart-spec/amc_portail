@@ -9,7 +9,8 @@ export default function PrivateRoute({ children, roles }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (roles && !roles.includes(user.role)) {
+  const userRoles = user.roles || [user.role];
+  if (roles && !roles.some((r) => userRoles.includes(r))) {
     return <Navigate to={getHomeForRole(user.role)} replace />;
   }
 

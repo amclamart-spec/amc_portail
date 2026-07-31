@@ -16,6 +16,7 @@ import {
   FiShield,
   FiCalendar,
   FiMessageSquare,
+  FiUserPlus,
 } from 'react-icons/fi';
 import { useState } from 'react';
 import { ROLE_LABEL } from '../utils/roles';
@@ -24,76 +25,9 @@ import { version as appVersion } from '../../package.json';
 const navSectionsByRole = {
   SUPER_ADMIN: [
     {
-      title: 'Mon espace',
+      title: 'Super Admin',
       items: [
-        { path: '/admin', icon: FiHome, label: 'Tableau de bord' },
-        { path: '/admin/profile', icon: FiUser, label: 'Mon profil' },
-      ],
-    },
-    {
-      title: 'Gestion des inscrits',
-      items: [
-        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
-        { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
-        { path: '/admin/justificatifs', icon: FiClipboard, label: 'Justificatifs' },
-      ],
-    },
-    {
-      title: 'Pédagogie',
-      items: [
-        { path: '/admin/niveaux', icon: FiSettings, label: 'Pôles et Niveaux' },
-        { path: '/admin/classes', icon: FiBookOpen, label: 'Classes' },
-        { path: '/admin/professeurs', icon: FiUser, label: 'Professeurs' },
-        { path: '/admin/salles', icon: FiHome, label: 'Salles' },
-        { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },
-        { path: '/admin/planning', icon: FiCalendar, label: 'Planning' },
-      ],
-    },
-    {
-      title: 'Finance',
-      items: [
-        { path: '/admin/payments', icon: FiCreditCard, label: 'Paiements' },
-        { icon: FiCreditCard, label: 'Échéanciers', disabled: true },
-        { icon: FiCreditCard, label: 'Impayés', disabled: true },
-        { path: '/admin/remboursements', icon: FiCreditCard, label: 'Remboursements' },
-        { icon: FiCreditCard, label: 'Exports comptables', disabled: true },
-      ],
-    },
-    {
-      title: 'Communication',
-      items: [
-        { path: '/admin/mailing', icon: FiClipboard, label: 'Mailing' },
-        { path: '/admin/chat', icon: FiMessageSquare, label: 'Chat' },
-        { icon: FiClipboard, label: 'Messages envoyés', disabled: true },
-        { icon: FiClipboard, label: 'Templates d\'emails', disabled: true },
-        { icon: FiClipboard, label: 'Statistiques SMS', disabled: true },
-      ],
-    },
-    {
-      title: 'Statistiques',
-      items: [
-        { icon: FiBarChart2, label: 'Effectifs', disabled: true },
-        { icon: FiBarChart2, label: 'Évolution inter-années', disabled: true },
-        { icon: FiBarChart2, label: 'Taux de remplissage', disabled: true },
-        { icon: FiBarChart2, label: 'Analyses financières', disabled: true },
-      ],
-    },
-    {
-      title: 'Paramètres',
-      items: [
-        { path: '/admin/settings', icon: FiSettings, label: 'Années scolaires' },
-        { path: '/admin/settings', icon: FiSettings, label: 'Tarifs' },
-        { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs / Rôles' },
-        { icon: FiSettings, label: 'Configuration paiements', disabled: true },
-        { path: '/admin/settings', icon: FiSettings, label: 'RGPD / Données' },
-      ],
-    },
-    {
-      title: 'Exports',
-      items: [
-        { path: '/admin/exports', icon: FiBookOpen, label: 'Listes élèves' },
-        { path: '/admin/exports', icon: FiClipboard, label: 'Feuilles présence' },
-        { path: '/admin/exports', icon: FiBarChart2, label: 'Comptabilité' },
+        { path: '/super-admin', icon: FiUsers, label: 'Utilisateurs & droits d\'accès' },
       ],
     },
   ],
@@ -110,7 +44,7 @@ const navSectionsByRole = {
       items: [
         { path: '/admin/users', icon: FiUsers, label: 'Utilisateurs' },
         { path: '/admin/enrollments', icon: FiClipboard, label: 'Inscriptions' },
-        { path: '/admin/justificatifs', icon: FiClipboard, label: 'Justificatifs' },
+        { path: '/admin/justificatifs', icon: FiClipboard, label: 'Suivi des absences' },
       ],
     },
     {
@@ -197,6 +131,7 @@ const navSectionsByRole = {
         { path: '/social/eligibility',   icon: FiShield,      label: 'Critères éligibilité' },
         { path: '/social/purchases',     icon: FiCreditCard,  label: 'Achats' },
         { path: '/social/budget',        icon: FiBarChart2,   label: 'Budget' },
+        { path: '/social/operators',     icon: FiUsers,       label: 'Opérateurs' },
       ],
     },
   ],
@@ -210,6 +145,47 @@ const navSectionsByRole = {
         { path: '/social/distributions', icon: FiBookOpen,   label: 'Distributions' },
         { path: '/social/collections',   icon: FiBarChart2,  label: 'Collectes' },
         { path: '/social/stock',         icon: FiSettings,   label: 'Stock & Produits' },
+      ],
+    },
+  ],
+  RESPONSABLE_POLE_BENEVOLES: [
+    {
+      title: 'Pôle Bénévoles',
+      items: [
+        { path: '/volunteers',          icon: FiHome,      label: 'Tableau de bord' },
+        { path: '/volunteers/manage',   icon: FiUsers,     label: 'Bénévoles' },
+        { path: '/volunteers/groups',   icon: FiShield,    label: 'Groupes' },
+        { path: '/volunteers/events',   icon: FiCalendar,  label: 'Événements' },
+      ],
+    },
+  ],
+  BENEVOLE: [
+    {
+      title: 'Pôle Bénévoles',
+      items: [
+        { path: '/volunteers/card',     icon: FiShield,    label: 'Ma carte bénévole' },
+        { path: '/volunteers/profile',  icon: FiUser,      label: 'Mon profil' },
+        { path: '/volunteers/events',   icon: FiCalendar,  label: 'Événements' },
+      ],
+    },
+  ],
+  RESPONSABLE_RH: [
+    {
+      title: 'Ressources Humaines',
+      items: [
+        { path: '/hr',                icon: FiHome,       label: 'Tableau de bord' },
+        { path: '/hr/employees',      icon: FiUsers,      label: 'Salariés' },
+        { path: '/hr/leave-requests', icon: FiCalendar,   label: 'Congés' },
+      ],
+    },
+  ],
+  SALARIE: [
+    {
+      title: 'Ressources Humaines',
+      items: [
+        { path: '/hr/profile',   icon: FiUser,       label: 'Mon profil' },
+        { path: '/hr/payslips',  icon: FiCreditCard, label: 'Mes fiches de paie' },
+        { path: '/hr/leaves',    icon: FiCalendar,   label: 'Mes congés' },
       ],
     },
   ],
@@ -234,6 +210,7 @@ function buildResponsablePoleNav(poleLabel) {
     {
       title: 'Pédagogie',
       items: [
+        { path: '/responsable/suivi-pedagogique', icon: FiBookOpen, label: 'Suivi pédagogique' },
         { path: '/admin/classes',    icon: FiBookOpen,  label: 'Classes' },
         { path: '/admin/niveaux',    icon: FiSettings,  label: 'Niveaux' },
         { path: '/admin/professeurs',icon: FiUser,      label: 'Professeurs' },
@@ -303,7 +280,13 @@ export default function Layout({ children }) {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const sections = navSectionsByRole[user?.role] || [];
+  const userRoles = user?.roles || (user?.role ? [user.role] : []);
+  const sections = Array.from(
+    new Map(userRoles.flatMap((r) => navSectionsByRole[r] || []).map((s) => [s.title, s])).values()
+  );
+  // Un compte peut cumuler plusieurs rôles en parallèle (ex: Professeur + Bénévole) — l'accès à
+  // "Mes rôles" pour en demander un supplémentaire est donc proposé quel que soit le rôle actuel.
+  sections.push({ title: 'Mon compte', items: [{ path: '/mes-roles', icon: FiUserPlus, label: 'Mes rôles' }] });
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>

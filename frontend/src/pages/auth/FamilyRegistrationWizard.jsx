@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Elements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import toast from 'react-hot-toast';
@@ -953,7 +953,12 @@ const selectedEnrollmentsLabel = useMemo(() => {
     return (
       <div style={{ minHeight: '100vh', background: '#F8FAFC', padding: 20 }}>
         <div className="card" style={{ maxWidth: 700, margin: '0 auto', padding: 24 }}>
-          <h2 style={{ color: 'var(--amc-primary)', marginBottom: 16 }}>Signature du mandat SEPA</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+            <h2 style={{ color: 'var(--amc-primary)', marginBottom: 16 }}>Signature du mandat SEPA</h2>
+            <Link to="/login" style={{ fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap' }}>
+              Déjà un compte ? Se connecter
+            </Link>
+          </div>
           <p style={{ color: '#475569', marginBottom: 18 }}>
             Votre inscription est enregistrée. Veuillez signer le mandat SEPA pour autoriser le premier prélèvement.
           </p>
@@ -997,9 +1002,14 @@ const selectedEnrollmentsLabel = useMemo(() => {
           <img src="/amc_logo.png" alt="AMC Logo" style={{ height: 50, objectFit: 'contain' }} />
           <img src="/amc_logo_partner.png" alt="PARTAGE Logo" style={{ height: 50, objectFit: 'contain' }} />
         </div>
-        <h2 style={{ color: 'var(--amc-primary)', marginBottom: 8 }}>
-          {existingFamily ? 'Ajouter un enfant et finaliser son inscription' : 'Assistant Inscription Famille'}
-        </h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <h2 style={{ color: 'var(--amc-primary)', marginBottom: 8 }}>
+            {existingFamily ? 'Ajouter un enfant et finaliser son inscription' : 'Assistant Inscription Famille'}
+          </h2>
+          <Link to="/login" style={{ fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Déjà un compte ? Se connecter
+          </Link>
+        </div>
         <p style={{ color: '#64748B', marginBottom: 20 }}>Étape {step + 1}/{steps.length} — {steps[step]}</p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 24 }}>

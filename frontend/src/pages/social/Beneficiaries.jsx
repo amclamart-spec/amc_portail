@@ -4,7 +4,7 @@ import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEye, FiEdit2 } from 'react-icons/fi';
 
-const EMPTY_FORM = { firstName: '', lastName: '', email: '', phone: '', addressLine1: '', postalCode: '', city: '', adultsCount: 1, childrenCount: 0, monthlyIncome: '', observations: '' };
+const EMPTY_FORM = { firstName: '', lastName: '', email: '', phone: '', addressLine1: '', postalCode: '', city: '', adultsCount: 1, childrenCount: 0, monthlyIncome: '', isHosted: false, hostFullName: '', observations: '' };
 
 function fmtDate(d) { return d ? new Date(d).toLocaleDateString('fr-FR') : '—'; }
 
@@ -40,7 +40,7 @@ export default function SocialBeneficiaries() {
   useEffect(() => { load(1, search); }, []);
 
   const openCreate = () => { setForm(EMPTY_FORM); setEditId(null); setModalOpen(true); };
-  const openEdit = (b) => { setForm({ firstName: b.firstName, lastName: b.lastName, email: b.email || '', phone: b.phone || '', addressLine1: b.addressLine1 || '', postalCode: b.postalCode || '', city: b.city || '', adultsCount: b.adultsCount, childrenCount: b.childrenCount, monthlyIncome: b.monthlyIncome ?? '', observations: b.observations || '' }); setEditId(b.id); setModalOpen(true); };
+  const openEdit = (b) => { setForm({ firstName: b.firstName, lastName: b.lastName, email: b.email || '', phone: b.phone || '', addressLine1: b.addressLine1 || '', postalCode: b.postalCode || '', city: b.city || '', adultsCount: b.adultsCount, childrenCount: b.childrenCount, monthlyIncome: b.monthlyIncome ?? '', isHosted: Boolean(b.isHosted), hostFullName: b.hostFullName || '', observations: b.observations || '' }); setEditId(b.id); setModalOpen(true); };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -170,6 +170,18 @@ export default function SocialBeneficiaries() {
                   <input className="form-control" type="number" min="0" value={form.childrenCount} onChange={(e) => setForm((p) => ({ ...p, childrenCount: e.target.value }))} />
                 </div>
               </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={form.isHosted} onChange={(e) => setForm((p) => ({ ...p, isHosted: e.target.checked, hostFullName: e.target.checked ? p.hostFullName : '' }))} />
+                  Bénéficiaire hébergé (nécessite la carte d'identité et le justificatif de domicile de l'hébergeur)
+                </label>
+              </div>
+              {form.isHosted && (
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Nom complet de l'hébergeur</label>
+                  <input className="form-control" value={form.hostFullName} onChange={(e) => setForm((p) => ({ ...p, hostFullName: e.target.value }))} />
+                </div>
+              )}
               <div className="form-group" style={{ margin: 0 }}>
                 <label>Observations</label>
                 <textarea className="form-control" rows={2} value={form.observations} onChange={(e) => setForm((p) => ({ ...p, observations: e.target.value }))} />
