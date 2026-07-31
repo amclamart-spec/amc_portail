@@ -4,6 +4,7 @@ const {
   fetchStudentHomework,
   fetchStudentNotes,
   submitFamilyJustification,
+  setHomeworkCompletion,
 } = require('../services/familyPedagogyService');
 
 async function getPedagogyStudents(req, res) {
@@ -64,6 +65,23 @@ async function getPedagogyNotes(req, res) {
   }
 }
 
+async function putHomeworkCompletion(req, res) {
+  try {
+    const { homeworkId } = req.params;
+    const { studentId, done } = req.body;
+    if (!studentId) {
+      return res.status(400).json({ error: 'studentId est requis' });
+    }
+
+    const result = await setHomeworkCompletion({ familyUserId: req.user.id, studentId, homeworkId, done: Boolean(done) });
+    return res.json(result);
+  } catch (error) {
+    console.error('Erreur putHomeworkCompletion:', error);
+    const status = error.statusCode || (error.message.includes('introuvable') ? 404 : 500);
+    return res.status(status).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
 async function postPedagogyJustification(req, res) {
   try {
     const { evaluationId } = req.params;
@@ -83,4 +101,5 @@ module.exports = {
   getPedagogyHomework,
   getPedagogyNotes,
   postPedagogyJustification,
+  putHomeworkCompletion,
 };

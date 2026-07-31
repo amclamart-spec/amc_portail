@@ -611,6 +611,122 @@ async function sendAccountRejectedEmail(user, reason) {
   });
 }
 
+async function sendVolunteerInvitationEmail(user, token) {
+  const setPasswordUrl = `${config.frontendUrl}/reset-password?token=${token}`;
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Un compte benevole a ete cree pour vous sur le portail AMC &amp; PARTAGE.</p>
+    <p>Cliquez sur le bouton ci-dessous pour choisir votre mot de passe et acceder a votre espace :</p>
+    <p style="text-align:center;">
+      <a href="${setPasswordUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;font-weight:bold;">Definir mon mot de passe</a>
+    </p>
+    <p style="font-size:14px;color:#64748b;">Ou copiez-collez ce lien dans votre navigateur :<br/><span style="word-break:break-all;">${setPasswordUrl}</span></p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: 'AMC — Votre compte benevole a ete cree',
+    html: renderEmailHtml({ title: 'Bienvenue au Pole Benevoles', subtitle: 'Definissez votre mot de passe pour commencer', contentHtml }),
+  });
+}
+
+async function sendAccountInvitationEmail(user, token) {
+  const setPasswordUrl = `${config.frontendUrl}/reset-password?token=${token}`;
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Un compte a ete cree pour vous sur le portail AMC &amp; PARTAGE.</p>
+    <p>Cliquez sur le bouton ci-dessous pour choisir votre mot de passe et acceder a votre espace :</p>
+    <p style="text-align:center;">
+      <a href="${setPasswordUrl}" style="display:inline-block;padding:12px 24px;color:#ffffff;background:#213B88;border-radius:8px;text-decoration:none;font-weight:bold;">Definir mon mot de passe</a>
+    </p>
+    <p style="font-size:14px;color:#64748b;">Ou copiez-collez ce lien dans votre navigateur :<br/><span style="word-break:break-all;">${setPasswordUrl}</span></p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: 'AMC — Votre compte a ete cree',
+    html: renderEmailHtml({ title: 'Bienvenue sur le portail AMC & PARTAGE', subtitle: 'Definissez votre mot de passe pour commencer', contentHtml }),
+  });
+}
+
+async function sendEmployeeRoleAddedEmail(user) {
+  const loginUrl = `${config.frontendUrl}/login`;
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>L'acces a l'espace Salarie (RH) a ete ajoute a votre compte AMC &amp; PARTAGE existant.</p>
+    <p>Vous pouvez continuer a utiliser votre compte avec votre mot de passe habituel, et retrouver desormais vos fiches de paie depuis le menu apres connexion.</p>
+    <p style="text-align:center;"><a href="${loginUrl}" style="display:inline-block;padding:10px 18px;background:#213B88;color:#fff;border-radius:6px;text-decoration:none;">Se connecter</a></p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: 'AMC — Acces espace Salarie ajoute a votre compte',
+    html: renderEmailHtml({ title: 'Nouvel acces ajoute', subtitle: 'Ressources Humaines', contentHtml }),
+  });
+}
+
+async function sendVolunteerRoleAddedEmail(user) {
+  const loginUrl = `${config.frontendUrl}/login`;
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>L'acces au Pole Benevoles a ete ajoute a votre compte AMC &amp; PARTAGE existant.</p>
+    <p>Vous pouvez continuer a utiliser votre compte avec votre mot de passe habituel, et retrouver desormais votre espace benevole depuis le menu apres connexion.</p>
+    <p style="text-align:center;"><a href="${loginUrl}" style="display:inline-block;padding:10px 18px;background:#213B88;color:#fff;border-radius:6px;text-decoration:none;">Se connecter</a></p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: 'AMC — Acces Pole Benevoles ajoute a votre compte',
+    html: renderEmailHtml({ title: 'Nouvel acces ajoute', subtitle: 'Pole Benevoles', contentHtml }),
+  });
+}
+
+async function sendRoleRequestApprovedEmail(user, roleLabel) {
+  const loginUrl = `${config.frontendUrl}/login`;
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Votre demande d'ajout du role <strong>${roleLabel}</strong> a ete validee.</p>
+    <p>Vous pouvez continuer a utiliser votre compte avec votre mot de passe habituel, et retrouver ce nouvel espace depuis le menu apres connexion.</p>
+    <p style="text-align:center;"><a href="${loginUrl}" style="display:inline-block;padding:10px 18px;background:#213B88;color:#fff;border-radius:6px;text-decoration:none;">Se connecter</a></p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: `AMC — Votre demande de role ${roleLabel} a ete validee`,
+    html: renderEmailHtml({ title: 'Nouvel acces ajoute', subtitle: roleLabel, contentHtml }),
+  });
+}
+
+async function sendRoleRequestRejectedEmail(user, roleLabel, reason) {
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>Votre demande d'ajout du role <strong>${roleLabel}</strong> n'a pas ete validee.</p>
+    ${reason ? `<p><strong>Motif:</strong> ${reason}</p>` : ''}
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: `AMC — Votre demande de role ${roleLabel}`,
+    html: renderEmailHtml({ title: 'Demande de role', subtitle: 'Statut: refusee', contentHtml }),
+  });
+}
+
+async function sendOperatorRoleAddedEmail(user) {
+  const loginUrl = `${config.frontendUrl}/login`;
+  const contentHtml = `
+    <p>Bonjour ${user.firstName},</p>
+    <p>L'acces au Pole Social (Operateur) a ete ajoute a votre compte AMC &amp; PARTAGE existant.</p>
+    <p>Vous pouvez continuer a utiliser votre compte avec votre mot de passe habituel, et retrouver desormais votre espace operateur depuis le menu apres connexion.</p>
+    <p style="text-align:center;"><a href="${loginUrl}" style="display:inline-block;padding:10px 18px;background:#213B88;color:#fff;border-radius:6px;text-decoration:none;">Se connecter</a></p>
+  `;
+
+  return sendMail({
+    to: user.email,
+    subject: 'AMC — Acces Pole Social ajoute a votre compte',
+    html: renderEmailHtml({ title: 'Nouvel acces ajoute', subtitle: 'Pole Social', contentHtml }),
+  });
+}
+
 async function sendFamilyRegistrationConfirmationEmail(user, familySummary = '') {
   const contentHtml = `
     <p>Bonjour ${user.firstName},</p>
@@ -706,8 +822,15 @@ module.exports = {
   sendEnrollmentConfirmedEmail,
   sendAccountApprovedEmail,
   sendAccountRejectedEmail,
+  sendVolunteerInvitationEmail,
+  sendVolunteerRoleAddedEmail,
+  sendAccountInvitationEmail,
+  sendEmployeeRoleAddedEmail,
   sendFamilyRegistrationConfirmationEmail,
   sendChildRegistrationConfirmationEmail,
   sendOfflinePaymentConfirmationEmail,
   sendPaymentValidationEmail,
+  sendRoleRequestApprovedEmail,
+  sendRoleRequestRejectedEmail,
+  sendOperatorRoleAddedEmail,
 };

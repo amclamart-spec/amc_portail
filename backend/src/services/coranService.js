@@ -429,6 +429,54 @@ async function deleteBulletinUpload({ teacherUserId, uploadId }) {
   return { success: true };
 }
 
+// -- Bulletin (données agrégées, PDF) ----------------------------------------
+
+// Même formule que `computeCoranKpis` côté frontend (sourateUtils.js) — à garder
+// synchronisée pour que le PDF téléchargé affiche exactement les mêmes chiffres
+// que le bulletin affiché à l'écran.
+function averagePerWeek(dates, total) {
+  if (dates.length === 0) return 0;
+  const earliest = Math.min(...dates);
+  const weeksSpan = Math.max(1, Math.ceil((Date.now() - earliest) / (7 * 86400000)) + 1);
+  return total / weeksSpan;
+}
+
+async function getBulletinData({ studentId }) {
+  const [repetitions, revisions, lectures] = await Promise.all([
+    prisma.coranRepetition.findMany({ where: { studentId } }),
+    prisma.coranRevision.findMany({ where: { studentId } }),
+    prisma.coranLecture.findMany({ where: { studentId } }),
+  ]);
+
+  const pagesApprises = repetitions.length;
+  const mastered = repetitions.filter((r) => r.compteur >= 30).length;
+  const avgApprentissagePerWeek = averagePerWeek(repetitions.map((r) => new Date(r.createdAt).getTime()), pagesApprises);
+
+  const totalRevisionPages = revisions.reduce((sum, r) => sum + (r.pageFin - r.pageDebut + 1), 0);
+  const avgRevisionPerWeek = averagePerWeek(revisions.map((r) => new Date(r.date).getTime()), totalRevisionPages);
+
+  const recitedPages = new Set();
+  lectures.forEach((l) => {
+    for (let p = l.pageDebut; p <= l.pageFin; p += 1) recitedPages.add(p);
+  });
+  const pagesRecitees = recitedPages.size;
+  const totalLectureMinutes = lectures.reduce((sum, l) => sum + (l.dureeMinutes || 0), 0);
+
+  return {
+    pagesApprises,
+    pctApprises: Math.round((pagesApprises / MAX_PAGE) * 100),
+    mastered,
+    avgApprentissagePerWeek,
+    totalRevisions: revisions.length,
+    totalRevisionPages,
+    avgRevisionPerWeek,
+    totalLectureSeances: lectures.length,
+    totalLectureMinutes,
+    pagesRecitees,
+    pctRecitees: Math.round((pagesRecitees / MAX_PAGE) * 100),
+  };
+}
+
 module.exports = {
   getSourates,
   assertReadAccess,
@@ -451,4 +499,5 @@ module.exports = {
   uploadBulletin,
   getLatestBulletinUpload,
   deleteBulletinUpload,
+  getBulletinData,
 };

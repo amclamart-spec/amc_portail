@@ -124,6 +124,72 @@ async function fetchLessonAttendanceSheet({ teacherUserId, lessonId }) {
   };
 }
 
+// Compte les absences et retards ('missing'/'late') de chaque élève d'une classe
+// sur toute l'année scolaire — partagé entre la feuille d'appel et le classement.
+async function computeYearlyAttendanceCounts(classRecord, classId) {
+  const absentCountByStudent = new Map();
+  const lateCountByStudent = new Map();
+  if (!classRecord.schoolYear) return { absentCountByStudent, lateCountByStudent };
+
+  const [schoolYearAbsences, schoolYearLates] = await Promise.all([
+    prisma.evaluation.groupBy({
+      by: ['studentId'],
+      where: {
+        lesson: {
+          classId,
+          date: { gte: classRecord.schoolYear.startDate, lte: classRecord.schoolYear.endDate },
+        },
+        status: 'missing',
+      },
+      _count: { id: true },
+    }),
+    prisma.evaluation.groupBy({
+      by: ['studentId'],
+      where: {
+        lesson: {
+          classId,
+          date: { gte: classRecord.schoolYear.startDate, lte: classRecord.schoolYear.endDate },
+        },
+        status: 'late',
+      },
+      _count: { id: true },
+    }),
+  ]);
+
+  schoolYearAbsences.forEach((record) => absentCountByStudent.set(record.studentId, record._count.id));
+  schoolYearLates.forEach((record) => lateCountByStudent.set(record.studentId, record._count.id));
+
+  return { absentCountByStudent, lateCountByStudent };
+}
+
+async function fetchAbsenceRanking({ teacherUserId, classId }) {
+  const teacherProfile = await getTeacherProfile(teacherUserId);
+  if (!teacherProfile) throw new Error('Profil professeur introuvable');
+
+  const classRecord = await prisma.class.findFirst({
+    where: { id: classId, teacherId: teacherProfile.id },
+    include: { schoolYear: true },
+  });
+  if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
+
+  const enrollments = await prisma.enrollment.findMany({
+    where: { classId, status: { in: ['PENDING', 'CONFIRMED'] } },
+    include: { student: true },
+    orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
+  });
+
+  const { absentCountByStudent, lateCountByStudent } = await computeYearlyAttendanceCounts(classRecord, classId);
+
+  return enrollments
+    .map((enrollment) => ({
+      studentId: enrollment.student.id,
+      studentName: `${enrollment.student.firstName} ${enrollment.student.lastName}`,
+      absenceCount: absentCountByStudent.get(enrollment.student.id) || 0,
+      lateCount: lateCountByStudent.get(enrollment.student.id) || 0,
+    }))
+    .sort((a, b) => b.absenceCount - a.absenceCount || b.lateCount - a.lateCount);
+}
+
 async function fetchAbsenceRoster({ teacherUserId, classId, date }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
@@ -166,28 +232,7 @@ async function fetchAbsenceRoster({ teacherUserId, classId, date }) {
     : [];
   const evaluationByStudent = new Map(existingEvaluations.map((evaluation) => [evaluation.studentId, evaluation]));
 
-  // Compter les absences pour chaque élève durant l'année scolaire
-  const absentCountByStudent = new Map();
-  if (classRecord.schoolYear) {
-    const schoolYearAbsences = await prisma.evaluation.groupBy({
-      by: ['studentId'],
-      where: {
-        lesson: {
-          classId,
-          date: {
-            gte: classRecord.schoolYear.startDate,
-            lte: classRecord.schoolYear.endDate,
-          },
-        },
-        status: 'missing',
-      },
-      _count: { id: true },
-    });
-
-    schoolYearAbsences.forEach((record) => {
-      absentCountByStudent.set(record.studentId, record._count.id);
-    });
-  }
+  const { absentCountByStudent, lateCountByStudent } = await computeYearlyAttendanceCounts(classRecord, classId);
 
   return {
     lessonId: lesson?.id || null,
@@ -208,6 +253,7 @@ async function fetchAbsenceRoster({ teacherUserId, classId, date }) {
         justification: evaluation?.justification || '',
         createdAt: evaluation?.createdAt || null,
         absenceCount: absentCountByStudent.get(student.id) || 0,
+        lateCount: lateCountByStudent.get(student.id) || 0,
       };
     }),
   };
@@ -558,10 +604,16 @@ async function upsertPeriodNote({ teacherUserId, classId, period, studentId, dis
 
   const classRecord = await prisma.class.findFirst({
     where: { id: classId, teacherId: teacherProfile.id },
-    include: { schoolYear: true },
+    include: { schoolYear: true, level: { include: { pole: true } } },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
   if (!classRecord.schoolYear) throw new Error('Année scolaire introuvable pour cette classe');
+
+  // La leçon support d'une note de période doit être datée DANS la période visée
+  // (getPeriodRange filtre ensuite les notes du bulletin par plage de dates) —
+  // sinon toute note de Trimestre 2/3 ou Semestre 2 retombe dans la période 1.
+  const range = getPeriodRange(classRecord.schoolYear, classRecord.level?.pole, period);
+  const lessonDate = range ? range[0] : (classRecord.schoolYear.startDate || new Date());
 
   const noteLessonTitle = `${period} - ${discipline}`;
   let noteLesson = await prisma.lesson.findFirst({ where: { classId, title: noteLessonTitle } });
@@ -571,9 +623,11 @@ async function upsertPeriodNote({ teacherUserId, classId, period, studentId, dis
         classId,
         title: noteLessonTitle,
         description: `Note de période ${period} (${discipline})`,
-        date: classRecord.schoolYear.startDate || new Date(),
+        date: lessonDate,
       },
     });
+  } else if (noteLesson.date.getTime() !== lessonDate.getTime()) {
+    noteLesson = await prisma.lesson.update({ where: { id: noteLesson.id }, data: { date: lessonDate } });
   }
 
   const payload = {
@@ -600,6 +654,7 @@ module.exports = {
   fetchAbsenceHistory,
   fetchLessonAttendanceSheet,
   fetchAbsenceRoster,
+  fetchAbsenceRanking,
   saveAbsences,
   fetchEvaluations,
   computeStats,

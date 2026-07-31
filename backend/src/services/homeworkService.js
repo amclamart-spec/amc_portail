@@ -135,7 +135,11 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
     schoolYearEnd.setFullYear(currentYear);
   }
 
-  return prisma.homeworkMessage.findMany({
+  const totalStudents = await prisma.enrollment.count({
+    where: { classId, status: { in: ['PENDING', 'CONFIRMED'] } },
+  });
+
+  const homeworks = await prisma.homeworkMessage.findMany({
     where: {
       classId,
       date: {
@@ -143,8 +147,24 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
         lte: schoolYearEnd,
       },
     },
+    include: {
+      completions: {
+        include: { student: true },
+        orderBy: { completedAt: 'asc' },
+      },
+    },
     orderBy: { date: 'desc' },
   });
+
+  return homeworks.map((homework) => ({
+    ...homework,
+    completions: homework.completions.map((completion) => ({
+      studentId: completion.studentId,
+      studentName: `${completion.student.firstName} ${completion.student.lastName}`,
+      completedAt: completion.completedAt,
+    })),
+    totalStudents,
+  }));
 }
 
 async function deleteHomeworkMessage({ teacherUserId, homeworkId }) {

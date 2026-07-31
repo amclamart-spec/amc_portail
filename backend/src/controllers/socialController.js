@@ -1,10 +1,39 @@
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const { PrismaClient, Prisma } = require('@prisma/client');
+const { saveBeneficiaryDocumentFile, deleteBeneficiaryDocumentFile } = require('../utils/beneficiaryDocumentUtils');
+const { savePurchaseReceiptFile, deletePurchaseReceiptFile } = require('../utils/purchaseReceiptUtils');
+const { sendRoleRequestApprovedEmail, sendRoleRequestRejectedEmail, sendOperatorRoleAddedEmail, sendAccountInvitationEmail } = require('../services/emailService');
 
 const prisma = new PrismaClient();
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 function toDecimal(v) { return new Prisma.Decimal(v); }
+
+const OPERATOR_PUBLIC_FIELDS = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  phone: true,
+  role: true,
+  isActive: true,
+  createdAt: true,
+};
+
+const isOperatorWhere = { OR: [{ role: 'OPERATEUR_SOCIAL' }, { additionalRoles: { some: { role: 'OPERATEUR_SOCIAL', status: 'APPROVED' } } }] };
+
+const BENEFICIARY_DOCUMENT_TYPES = [
+  'IDENTITY_CARD',
+  'PROOF_OF_ADDRESS',
+  'HOST_IDENTITY_CARD',
+  'HOST_PROOF_OF_ADDRESS',
+  'INCOME_PROOF',
+  'TAX_NOTICE',
+  'FAMILY_COMPOSITION_PROOF',
+  'MISSING_DOCUMENT_ATTESTATION',
+];
 
 function fmtCase(c) {
   return {
@@ -26,37 +55,44 @@ function fmtCase(c) {
 }
 
 // ─── eligibility evaluation ───────────────────────────────────────────────────
+// Chaque critère (nommé librement) est composé de 3 conditions obligatoires :
+// revenu global mensuel, composition du foyer (adultes + enfants), villes
+// d'habitation. La validation d'un dossier doit satisfaire les 3 conditions de
+// TOUS les critères actifs pour obtenir un avis automatique favorable ; sinon
+// l'avis est défavorable. La décision finale reste manuelle (responsable de pôle).
 
 async function evaluateEligibility(beneficiaryData) {
-  const criteria = await prisma.eligibilityCriteria.findMany({ where: { isActive: true } });
-  const results = [];
-  let passCount = 0;
-
-  for (const cr of criteria) {
-    const { type, operator, numValue } = cr;
-    let value = null;
-    if (type === 'MONTHLY_INCOME') value = Number(beneficiaryData.monthlyIncome || 0);
-    else if (type === 'ADULTS_COUNT') value = Number(beneficiaryData.adultsCount || 1);
-    else if (type === 'CHILDREN_COUNT') value = Number(beneficiaryData.childrenCount || 0);
-    else { results.push({ key: cr.key, label: cr.label, passed: true, reason: 'Critère non évalué' }); passCount++; continue; }
-
-    const threshold = Number(numValue || 0);
-    let passed = false;
-    if (operator === 'LTE') passed = value <= threshold;
-    else if (operator === 'GTE') passed = value >= threshold;
-    else if (operator === 'EQ')  passed = value === threshold;
-    else if (operator === 'GT')  passed = value > threshold;
-    else if (operator === 'LT')  passed = value < threshold;
-
-    if (passed) passCount++;
-    results.push({ key: cr.key, label: cr.label, passed, value, threshold, operator });
+  const criteriaList = await prisma.eligibilityCriteria.findMany({ where: { isActive: true }, orderBy: { createdAt: 'asc' } });
+  if (criteriaList.length === 0) {
+    return { autoDecision: 'ACCEPTED', score: { configured: false, criteriaCount: 0, passedCriteriaCount: 0, results: [] } };
   }
 
-  const autoDecision = criteria.length === 0
-    ? 'ACCEPTED'
-    : (passCount === criteria.length ? 'ACCEPTED' : 'REFUSED');
+  const income = Number(beneficiaryData.monthlyIncome || 0);
+  const householdSize = Number(beneficiaryData.adultsCount || 0) + Number(beneficiaryData.childrenCount || 0);
+  const city = String(beneficiaryData.city || '').trim().toLowerCase();
 
-  return { autoDecision, score: { passCount, total: criteria.length, results } };
+  const results = [];
+  let passedCriteriaCount = 0;
+
+  for (const cr of criteriaList) {
+    const allowedCitiesLower = (cr.allowedCities || []).map((c) => c.toLowerCase());
+    const maxMonthlyIncome = Number(cr.maxMonthlyIncome);
+
+    const incomeOk = income <= maxMonthlyIncome;
+    const householdOk = householdSize <= cr.maxHouseholdSize;
+    const cityOk = Boolean(city) && allowedCitiesLower.includes(city);
+    if (incomeOk && householdOk && cityOk) passedCriteriaCount++;
+
+    results.push(
+      { key: `${cr.id}_MONTHLY_INCOME`, criterionId: cr.id, criterionName: cr.name, label: `${cr.name} — Revenu global mensuel de la famille`, passed: incomeOk, value: income, threshold: maxMonthlyIncome },
+      { key: `${cr.id}_HOUSEHOLD_SIZE`, criterionId: cr.id, criterionName: cr.name, label: `${cr.name} — Composition de la famille (adultes + enfants)`, passed: householdOk, value: householdSize, threshold: cr.maxHouseholdSize },
+      { key: `${cr.id}_CITY`, criterionId: cr.id, criterionName: cr.name, label: `${cr.name} — Ville d'habitation`, passed: cityOk, value: beneficiaryData.city || null, threshold: (cr.allowedCities || []).join(', ') },
+    );
+  }
+
+  const autoDecision = passedCriteriaCount === criteriaList.length ? 'ACCEPTED' : 'REFUSED';
+
+  return { autoDecision, score: { configured: true, criteriaCount: criteriaList.length, passedCriteriaCount, results } };
 }
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
@@ -145,6 +181,221 @@ async function getDashboard(req, res) {
   }
 }
 
+// ─── DEMANDES DE RÔLE OPÉRATEUR SOCIAL (self-service depuis "Mes rôles") ──────────
+// Un compte existant peut demander depuis son espace à devenir Opérateur Social en plus de
+// son rôle actuel. La demande reste PENDING (UserRole.status) jusqu'à validation par le
+// Responsable Pôle Social, sans jamais bloquer la connexion avec les rôles déjà approuvés.
+
+async function getPendingOperatorRoleRequests(req, res) {
+  try {
+    const requests = await prisma.userRole.findMany({
+      where: { role: 'OPERATEUR_SOCIAL', status: 'PENDING' },
+      include: { user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return res.json({ requests });
+  } catch (error) {
+    console.error('Erreur getPendingOperatorRoleRequests:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function approveOperatorRoleRequest(req, res) {
+  try {
+    const { id } = req.params;
+    const request = await prisma.userRole.findUnique({ where: { id }, include: { user: true } });
+    if (!request || request.role !== 'OPERATEUR_SOCIAL' || request.status !== 'PENDING') {
+      return res.status(404).json({ error: 'Demande introuvable' });
+    }
+    const updated = await prisma.userRole.update({
+      where: { id },
+      data: { status: 'APPROVED', decidedBy: req.user.id, decidedAt: new Date() },
+    });
+    await sendRoleRequestApprovedEmail(request.user, 'Opérateur Social');
+    return res.json({ request: { id: updated.id, status: updated.status } });
+  } catch (error) {
+    console.error('Erreur approveOperatorRoleRequest:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function rejectOperatorRoleRequest(req, res) {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const request = await prisma.userRole.findUnique({ where: { id }, include: { user: true } });
+    if (!request || request.role !== 'OPERATEUR_SOCIAL' || request.status !== 'PENDING') {
+      return res.status(404).json({ error: 'Demande introuvable' });
+    }
+    const updated = await prisma.userRole.update({
+      where: { id },
+      data: { status: 'REJECTED', decidedBy: req.user.id, decidedAt: new Date(), rejectionReason: reason || null },
+    });
+    await sendRoleRequestRejectedEmail(request.user, 'Opérateur Social', reason);
+    return res.json({ request: { id: updated.id, status: updated.status } });
+  } catch (error) {
+    console.error('Erreur rejectOperatorRoleRequest:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// ─── GESTION DES OPÉRATEURS SOCIAUX (Responsable Pôle Social) ─────────────────
+// Le rôle Opérateur Social peut être le rôle principal d'un compte, ou un rôle
+// supplémentaire (ex: un Bénévole devenu aussi Opérateur Social) — on le traite donc
+// partout via isOperatorWhere plutôt qu'en supposant que c'est forcément le rôle principal.
+
+async function getOperators(req, res) {
+  try {
+    const { search, page = 1, limit = 20 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+    const where = {
+      AND: [
+        isOperatorWhere,
+        ...(search ? [{
+          OR: [
+            { firstName: { contains: search, mode: 'insensitive' } },
+            { lastName: { contains: search, mode: 'insensitive' } },
+            { email: { contains: search, mode: 'insensitive' } },
+          ],
+        }] : []),
+      ],
+    };
+    const [total, operators] = await Promise.all([
+      prisma.user.count({ where }),
+      prisma.user.findMany({ where, select: OPERATOR_PUBLIC_FIELDS, skip, take: Number(limit), orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }] }),
+    ]);
+    return res.json({ operators, total, page: Number(page), totalPages: Math.ceil(total / Number(limit)) || 1 });
+  } catch (error) {
+    console.error('Erreur getOperators:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function createOperator(req, res) {
+  try {
+    const { firstName, lastName, email, phone } = req.body;
+    if (!firstName || !lastName || !email) return res.status(400).json({ error: 'Prénom, nom et email sont requis' });
+
+    const existing = await prisma.user.findUnique({ where: { email }, include: { additionalRoles: { select: { role: true, status: true } } } });
+
+    if (existing) {
+      const alreadyOperator = existing.role === 'OPERATEUR_SOCIAL'
+        || existing.additionalRoles.some((r) => r.role === 'OPERATEUR_SOCIAL' && r.status !== 'REJECTED');
+      if (alreadyOperator) return res.status(409).json({ error: 'Ce compte est déjà Opérateur Social (ou une demande est en attente)' });
+
+      await prisma.userRole.upsert({
+        where: { userId_role: { userId: existing.id, role: 'OPERATEUR_SOCIAL' } },
+        create: { userId: existing.id, role: 'OPERATEUR_SOCIAL', status: 'APPROVED' },
+        update: { status: 'APPROVED', decidedBy: req.user.id, decidedAt: new Date(), rejectionReason: null },
+      });
+
+      try {
+        await sendOperatorRoleAddedEmail(existing);
+      } catch (emailError) {
+        console.error('Erreur envoi email ajout rôle opérateur social:', emailError);
+      }
+
+      return res.status(200).json({
+        operator: { id: existing.id, email: existing.email, firstName: existing.firstName, lastName: existing.lastName },
+        addedToExistingAccount: true,
+      });
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 jours
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        provider: 'local',
+        firstName,
+        lastName,
+        phone: phone || null,
+        role: 'OPERATEUR_SOCIAL',
+        validationStatus: 'APPROVED',
+        emailVerified: true,
+        resetPasswordToken: token,
+        resetPasswordExpires: expires,
+      },
+    });
+
+    try {
+      await sendAccountInvitationEmail(user, token);
+    } catch (emailError) {
+      console.error('Erreur envoi email invitation opérateur social:', emailError);
+    }
+
+    return res.status(201).json({ operator: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
+  } catch (error) {
+    console.error('Erreur createOperator:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateOperatorDetails(req, res) {
+  try {
+    const { id } = req.params;
+    const { firstName, lastName, email, phone } = req.body;
+
+    const user = await prisma.user.findFirst({ where: { id, ...isOperatorWhere } });
+    if (!user) return res.status(404).json({ error: 'Opérateur introuvable' });
+
+    if (email && email !== user.email) {
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        ...(firstName !== undefined && { firstName }),
+        ...(lastName !== undefined && { lastName }),
+        ...(email !== undefined && { email }),
+        ...(phone !== undefined && { phone }),
+      },
+      select: OPERATOR_PUBLIC_FIELDS,
+    });
+    return res.json({ operator: updated });
+  } catch (error) {
+    console.error('Erreur updateOperatorDetails:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function generateOperatorPassword(req, res) {
+  try {
+    const { id } = req.params;
+    const user = await prisma.user.findFirst({ where: { id, ...isOperatorWhere } });
+    if (!user) return res.status(404).json({ error: 'Opérateur introuvable' });
+
+    const temporaryPassword = `AMC-${crypto.randomBytes(5).toString('hex')}`;
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    await prisma.user.update({ where: { id }, data: { passwordHash, resetPasswordToken: null, resetPasswordExpires: null } });
+    return res.json({ password: temporaryPassword });
+  } catch (error) {
+    console.error('Erreur generateOperatorPassword:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function toggleOperatorActive(req, res) {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+    if (typeof isActive !== 'boolean') return res.status(400).json({ error: 'isActive doit être un booléen' });
+
+    const user = await prisma.user.findFirst({ where: { id, ...isOperatorWhere } });
+    if (!user) return res.status(404).json({ error: 'Opérateur introuvable' });
+    if (req.user.id === id && !isActive) return res.status(400).json({ error: 'Vous ne pouvez pas désactiver votre propre compte' });
+
+    const updated = await prisma.user.update({ where: { id }, data: { isActive } });
+    return res.json({ operator: { id: updated.id, isActive: updated.isActive } });
+  } catch (error) {
+    console.error('Erreur toggleOperatorActive:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 // ─── BÉNÉFICIAIRES ────────────────────────────────────────────────────────────
 
 async function getBeneficiaries(req, res) {
@@ -185,6 +436,7 @@ async function getBeneficiary(req, res) {
       include: {
         cases: { orderBy: { createdAt: 'desc' }, include: { decisions: { orderBy: { createdAt: 'desc' }, include: { user: { select: { id: true, firstName: true, lastName: true } } } } } },
         distributions: { where: { status: 'VALIDATED' }, orderBy: { distributedAt: 'desc' }, take: 10, include: { lines: { include: { product: { select: { id: true, name: true, unit: true } } } } } },
+        documents: { orderBy: { createdAt: 'desc' } },
       },
     });
     if (!b) return res.status(404).json({ error: 'Bénéficiaire introuvable' });
@@ -197,10 +449,10 @@ async function getBeneficiary(req, res) {
 
 async function createBeneficiary(req, res) {
   try {
-    const { firstName, lastName, email, phone, addressLine1, postalCode, city, adultsCount = 1, childrenCount = 0, monthlyIncome, observations } = req.body;
+    const { firstName, lastName, email, phone, addressLine1, postalCode, city, adultsCount = 1, childrenCount = 0, monthlyIncome, isHosted, hostFullName, observations } = req.body;
     if (!firstName || !lastName) return res.status(400).json({ error: 'Prénom et nom sont requis' });
     const b = await prisma.socialBeneficiary.create({
-      data: { firstName, lastName, email, phone, addressLine1, postalCode, city, adultsCount: Number(adultsCount), childrenCount: Number(childrenCount), monthlyIncome: monthlyIncome != null ? toDecimal(monthlyIncome) : null, observations, createdBy: req.user.id },
+      data: { firstName, lastName, email, phone, addressLine1, postalCode, city, adultsCount: Number(adultsCount), childrenCount: Number(childrenCount), monthlyIncome: monthlyIncome != null ? toDecimal(monthlyIncome) : null, isHosted: Boolean(isHosted), hostFullName: isHosted ? (hostFullName || null) : null, observations, createdBy: req.user.id },
     });
     return res.status(201).json({ beneficiary: b });
   } catch (error) {
@@ -212,7 +464,7 @@ async function createBeneficiary(req, res) {
 async function updateBeneficiary(req, res) {
   try {
     const { id } = req.params;
-    const { firstName, lastName, email, phone, addressLine1, postalCode, city, adultsCount, childrenCount, monthlyIncome, observations } = req.body;
+    const { firstName, lastName, email, phone, addressLine1, postalCode, city, adultsCount, childrenCount, monthlyIncome, isHosted, hostFullName, observations } = req.body;
     const b = await prisma.socialBeneficiary.update({
       where: { id },
       data: {
@@ -226,12 +478,71 @@ async function updateBeneficiary(req, res) {
         ...(adultsCount  !== undefined && { adultsCount: Number(adultsCount) }),
         ...(childrenCount !== undefined && { childrenCount: Number(childrenCount) }),
         ...(monthlyIncome !== undefined && { monthlyIncome: monthlyIncome != null ? toDecimal(monthlyIncome) : null }),
+        ...(isHosted !== undefined && { isHosted: Boolean(isHosted), hostFullName: isHosted ? (hostFullName || null) : null }),
         ...(observations  !== undefined && { observations }),
       },
     });
     return res.json({ beneficiary: b });
   } catch (error) {
     console.error('Erreur updateBeneficiary:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// ─── PIÈCES JUSTIFICATIVES DU BÉNÉFICIAIRE ────────────────────────────────────
+
+async function getBeneficiaryDocuments(req, res) {
+  try {
+    const { id } = req.params;
+    const documents = await prisma.socialBeneficiaryDocument.findMany({ where: { beneficiaryId: id }, orderBy: { createdAt: 'desc' } });
+    return res.json({ documents });
+  } catch (error) {
+    console.error('Erreur getBeneficiaryDocuments:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function uploadBeneficiaryDocument(req, res) {
+  try {
+    const { id } = req.params;
+    const { type, subType, label } = req.body;
+
+    if (!BENEFICIARY_DOCUMENT_TYPES.includes(type)) return res.status(400).json({ error: 'Type de document invalide' });
+    if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
+
+    const beneficiary = await prisma.socialBeneficiary.findUnique({ where: { id } });
+    if (!beneficiary) return res.status(404).json({ error: 'Bénéficiaire introuvable' });
+
+    const fileInfo = saveBeneficiaryDocumentFile(id, req.file);
+    const document = await prisma.socialBeneficiaryDocument.create({
+      data: {
+        beneficiaryId: id,
+        type,
+        subType: subType || null,
+        label: label || null,
+        fileUrl: fileInfo.relativePath,
+        fileName: fileInfo.fileName,
+        uploadedBy: req.user.id,
+      },
+    });
+    return res.status(201).json({ document });
+  } catch (error) {
+    console.error('Erreur uploadBeneficiaryDocument:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteBeneficiaryDocument(req, res) {
+  try {
+    const { id, documentId } = req.params;
+    const document = await prisma.socialBeneficiaryDocument.findFirst({ where: { id: documentId, beneficiaryId: id } });
+    if (!document) return res.status(404).json({ error: 'Document introuvable' });
+
+    await prisma.socialBeneficiaryDocument.delete({ where: { id: documentId } });
+    deleteBeneficiaryDocumentFile(document.fileUrl);
+    return res.status(204).send();
+  } catch (error) {
+    console.error('Erreur deleteBeneficiaryDocument:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -350,35 +661,78 @@ async function submitCase(req, res) {
   }
 }
 
-// ─── CRITÈRES D'ÉLIGIBILITÉ ───────────────────────────────────────────────────
+// ─── CRITÈRES D'ÉLIGIBILITÉ (chacun composé de 3 conditions obligatoires) ─────
 
 async function getEligibilityCriteria(req, res) {
   try {
-    const criteria = await prisma.eligibilityCriteria.findMany({ orderBy: { label: 'asc' } });
+    const criteria = await prisma.eligibilityCriteria.findMany({ orderBy: { createdAt: 'asc' } });
     return res.json({ criteria });
   } catch (error) {
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
 
-async function upsertCriterion(req, res) {
+function validateCriterionPayload(body) {
+  const { name, maxMonthlyIncome, maxHouseholdSize, allowedCities } = body;
+  if (!name || !String(name).trim()) return 'Le nom du critère est requis';
+  if (maxMonthlyIncome == null || maxMonthlyIncome === '') return 'Le revenu global mensuel maximum est requis';
+  if (maxHouseholdSize == null || maxHouseholdSize === '') return 'La taille maximale du foyer est requise';
+  const cities = Array.isArray(allowedCities) ? allowedCities.map((c) => String(c).trim()).filter(Boolean) : [];
+  if (cities.length === 0) return 'Au moins une ville d\'habitation éligible est requise';
+  return null;
+}
+
+async function createCriterion(req, res) {
+  try {
+    const error = validateCriterionPayload(req.body);
+    if (error) return res.status(400).json({ error });
+    const { name, maxMonthlyIncome, maxHouseholdSize, allowedCities, isActive } = req.body;
+    const criterion = await prisma.eligibilityCriteria.create({
+      data: {
+        name: String(name).trim(),
+        maxMonthlyIncome: toDecimal(maxMonthlyIncome),
+        maxHouseholdSize: parseInt(maxHouseholdSize, 10),
+        allowedCities: allowedCities.map((c) => String(c).trim()).filter(Boolean),
+        isActive: isActive !== false,
+        createdBy: req.user.id,
+      },
+    });
+    return res.status(201).json({ criterion });
+  } catch (error) {
+    console.error('Erreur createCriterion:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function updateCriterion(req, res) {
   try {
     const { id } = req.params;
-    const { key, label, description, type, operator, numValue, isActive } = req.body;
-    if (id) {
-      const c = await prisma.eligibilityCriteria.update({
-        where: { id },
-        data: { ...(label !== undefined && { label }), ...(description !== undefined && { description }), ...(type !== undefined && { type }), ...(operator !== undefined && { operator }), ...(numValue !== undefined && { numValue: numValue != null ? toDecimal(numValue) : null }), ...(isActive !== undefined && { isActive: Boolean(isActive) }) },
-      });
-      return res.json({ criterion: c });
+    const { name, maxMonthlyIncome, maxHouseholdSize, allowedCities, isActive } = req.body;
+
+    const data = {};
+    if (name !== undefined) {
+      if (!String(name).trim()) return res.status(400).json({ error: 'Le nom du critère est requis' });
+      data.name = String(name).trim();
     }
-    if (!key || !label || !type) return res.status(400).json({ error: 'key, label et type sont requis' });
-    const c = await prisma.eligibilityCriteria.create({
-      data: { key, label, description, type, operator: operator || 'LTE', numValue: numValue != null ? toDecimal(numValue) : null, isActive: isActive !== false },
-    });
-    return res.status(201).json({ criterion: c });
+    if (maxMonthlyIncome !== undefined) {
+      if (maxMonthlyIncome === '' || maxMonthlyIncome == null) return res.status(400).json({ error: 'Le revenu global mensuel maximum est requis' });
+      data.maxMonthlyIncome = toDecimal(maxMonthlyIncome);
+    }
+    if (maxHouseholdSize !== undefined) {
+      if (maxHouseholdSize === '' || maxHouseholdSize == null) return res.status(400).json({ error: 'La taille maximale du foyer est requise' });
+      data.maxHouseholdSize = parseInt(maxHouseholdSize, 10);
+    }
+    if (allowedCities !== undefined) {
+      const cities = Array.isArray(allowedCities) ? allowedCities.map((c) => String(c).trim()).filter(Boolean) : [];
+      if (cities.length === 0) return res.status(400).json({ error: 'Au moins une ville d\'habitation éligible est requise' });
+      data.allowedCities = cities;
+    }
+    if (isActive !== undefined) data.isActive = Boolean(isActive);
+
+    const criterion = await prisma.eligibilityCriteria.update({ where: { id }, data });
+    return res.json({ criterion });
   } catch (error) {
-    console.error('Erreur upsertCriterion:', error);
+    console.error('Erreur updateCriterion:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -412,12 +766,24 @@ async function saveCategory(req, res) {
 
 async function getProducts(req, res) {
   try {
-    const { categoryId, active } = req.query;
+    const { categoryId, active, search, page, limit = 20 } = req.query;
     const where = {};
     if (categoryId) where.categoryId = categoryId;
     if (active !== undefined) where.isActive = active === 'true';
-    const products = await prisma.socialProduct.findMany({ where, orderBy: [{ categoryId: 'asc' }, { name: 'asc' }], include: { category: true } });
-    return res.json({ products });
+    if (search) where.name = { contains: search, mode: 'insensitive' };
+    const orderBy = [{ categoryId: 'asc' }, { name: 'asc' }];
+
+    if (page) {
+      const skip = (Number(page) - 1) * Number(limit);
+      const [total, products] = await Promise.all([
+        prisma.socialProduct.count({ where }),
+        prisma.socialProduct.findMany({ where, skip, take: Number(limit), orderBy, include: { category: true } }),
+      ]);
+      return res.json({ products, total, page: Number(page), totalPages: Math.ceil(total / Number(limit)) || 1 });
+    }
+
+    const products = await prisma.socialProduct.findMany({ where, orderBy, include: { category: true } });
+    return res.json({ products, total: products.length });
   } catch (error) {
     return res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -464,11 +830,12 @@ async function adjustStock(req, res) {
 
 async function getStockMovements(req, res) {
   try {
-    const { productId, type, page = 1, limit = 50 } = req.query;
+    const { productId, type, search, page = 1, limit = 50 } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
     const where = {};
     if (productId) where.productId = productId;
     if (type) where.type = type;
+    if (search) where.product = { name: { contains: search, mode: 'insensitive' } };
     const [total, movements] = await Promise.all([
       prisma.stockMovement.count({ where }),
       prisma.stockMovement.findMany({ where, skip, take: Number(limit), orderBy: { createdAt: 'desc' }, include: { product: { select: { id: true, name: true, unit: true } }, user: { select: { id: true, firstName: true, lastName: true } } } }),
@@ -687,7 +1054,9 @@ async function getPurchases(req, res) {
 
 async function createPurchase(req, res) {
   try {
-    const { reference, supplierId, budgetId, purchasedAt, description, observations, lines } = req.body;
+    const { reference, purchasedAt, description, observations, lines } = req.body;
+    const supplierId = req.body.supplierId || null;
+    const budgetId = req.body.budgetId || null;
     if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ error: 'Au moins une ligne est requise' });
 
     const totalAmount = lines.reduce((s, l) => s + Number(l.quantity) * Number(l.unitPrice), 0);
@@ -723,6 +1092,27 @@ async function createPurchase(req, res) {
   } catch (error) {
     console.error('Erreur createPurchase:', error);
     return res.status(500).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function uploadPurchaseReceipt(req, res) {
+  try {
+    const { id } = req.params;
+    const purchase = await prisma.purchase.findUnique({ where: { id } });
+    if (!purchase) return res.status(404).json({ error: 'Achat introuvable' });
+    if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
+
+    if (purchase.receiptUrl) deletePurchaseReceiptFile(purchase.receiptUrl);
+    const fileInfo = savePurchaseReceiptFile(id, req.file);
+
+    const updated = await prisma.purchase.update({
+      where: { id },
+      data: { receiptUrl: fileInfo.relativePath, receiptFileName: fileInfo.fileName },
+    });
+    return res.status(201).json({ purchase: updated });
+  } catch (error) {
+    console.error('Erreur uploadPurchaseReceipt:', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 }
 
@@ -762,15 +1152,18 @@ async function saveBudget(req, res) {
 
 module.exports = {
   getDashboard,
+  getPendingOperatorRoleRequests, approveOperatorRoleRequest, rejectOperatorRoleRequest,
+  getOperators, createOperator, updateOperatorDetails, generateOperatorPassword, toggleOperatorActive,
   getBeneficiaries, getBeneficiary, createBeneficiary, updateBeneficiary,
+  getBeneficiaryDocuments, uploadBeneficiaryDocument, deleteBeneficiaryDocument,
   getCases, getCase, createCase, updateCaseStatus, submitCase,
-  getEligibilityCriteria, upsertCriterion,
+  getEligibilityCriteria, createCriterion, updateCriterion,
   getCategories, saveCategory,
   getProducts, saveProduct,
   adjustStock, getStockMovements,
   getDistributions, createDistribution, cancelDistribution,
   getCollections, createCollection,
   getSuppliers, saveSupplier,
-  getPurchases, createPurchase,
+  getPurchases, createPurchase, uploadPurchaseReceipt,
   getBudget, saveBudget,
 };
