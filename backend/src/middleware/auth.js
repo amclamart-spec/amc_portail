@@ -22,15 +22,20 @@ async function authenticate(req, res, next) {
         email: true,
         role: true,
         validationStatus: true,
+        isActive: true,
         firstName: true,
         lastName: true,
         emailVerified: true,
+        additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } },
       },
     });
 
     if (!user) return res.status(401).json({ error: 'Utilisateur introuvable' });
+    if (user.isActive === false) {
+      return res.status(403).json({ error: 'Ce compte a été désactivé. Contactez un administrateur.', code: 'ACCOUNT_DISABLED' });
+    }
 
-    req.user = user;
+    req.user = { ...user, roles: [user.role, ...user.additionalRoles.map((r) => r.role)] };
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
@@ -57,14 +62,16 @@ async function authenticateOptional(req, res, next) {
         email: true,
         role: true,
         validationStatus: true,
+        isActive: true,
         firstName: true,
         lastName: true,
         emailVerified: true,
+        additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } },
       },
     });
 
-    if (user) {
-      req.user = user;
+    if (user && user.isActive !== false) {
+      req.user = { ...user, roles: [user.role, ...user.additionalRoles.map((r) => r.role)] };
     }
   } catch (error) {
     console.warn('authenticateOptional: token ignored', error.message);
@@ -73,10 +80,14 @@ async function authenticateOptional(req, res, next) {
   next();
 }
 
+function userRoles(user) {
+  return user.roles || [user.role];
+}
+
 function authorize(...roles) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Non authentifié' });
-    if (!roles.includes(req.user.role)) {
+    if (!userRoles(req.user).some((r) => roles.includes(r))) {
       return res.status(403).json({ error: 'Accès non autorisé pour votre rôle' });
     }
     next();
@@ -87,11 +98,12 @@ function authorizePermission(...permissions) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Non authentifié' });
 
-    const missing = permissions.filter((p) => !hasPermission(req.user.role, p));
+    const roles = userRoles(req.user);
+    const missing = permissions.filter((p) => !roles.some((r) => hasPermission(r, p)));
     if (missing.length > 0) {
-      console.warn(`Permission insuffisante pour rôle ${req.user.role} sur ${req.originalUrl}`, {
+      console.warn(`Permission insuffisante pour rôle(s) ${roles.join(',')} sur ${req.originalUrl}`, {
         required: permissions,
-        userRole: req.user.role,
+        userRoles: roles,
         missing,
       });
       return res.status(403).json({
@@ -108,7 +120,8 @@ function authorizeAnyPermission(...permissions) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Non authentifié' });
 
-    const hasAny = permissions.some((p) => hasPermission(req.user.role, p));
+    const roles = userRoles(req.user);
+    const hasAny = permissions.some((p) => roles.some((r) => hasPermission(r, p)));
     if (!hasAny) {
       return res.status(403).json({
         error: 'Permission insuffisante',
@@ -121,7 +134,7 @@ function authorizeAnyPermission(...permissions) {
 }
 
 function requireApproved(req, res, next) {
-  if (req.user.validationStatus !== 'APPROVED' && req.user.role !== 'SUPER_ADMIN') {
+  if (req.user.validationStatus !== 'APPROVED' && !userRoles(req.user).includes('SUPER_ADMIN')) {
     return res.status(403).json({
       error: 'Votre compte est en attente de validation par l\'administration',
       code: 'ACCOUNT_PENDING',

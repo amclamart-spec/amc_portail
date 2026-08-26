@@ -178,6 +178,12 @@ if (loading) return <p>Chargement...</p>;
           <InfoItem label="Professeur" value={teacherName} />
           <InfoItem label="Effectif" value={`${classData.enrolledCount}/${classData.capacity} ${classData.fillIndicator?.label || ''}`} />
           <InfoItem label="Statut" value={classStatusLabel} />
+          {classData.classTeachers?.length > 0 && (
+            <InfoItem
+              label="Professeurs supplémentaires"
+              value={classData.classTeachers.map((ct) => `${ct.teacher.firstName} ${ct.teacher.lastName}`).join(', ')}
+            />
+          )}
         </div>
 
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>

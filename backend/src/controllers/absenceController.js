@@ -1,8 +1,26 @@
 const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
 const { PrismaClient } = require('@prisma/client');
-const { fetchAbsenceRoster, fetchAbsenceHistory, fetchLessonAttendanceSheet, saveAbsences, fetchClassStudents } = require('../services/evaluationService');
+const { fetchAbsenceRoster, fetchAbsenceRanking, fetchAbsenceHistory, fetchLessonAttendanceSheet, saveAbsences, fetchClassStudents } = require('../services/evaluationService');
 
 const prisma = new PrismaClient();
+
+function findLogo(names) {
+  const bases = [
+    path.join(process.cwd(), '../frontend/public'),
+    path.join(process.cwd(), '../../frontend/public'),
+    path.join(__dirname, '../../../frontend/public'),
+    path.join(__dirname, '../../uploads'),
+  ];
+  for (const name of names) {
+    for (const base of bases) {
+      const p = path.join(base, name);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return null;
+}
 
 async function getAbsences(req, res) {
   try {
@@ -23,6 +41,22 @@ async function getAbsences(req, res) {
     const status = error.statusCode || (error.message.includes('requis') || error.message.includes('Aucune leçon trouvée')
       ? 400
       : 500);
+    return res.status(status).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function getAbsenceRanking(req, res) {
+  try {
+    const { classId } = req.query;
+    if (!classId) {
+      return res.status(400).json({ error: 'classId est requis' });
+    }
+
+    const ranking = await fetchAbsenceRanking({ teacherUserId: req.user.id, classId });
+    return res.json({ ranking });
+  } catch (error) {
+    console.error('Erreur getAbsenceRanking:', error);
+    const status = error.statusCode || (error.message.includes('accès') ? 403 : 500);
     return res.status(status).json({ error: error.message || 'Erreur serveur' });
   }
 }
@@ -84,23 +118,46 @@ async function exportLessonAttendancePdf(req, res) {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="presence-${lesson.id}.pdf"`);
 
-    const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+    const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
     doc.pipe(res);
 
-    doc.fontSize(15).text('Feuille de présence', { underline: true });
-    doc.moveDown(0.3);
-    doc.fontSize(10).text(`Classe: ${cls.level.pole?.name || '-'} - ${cls.level.name}`);
+    /* ── logos + en-tête association ── */
+    const amcLogoPath = findLogo(['amc_logo.png']);
+    const partnerLogoPath = findLogo(['amc_logo_partner.png']);
+    const headerY = 30;
+    const logoH = 40;
+    const logoW = 100;
+    try {
+      if (amcLogoPath) doc.image(amcLogoPath, doc.page.margins.left, headerY, { fit: [logoW, logoH], align: 'left' });
+      if (partnerLogoPath) doc.image(partnerLogoPath, doc.page.width - doc.page.margins.right - logoW, headerY, { fit: [logoW, logoH], align: 'right' });
+    } catch (e) {
+      console.warn('Feuille de présence: erreur logo', e?.message);
+    }
+
+    doc.y = headerY + logoH + 10;
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#6B7280').text('ASSOCIATION PARTAGE ET DES MUSULMANS DE CLAMART', { align: 'center' });
+    doc.fontSize(9).font('Helvetica').text('Portail interne', { align: 'center' });
+    doc.moveDown(0.6);
+    doc.fontSize(16).font('Helvetica-Bold').fillColor('#000000').text('Feuille de présence', { align: 'center' });
+    doc.moveDown(0.8);
+
+    doc.fontSize(10).font('Helvetica');
+    doc.text(`Classe: ${cls.level.pole?.name || '-'} - ${cls.level.name}`);
+    doc.moveDown(0.25);
     doc.text(`Année scolaire: ${cls.schoolYear?.label || '-'}`);
+    doc.moveDown(0.25);
     doc.text(`Date de la leçon: ${new Date(lesson.date).toLocaleDateString('fr-FR')}`);
+    doc.moveDown(0.25);
     doc.text(`Cours: ${lesson.title}`);
     if (lesson.description) {
+      doc.moveDown(0.25);
       doc.text(`Description: ${lesson.description}`);
     }
-    doc.moveDown(0.8);
+    doc.moveDown(1.2);
 
     const startX = doc.x;
     let y = doc.y;
-    const rowHeight = 22;
+    const rowHeight = 28;
     const nameWidth = 220;
     const statusWidth = 80;
     const justificationWidth = 220;
@@ -110,27 +167,27 @@ async function exportLessonAttendancePdf(req, res) {
     const adjustedJustificationWidth = justificationWidth + Math.max(0, availableWidth - tableWidth);
 
     doc.rect(startX, y, nameWidth, rowHeight).stroke();
-    doc.fontSize(8).text('Élève', startX + 4, y + 7, { width: nameWidth - 8 });
+    doc.fontSize(8).text('Élève', startX + 4, y + 10, { width: nameWidth - 8 });
     doc.rect(startX + nameWidth, y, statusWidth, rowHeight).stroke();
-    doc.fontSize(8).text('Absence', startX + nameWidth + 4, y + 7, { width: statusWidth - 8, align: 'center' });
+    doc.fontSize(8).text('Absence', startX + nameWidth + 4, y + 10, { width: statusWidth - 8, align: 'center' });
     doc.rect(startX + nameWidth + statusWidth, y, adjustedJustificationWidth, rowHeight).stroke();
-    doc.fontSize(8).text('Justification', startX + nameWidth + statusWidth + 4, y + 7, { width: adjustedJustificationWidth - 8, align: 'center' });
+    doc.fontSize(8).text('Justification', startX + nameWidth + statusWidth + 4, y + 10, { width: adjustedJustificationWidth - 8, align: 'center' });
     doc.rect(startX + nameWidth + statusWidth + adjustedJustificationWidth, y, signatureWidth, rowHeight).stroke();
-    doc.fontSize(8).text('Signature', startX + nameWidth + statusWidth + adjustedJustificationWidth + 4, y + 7, { width: signatureWidth - 8, align: 'center' });
+    doc.fontSize(8).text('Signature', startX + nameWidth + statusWidth + adjustedJustificationWidth + 4, y + 10, { width: signatureWidth - 8, align: 'center' });
 
     y += rowHeight;
     students.forEach((student) => {
-      if (y > doc.page.height - 40) {
+      if (y > doc.page.height - doc.page.margins.bottom - rowHeight) {
         doc.addPage();
-        y = 30;
+        y = doc.page.margins.top;
       }
 
       doc.rect(startX, y, nameWidth, rowHeight).stroke();
-      doc.fontSize(8).text(student.studentName, startX + 4, y + 7, { width: nameWidth - 8 });
+      doc.fontSize(8).text(student.studentName, startX + 4, y + 10, { width: nameWidth - 8 });
       doc.rect(startX + nameWidth, y, statusWidth, rowHeight).stroke();
-      doc.fontSize(8).text(student.status === 'missing' ? 'Absent' : 'Présent', startX + nameWidth + 4, y + 7, { width: statusWidth - 8, align: 'center' });
+      doc.fontSize(8).text(student.status === 'missing' ? 'Absent' : 'Présent', startX + nameWidth + 4, y + 10, { width: statusWidth - 8, align: 'center' });
       doc.rect(startX + nameWidth + statusWidth, y, adjustedJustificationWidth, rowHeight).stroke();
-      doc.fontSize(8).text(student.justification || '', startX + nameWidth + statusWidth + 4, y + 7, { width: adjustedJustificationWidth - 8 });
+      doc.fontSize(8).text(student.justification || '', startX + nameWidth + statusWidth + 4, y + 10, { width: adjustedJustificationWidth - 8 });
       doc.rect(startX + nameWidth + statusWidth + adjustedJustificationWidth, y, signatureWidth, rowHeight).stroke();
       y += rowHeight;
     });
@@ -242,6 +299,7 @@ async function patchJustification(req, res) {
 
 module.exports = {
   getAbsences,
+  getAbsenceRanking,
   getClassStudents,
   getAbsenceHistory,
   exportLessonAttendancePdf,

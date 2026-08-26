@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
@@ -26,11 +27,18 @@ export default function SocialDashboard() {
   const [loading, setLoading] = useState(true);
   const canSeeBudget = user?.role === 'RESPONSABLE_POLE_SOCIAL' || user?.role === 'SUPER_ADMIN';
 
+  const [pendingOperatorCount, setPendingOperatorCount] = useState(0);
+
   useEffect(() => {
     api.get('/social/dashboard')
       .then(({ data: d }) => setData(d))
       .catch(() => toast.error('Impossible de charger le tableau de bord'))
       .finally(() => setLoading(false));
+    if (canSeeBudget) {
+      api.get('/social/role-requests/pending')
+        .then(({ data: d }) => setPendingOperatorCount((d.requests || []).length))
+        .catch(() => {});
+    }
   }, []);
 
   if (loading) return <p>Chargement…</p>;
@@ -44,6 +52,15 @@ export default function SocialDashboard() {
   return (
     <div>
       <h2 style={{ color: 'var(--amc-primary)', marginBottom: 20 }}>Tableau de bord — Pôle Social</h2>
+
+      {canSeeBudget && pendingOperatorCount > 0 && (
+        <div className="card" style={{ marginBottom: 16, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+          <span style={{ fontSize: 13, color: '#92400E' }}>
+            {pendingOperatorCount} demande{pendingOperatorCount > 1 ? 's' : ''} de rôle Opérateur Social en attente de validation
+          </span>
+          <Link to="/social/operators" className="btn btn-sm btn-outline">Voir les opérateurs</Link>
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="stats-grid" style={{ marginBottom: 20 }}>

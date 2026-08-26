@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
+const { actAsClassTeacher, POLE_MANAGER_ROLES } = require('../middleware/poleManagerDelegation');
 const {
   getEvaluations,
   postEvaluation,
@@ -11,7 +12,7 @@ const {
 } = require('../controllers/evaluationController');
 
 const router = Router();
-router.use(authenticate, authorize('PROFESSEUR'));
+router.use(authenticate, authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher);
 
 router.get('/', getEvaluations);
 router.get('/stats', getEvaluationStats);

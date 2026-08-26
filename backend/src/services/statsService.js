@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { classAccessWhere } = require('../utils/classAccessUtils');
 
 const prisma = new PrismaClient();
 
@@ -11,7 +12,7 @@ async function computeModuleStats({ teacherUserId, classId, module }) {
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
   const classRecord = await prisma.class.findFirst({
-    where: { id: classId, teacherId: teacherProfile.id },
+    where: { id: classId, ...classAccessWhere(teacherProfile.id) },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
 

@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
 const path = require('path');
+const { classAccessWhere } = require('../utils/classAccessUtils');
 
 const prisma = new PrismaClient();
 
@@ -12,7 +13,7 @@ async function saveHomeworkMessage({ teacherUserId, classId, date, message, atta
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw new Error('Vous n’avez pas accès à cette classe');
   if (!date || !message) throw new Error('date et message sont requis');
 
@@ -77,7 +78,7 @@ async function fetchHomeworkMessage({ teacherUserId, classId, date }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw new Error('Vous n’avez pas accès à cette classe');
   if (!date) throw new Error('Date est requise');
 
@@ -120,7 +121,7 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw new Error('Vous n’avez pas accès à cette classe');
 
   // Get current school year (September to August)
@@ -135,7 +136,11 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
     schoolYearEnd.setFullYear(currentYear);
   }
 
-  return prisma.homeworkMessage.findMany({
+  const totalStudents = await prisma.enrollment.count({
+    where: { classId, status: { in: ['PENDING', 'CONFIRMED'] } },
+  });
+
+  const homeworks = await prisma.homeworkMessage.findMany({
     where: {
       classId,
       date: {
@@ -143,8 +148,24 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
         lte: schoolYearEnd,
       },
     },
+    include: {
+      completions: {
+        include: { student: true },
+        orderBy: { completedAt: 'asc' },
+      },
+    },
     orderBy: { date: 'desc' },
   });
+
+  return homeworks.map((homework) => ({
+    ...homework,
+    completions: homework.completions.map((completion) => ({
+      studentId: completion.studentId,
+      studentName: `${completion.student.firstName} ${completion.student.lastName}`,
+      completedAt: completion.completedAt,
+    })),
+    totalStudents,
+  }));
 }
 
 async function deleteHomeworkMessage({ teacherUserId, homeworkId }) {
@@ -154,7 +175,7 @@ async function deleteHomeworkMessage({ teacherUserId, homeworkId }) {
   const homework = await prisma.homeworkMessage.findUnique({ where: { id: homeworkId } });
   if (!homework) throw new Error('Devoir introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: homework.classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: homework.classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw new Error('Vous n’avez pas accès à ce devoir');
 
   if (homework.attachmentUrl && homework.attachmentUrl.startsWith('/uploads/homeworks/')) {

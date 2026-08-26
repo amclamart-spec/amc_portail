@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Elements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import toast from 'react-hot-toast';
@@ -126,6 +126,7 @@ function getDefaultState(prefill = {}) {
     },
     members: [],
     courseSelections: [],
+    eventSelections: [],
     healthForms: {},
     engagement: {
       readAndApproved: false,
@@ -203,6 +204,11 @@ function isClassAllowedForAge(cls, age) {
   return true;
 }
 
+function fmtEventDateTime(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function isLevelAllowedForAge(level, age) {
   if (age === null) return true;
   const minAge = level?.minAge;
@@ -224,6 +230,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [allClasses, setAllClasses] = useState([]);
   const [poles, setPoles] = useState([]);
+  const [openEvents, setOpenEvents] = useState([]);
   const [pricingPreview, setPricingPreview] = useState(null);
   const [courseFilterPoleId, setCourseFilterPoleId] = useState('');
   const [courseFilterDay, setCourseFilterDay] = useState('');
@@ -401,6 +408,7 @@ export default function FamilyRegistrationWizard({ existingFamily = false }) {
 
   useEffect(() => {
     api.get('/enrollments/poles').then(({ data }) => setPoles(data.poles || [])).catch(() => {});
+    api.get('/family-wizard/events').then(({ data }) => setOpenEvents(data.events || [])).catch(() => {});
     setLoadingClasses(true);
     api.get('/enrollments/classes')
       .then(({ data }) => setAllClasses((data.classes || []).filter((cls) => cls.status !== 'CLOSED')))
@@ -853,6 +861,10 @@ const selectedEnrollmentsLabel = useMemo(() => {
         ...s,
         memberIndex: s.memberIndex > index ? s.memberIndex - 1 : s.memberIndex,
       }));
+      const eventSelections = prev.eventSelections.filter((s) => s.memberIndex !== index).map((s) => ({
+        ...s,
+        memberIndex: s.memberIndex > index ? s.memberIndex - 1 : s.memberIndex,
+      }));
 
       const healthForms = {};
       members.forEach((_, idx) => {
@@ -860,7 +872,7 @@ const selectedEnrollmentsLabel = useMemo(() => {
         healthForms[idx] = prev.healthForms[sourceIndex] || { ...emptyHealthForm };
       });
 
-      return { ...prev, members, courseSelections, healthForms };
+      return { ...prev, members, courseSelections, eventSelections, healthForms };
     });
 
     setActiveHealthMember(0);
@@ -873,6 +885,16 @@ const selectedEnrollmentsLabel = useMemo(() => {
         ? prev.courseSelections.filter((s) => !(s.memberIndex === memberIndex && s.classId === classId))
         : [...prev.courseSelections, { memberIndex, classId }];
       return { ...prev, courseSelections: nextSelections };
+    });
+  };
+
+  const toggleEventSelection = (memberIndex, eventId) => {
+    setWizard((prev) => {
+      const exists = prev.eventSelections.some((s) => s.memberIndex === memberIndex && s.eventId === eventId);
+      const nextSelections = exists
+        ? prev.eventSelections.filter((s) => !(s.memberIndex === memberIndex && s.eventId === eventId))
+        : [...prev.eventSelections, { memberIndex, eventId }];
+      return { ...prev, eventSelections: nextSelections };
     });
   };
 
@@ -953,7 +975,12 @@ const selectedEnrollmentsLabel = useMemo(() => {
     return (
       <div style={{ minHeight: '100vh', background: '#F8FAFC', padding: 20 }}>
         <div className="card" style={{ maxWidth: 700, margin: '0 auto', padding: 24 }}>
-          <h2 style={{ color: 'var(--amc-primary)', marginBottom: 16 }}>Signature du mandat SEPA</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+            <h2 style={{ color: 'var(--amc-primary)', marginBottom: 16 }}>Signature du mandat SEPA</h2>
+            <Link to="/login" style={{ fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap' }}>
+              Déjà un compte ? Se connecter
+            </Link>
+          </div>
           <p style={{ color: '#475569', marginBottom: 18 }}>
             Votre inscription est enregistrée. Veuillez signer le mandat SEPA pour autoriser le premier prélèvement.
           </p>
@@ -997,9 +1024,14 @@ const selectedEnrollmentsLabel = useMemo(() => {
           <img src="/amc_logo.png" alt="AMC Logo" style={{ height: 50, objectFit: 'contain' }} />
           <img src="/amc_logo_partner.png" alt="PARTAGE Logo" style={{ height: 50, objectFit: 'contain' }} />
         </div>
-        <h2 style={{ color: 'var(--amc-primary)', marginBottom: 8 }}>
-          {existingFamily ? 'Ajouter un enfant et finaliser son inscription' : 'Assistant Inscription Famille'}
-        </h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <h2 style={{ color: 'var(--amc-primary)', marginBottom: 8 }}>
+            {existingFamily ? 'Ajouter un enfant et finaliser son inscription' : 'Assistant Inscription Famille'}
+          </h2>
+          <Link to="/login" style={{ fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Déjà un compte ? Se connecter
+          </Link>
+        </div>
         <p style={{ color: '#64748B', marginBottom: 20 }}>Étape {step + 1}/{steps.length} — {steps[step]}</p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 24 }}>
@@ -1505,6 +1537,35 @@ const selectedEnrollmentsLabel = useMemo(() => {
                           </div>
                         );
                       })()}
+
+                      {openEvents.length > 0 && (
+                        <div style={{ borderRadius: 16, background: '#ffffff', border: '1px solid #E2E8F0', padding: 16 }}>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: '#1D4ED8', marginBottom: 4 }}>Événements</div>
+                          <p style={{ margin: '0 0 12px', color: '#64748B', fontSize: 13 }}>
+                            Souhaitez-vous également inscrire {member.firstName || 'cet enfant'} à l'un de ces événements ouverts à l'inscription ?
+                          </p>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+                            {openEvents.map((ev) => {
+                              const selected = wizard.eventSelections.some((s) => s.memberIndex === memberIndex && s.eventId === ev.id);
+                              return (
+                                <label key={ev.id} style={{ borderRadius: 14, border: '1px solid', borderColor: selected ? '#2563EB' : '#E2E8F0', background: selected ? '#EFF6FF' : '#FFFFFF', padding: 14, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', cursor: 'pointer', minHeight: 100 }}>
+                                  <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+                                      <div style={{ fontSize: 14, fontWeight: 700 }}>{ev.title}</div>
+                                      {selected && <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#DBEAFE', borderRadius: 999, padding: '4px 10px' }}>Sélectionné</span>}
+                                    </div>
+                                    <div style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>{fmtEventDateTime(ev.startDate)}</div>
+                                    {ev.location && <div style={{ fontSize: 12, color: '#475569' }}>{ev.location}</div>}
+                                  </div>
+                                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: 12 }}>
+                                    <input type="checkbox" checked={selected} onChange={() => toggleEventSelection(memberIndex, ev.id)} />
+                                  </div>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

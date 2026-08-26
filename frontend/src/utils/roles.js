@@ -1,5 +1,5 @@
 export const ROLE_HOME = {
-  SUPER_ADMIN: '/admin',
+  SUPER_ADMIN: '/super-admin',
   ADMIN: '/admin',
   TRESORIER: '/tresorier',
   PROFESSEUR: '/professeur',
@@ -10,6 +10,10 @@ export const ROLE_HOME = {
   RESPONSABLE_POLE_SCIENCE_IS:  '/admin',
   RESPONSABLE_POLE_SOCIAL:      '/social',
   OPERATEUR_SOCIAL:             '/social',
+  RESPONSABLE_POLE_BENEVOLES:   '/volunteers',
+  BENEVOLE:                     '/volunteers/card',
+  RESPONSABLE_RH:               '/hr',
+  SALARIE:                      '/hr/payslips',
 };
 
 export const ROLE_LABEL = {
@@ -24,6 +28,10 @@ export const ROLE_LABEL = {
   RESPONSABLE_POLE_SCIENCE_IS:  'Responsable Pôle Sciences Islamiques',
   RESPONSABLE_POLE_SOCIAL:      'Responsable Pôle Social',
   OPERATEUR_SOCIAL:             'Opérateur Social',
+  RESPONSABLE_POLE_BENEVOLES:   'Responsable Pôle Bénévoles',
+  BENEVOLE:                     'Espace Bénévole',
+  RESPONSABLE_RH:               'Responsable RH',
+  SALARIE:                      'Espace Salarié',
 };
 
 export const RESPONSABLE_POLE_ROLES = [

@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
+const { actAsClassTeacher, POLE_MANAGER_ROLES } = require('../middleware/poleManagerDelegation');
 const {
   postHomeworkMessage,
   getHomeworkMessage,
@@ -11,10 +12,10 @@ const {
 const router = Router();
 
 router.use(authenticate);
-router.post('/', authorize('PROFESSEUR'), postHomeworkMessage);
-router.get('/history', authorize('PROFESSEUR'), getHomeworkHistory);
-router.get('/', authorize('PROFESSEUR'), getHomeworkMessage);
-router.delete('/:id', authorize('PROFESSEUR'), deleteHomeworkMessage);
+router.post('/', authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher, postHomeworkMessage);
+router.get('/history', authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher, getHomeworkHistory);
+router.get('/', authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher, getHomeworkMessage);
+router.delete('/:id', authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher, deleteHomeworkMessage);
 router.get('/family', authorize('FAMILLE'), getFamilyHomeworkMessages);
 
 module.exports = router;

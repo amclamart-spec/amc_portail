@@ -1,9 +1,10 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const { PrismaClient, Prisma } = require('@prisma/client');
 const { v4: uuidv4 } = require('uuid');
-const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail } = require('../services/emailService');
+const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendAccountInvitationEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail, sendRoleRequestApprovedEmail, sendRoleRequestRejectedEmail } = require('../services/emailService');
 const { finalizeStripePayment, cancelStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { saveBase64File } = require('../utils/fileUtils');
@@ -16,6 +17,12 @@ const prisma = new PrismaClient();
 
 function normalizeId(value) {
   return String(value || '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
+}
+
+// P\u00F4le Coran uniquement : une classe peut y \u00EAtre g\u00E9r\u00E9e par plusieurs professeurs
+// (professeur r\u00E9f\u00E9rent teacherId + professeurs suppl\u00E9mentaires via ClassTeacher).
+function isCoranPoleName(poleName) {
+  return String(poleName || '').toLowerCase().includes('coran');
 }
 
 async function confirmStripePaymentsForEnrollment(enrollmentId) {
@@ -110,7 +117,7 @@ function dateRangesOverlap(fromA, toA, fromB, toB) {
 }
 
 // Uses raw SQL to avoid dependency on Prisma client having validFrom/validTo in its schema
-async function validateClassConflicts({ classId, schoolYearId, teacherId, roomId, dayOfWeek, startTime, endTime, validFrom, validTo }) {
+async function validateClassConflicts({ classId, schoolYearId, teacherId, additionalTeacherIds = [], roomId, dayOfWeek, startTime, endTime, validFrom, validTo }) {
   const start = parseTimeToMinutes(startTime);
   const end = parseTimeToMinutes(endTime);
 
@@ -130,10 +137,25 @@ async function validateClassConflicts({ classId, schoolYearId, teacherId, roomId
     }
   }
 
-  if (teacherId) {
+  // Vérifie les conflits pour le professeur référent ET les professeurs
+  // supplémentaires (pôle Coran) : un professeur ne peut pas être affecté
+  // (référent ou non) à deux classes qui se chevauchent le même jour.
+  const allTeacherIds = [...new Set([teacherId, ...additionalTeacherIds].filter(Boolean))];
+  for (const currentTeacherId of allTeacherIds) {
     const teacherClasses = classId
-      ? await prisma.$queryRaw`SELECT id, start_time as "startTime", end_time as "endTime", valid_from as "validFrom", valid_to as "validTo" FROM classes WHERE school_year_id = ${schoolYearId} AND day_of_week = ${dayOfWeek} AND teacher_id = ${teacherId} AND id != ${classId}`
-      : await prisma.$queryRaw`SELECT id, start_time as "startTime", end_time as "endTime", valid_from as "validFrom", valid_to as "validTo" FROM classes WHERE school_year_id = ${schoolYearId} AND day_of_week = ${dayOfWeek} AND teacher_id = ${teacherId}`;
+      ? await prisma.$queryRaw`
+          SELECT DISTINCT c.id, c.start_time as "startTime", c.end_time as "endTime", c.valid_from as "validFrom", c.valid_to as "validTo"
+          FROM classes c
+          LEFT JOIN class_teachers ct ON ct.class_id = c.id
+          WHERE c.school_year_id = ${schoolYearId} AND c.day_of_week = ${dayOfWeek}
+            AND (c.teacher_id = ${currentTeacherId} OR ct.teacher_id = ${currentTeacherId})
+            AND c.id != ${classId}`
+      : await prisma.$queryRaw`
+          SELECT DISTINCT c.id, c.start_time as "startTime", c.end_time as "endTime", c.valid_from as "validFrom", c.valid_to as "validTo"
+          FROM classes c
+          LEFT JOIN class_teachers ct ON ct.class_id = c.id
+          WHERE c.school_year_id = ${schoolYearId} AND c.day_of_week = ${dayOfWeek}
+            AND (c.teacher_id = ${currentTeacherId} OR ct.teacher_id = ${currentTeacherId})`;
 
     for (const cls of teacherClasses) {
       const clsStart = parseTimeToMinutes(cls.startTime);
@@ -178,20 +200,67 @@ async function getPendingUsers(req, res) {
 /**
  * GET /api/admin/users
  */
+const ADMIN_VISIBLE_ROLES = ['FAMILLE', 'PROFESSEUR', 'TRESORIER'];
+
+// Chaque responsable de pôle pédagogique ne gère que les Familles ayant au moins une
+// inscription dans son pôle, et les Professeurs affectés à son pôle.
+const ROLE_POLE_NAME = {
+  RESPONSABLE_POLE_CORAN: 'Coran',
+  RESPONSABLE_POLE_ARABE: 'Arabe',
+  RESPONSABLE_POLE_SOUTIEN_SCO: 'Soutien scolaire',
+  RESPONSABLE_POLE_SCIENCE_IS: 'Sciences islamiques',
+};
+
+async function getPoleIdForRole(role) {
+  const poleName = ROLE_POLE_NAME[role];
+  if (!poleName) return null;
+  const pole = await prisma.pole.findFirst({ where: { name: poleName } });
+  return pole ? pole.id : null;
+}
+
+function poleScopeWhere(poleId) {
+  return {
+    OR: [
+      { role: 'FAMILLE', family: { students: { some: { enrollments: { some: { class: { level: { poleId } } } } } } } },
+      // Un professeur non encore rattaché à un pôle (nouvelle inscription en attente, ou compte
+      // historique jamais rattaché) reste visible par tous les responsables tant qu'il n'est pas
+      // affecté — le premier à le valider/l'affecter le rattache à son pôle.
+      {
+        AND: [
+          { role: 'PROFESSEUR' },
+          { OR: [{ teacherProfile: { poleId } }, { teacherProfile: null }, { teacherProfile: { poleId: null } }] },
+        ],
+      },
+    ],
+  };
+}
+
+async function isUserInPoleScope(userId, poleId) {
+  const user = await prisma.user.findFirst({ where: { id: userId, ...poleScopeWhere(poleId) }, select: { id: true } });
+  return !!user;
+}
+
 async function getAllUsers(req, res) {
   try {
     const { status, role, page = 1, limit = 20 } = req.query;
-    const where = {};
-    if (status) where.validationStatus = status;
-    if (role) where.role = role;
+    const poleId = await getPoleIdForRole(req.user.role);
+    const isPoleScoped = !!poleId;
+    const visibleRoles = isPoleScoped ? ['FAMILLE', 'PROFESSEUR'] : ADMIN_VISIBLE_ROLES;
+
+    const conditions = [isPoleScoped ? poleScopeWhere(poleId) : { role: { in: visibleRoles } }];
+    if (status) conditions.push({ validationStatus: status });
+    if (role && visibleRoles.includes(role)) conditions.push({ role });
     const name = String(req.query.name || '').trim();
     if (name) {
-      where.OR = [
-        { firstName: { contains: name, mode: 'insensitive' } },
-        { lastName: { contains: name, mode: 'insensitive' } },
-        { email: { contains: name, mode: 'insensitive' } },
-      ];
+      conditions.push({
+        OR: [
+          { firstName: { contains: name, mode: 'insensitive' } },
+          { lastName: { contains: name, mode: 'insensitive' } },
+          { email: { contains: name, mode: 'insensitive' } },
+        ],
+      });
     }
+    const where = { AND: conditions };
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -204,6 +273,7 @@ async function getAllUsers(req, res) {
           phone: true,
           role: true,
           validationStatus: true,
+          isActive: true,
           emailVerified: true,
           createdAt: true,
           lastLogin: true,
@@ -217,7 +287,7 @@ async function getAllUsers(req, res) {
       prisma.user.count({ where }),
     ]);
 
-    res.json({ users, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
+    res.json({ users, total, page: parseInt(page, 10), limit: parseInt(limit, 10), poleScoped: isPoleScoped, availableRoles: visibleRoles });
   } catch (error) {
     console.error('Erreur getAllUsers:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -229,6 +299,14 @@ async function getAllUsers(req, res) {
  */
 async function approveUser(req, res) {
   try {
+    const poleId = await getPoleIdForRole(req.user.role);
+    if (poleId) {
+      const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+      if (!target || target.role !== 'PROFESSEUR') {
+        return res.status(403).json({ error: 'Vous ne pouvez valider que des comptes Professeur de votre pôle' });
+      }
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.update({
         where: { id: req.params.id },
@@ -246,8 +324,11 @@ async function approveUser(req, res) {
               lastName: user.lastName,
               email: user.email,
               phone: user.phone,
+              poleId: poleId || null,
             },
           });
+        } else if (poleId && !teacher.poleId) {
+          teacher = await tx.teacher.update({ where: { id: teacher.id }, data: { poleId } });
         }
       }
 
@@ -275,6 +356,14 @@ async function approveUser(req, res) {
 async function rejectUser(req, res) {
   try {
     const { reason } = req.body;
+    const poleId = await getPoleIdForRole(req.user.role);
+    if (poleId) {
+      const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+      if (!target || target.role !== 'PROFESSEUR') {
+        return res.status(403).json({ error: 'Vous ne pouvez refuser que des comptes Professeur de votre pôle' });
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: { validationStatus: 'REJECTED' },
@@ -283,6 +372,104 @@ async function rejectUser(req, res) {
     res.json({ message: 'Compte refusé', user: { id: user.id, email: user.email, validationStatus: user.validationStatus } });
   } catch (error) {
     console.error('Erreur rejectUser:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// ─── DEMANDES DE RÔLE PROFESSEUR (self-service depuis "Mes rôles") ────────────────
+// Un compte existant (Famille, Bénévole...) peut demander depuis son espace à devenir
+// Professeur en plus de son rôle actuel. La demande reste PENDING (UserRole.status) jusqu'à
+// validation par un responsable de pôle — même logique "non affecté visible par tous" que les
+// nouvelles inscriptions Professeur classiques (poleScopeWhere), le premier qui valide rattache.
+
+/**
+ * GET /api/admin/role-requests/pending
+ */
+async function getPendingRoleRequests(req, res) {
+  try {
+    const poleId = await getPoleIdForRole(req.user.role);
+    const where = {
+      role: 'PROFESSEUR',
+      status: 'PENDING',
+      ...(poleId ? { OR: [{ poleId }, { poleId: null }] } : {}),
+    };
+    const requests = await prisma.userRole.findMany({
+      where,
+      include: { user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json({ requests });
+  } catch (error) {
+    console.error('Erreur getPendingRoleRequests:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/role-requests/:id/approve
+ */
+async function approveRoleRequest(req, res) {
+  try {
+    const { id } = req.params;
+    const request = await prisma.userRole.findUnique({ where: { id }, include: { user: true } });
+    if (!request || request.role !== 'PROFESSEUR' || request.status !== 'PENDING') {
+      return res.status(404).json({ error: 'Demande introuvable' });
+    }
+    const poleId = await getPoleIdForRole(req.user.role);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.userRole.update({
+        where: { id },
+        data: { status: 'APPROVED', decidedBy: req.user.id, decidedAt: new Date() },
+      });
+
+      let teacher = await tx.teacher.findUnique({ where: { userId: request.userId } });
+      if (!teacher) {
+        teacher = await tx.teacher.create({
+          data: {
+            userId: request.userId,
+            firstName: request.user.firstName,
+            lastName: request.user.lastName,
+            email: request.user.email,
+            phone: request.user.phone,
+            poleId: poleId || null,
+          },
+        });
+      } else if (poleId && !teacher.poleId) {
+        teacher = await tx.teacher.update({ where: { id: teacher.id }, data: { poleId } });
+      }
+
+      return { updated, teacher };
+    });
+
+    await sendRoleRequestApprovedEmail(request.user, 'Professeur');
+    res.json({ request: { id: result.updated.id, status: result.updated.status } });
+  } catch (error) {
+    console.error('Erreur approveRoleRequest:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/role-requests/:id/reject
+ */
+async function rejectRoleRequest(req, res) {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const request = await prisma.userRole.findUnique({ where: { id }, include: { user: true } });
+    if (!request || request.role !== 'PROFESSEUR' || request.status !== 'PENDING') {
+      return res.status(404).json({ error: 'Demande introuvable' });
+    }
+
+    const updated = await prisma.userRole.update({
+      where: { id },
+      data: { status: 'REJECTED', decidedBy: req.user.id, decidedAt: new Date(), rejectionReason: reason || null },
+    });
+    await sendRoleRequestRejectedEmail(request.user, 'Professeur', reason);
+    res.json({ request: { id: updated.id, status: updated.status } });
+  } catch (error) {
+    console.error('Erreur rejectRoleRequest:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -2433,6 +2620,7 @@ async function getClasses(req, res) {
         roomRef: true,
         teacher: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } },
         classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
+        classTeachers: { include: { teacher: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } } } },
         _count: {
           select: {
             enrollments: {
@@ -2495,6 +2683,7 @@ async function getClassDetails(req, res) {
         classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
         roomRef: true,
         teacher: { include: { user: { select: { firstName: true, lastName: true, email: true, phone: true } } } },
+        classTeachers: { include: { teacher: { include: { user: { select: { firstName: true, lastName: true, email: true, phone: true } } } } } },
         enrollments: {
           where: { status: { in: ['PENDING', 'CONFIRMED'] } },
           include: {
@@ -2623,6 +2812,10 @@ async function createClass(req, res) {
       ? rawIds
       : (req.body.timeSlotId ? [req.body.timeSlotId] : []);
 
+    // Professeurs supplémentaires (pôle Coran uniquement)
+    const rawAdditionalTeacherIds = Array.isArray(req.body.additionalTeacherIds) ? req.body.additionalTeacherIds : [];
+    const additionalTeacherIds = [...new Set(rawAdditionalTeacherIds.filter((tid) => tid && tid !== teacherId))];
+
     const isProvisionalBool = Boolean(isProvisional);
 
     if (!schoolYearId || !poleId) {
@@ -2643,6 +2836,15 @@ async function createClass(req, res) {
     }
     if (!isProvisionalBool && !teacher) {
       return res.status(404).json({ error: 'Professeur introuvable' });
+    }
+    if (additionalTeacherIds.length > 0 && !isCoranPoleName(pole.name)) {
+      return res.status(400).json({ error: 'Les professeurs supplémentaires ne sont disponibles que pour le pôle Coran' });
+    }
+    if (additionalTeacherIds.length > 0) {
+      const additionalTeachers = await prisma.teacher.findMany({ where: { id: { in: additionalTeacherIds } } });
+      if (additionalTeachers.length !== additionalTeacherIds.length) {
+        return res.status(404).json({ error: 'Un ou plusieurs professeurs supplémentaires sont introuvables' });
+      }
     }
 
     // Resolve level: required for non-provisional; for provisional, fall back to first level of the pole
@@ -2679,6 +2881,7 @@ async function createClass(req, res) {
       const conflictError = await validateClassConflicts({
         schoolYearId,
         teacherId,
+        additionalTeacherIds,
         roomId: slot.roomId,
         dayOfWeek: slot.dayOfWeek,
         startTime: slot.startTime,
@@ -2723,6 +2926,12 @@ async function createClass(req, res) {
         });
       }
 
+      if (additionalTeacherIds.length > 0) {
+        await tx.classTeacher.createMany({
+          data: additionalTeacherIds.map((tid) => ({ classId: created.id, teacherId: tid })),
+        });
+      }
+
       // Set validFrom/validTo/applyEnrollmentFee/examPreparation/isProvisional via raw SQL (Prisma client may not know these fields yet)
       const applyFee = applyEnrollmentFee !== false;
       const examPrep = Boolean(examPreparation);
@@ -2743,6 +2952,7 @@ async function createClass(req, res) {
         roomRef: true,
         teacher: { include: { user: true } },
         classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
+        classTeachers: { include: { teacher: { include: { user: true } } } },
       },
     });
 
@@ -2784,9 +2994,10 @@ async function updateClass(req, res) {
       genre: req.body.genre !== undefined ? ((['Tout', 'Masculin', 'Feminin'].includes(req.body.genre) ? req.body.genre : 'Tout')) : (existingRaw?.genre ?? 'Tout'),
     };
 
-    const [level, teacher] = await Promise.all([
+    const [level, teacher, nextPole] = await Promise.all([
       prisma.level.findUnique({ where: { id: next.levelId } }),
       next.teacherId ? prisma.teacher.findUnique({ where: { id: next.teacherId }, include: { user: true } }) : null,
+      next.poleId ? prisma.pole.findUnique({ where: { id: next.poleId } }) : null,
     ]);
 
     if (!level) return res.status(400).json({ error: 'Niveau invalide' });
@@ -2794,6 +3005,27 @@ async function updateClass(req, res) {
       return res.status(400).json({ error: 'Le niveau sélectionné ne correspond pas au pôle choisi' });
     }
     if (next.teacherId && !teacher) return res.status(400).json({ error: 'Professeur invalide' });
+
+    // Professeurs supplémentaires (pôle Coran uniquement) : non fourni = inchangé
+    const additionalTeacherIdsProvided = Array.isArray(req.body.additionalTeacherIds);
+    const additionalTeacherIds = additionalTeacherIdsProvided
+      ? [...new Set(req.body.additionalTeacherIds.filter((tid) => tid && tid !== next.teacherId))]
+      : null;
+    if (additionalTeacherIdsProvided && additionalTeacherIds.length > 0) {
+      if (!isCoranPoleName(nextPole?.name)) {
+        return res.status(400).json({ error: 'Les professeurs supplémentaires ne sont disponibles que pour le pôle Coran' });
+      }
+      const additionalTeachers = await prisma.teacher.findMany({ where: { id: { in: additionalTeacherIds } } });
+      if (additionalTeachers.length !== additionalTeacherIds.length) {
+        return res.status(404).json({ error: 'Un ou plusieurs professeurs supplémentaires sont introuvables' });
+      }
+    }
+
+    // Pour la validation des conflits : ensemble effectif des profs supplémentaires
+    // (celui envoyé, sinon celui déjà en base pour cette classe)
+    const effectiveAdditionalTeacherIds = additionalTeacherIdsProvided
+      ? additionalTeacherIds
+      : (await prisma.classTeacher.findMany({ where: { classId: id }, select: { teacherId: true } })).map((ct) => ct.teacherId);
 
     // Resolve time slots to update
     let newTimeSlots = null;
@@ -2811,6 +3043,7 @@ async function updateClass(req, res) {
           classId: id,
           schoolYearId: next.schoolYearId,
           teacherId: next.teacherId,
+          additionalTeacherIds: effectiveAdditionalTeacherIds,
           roomId: slot.roomId,
           dayOfWeek: slot.dayOfWeek,
           startTime: slot.startTime,
@@ -2826,6 +3059,7 @@ async function updateClass(req, res) {
         classId: id,
         schoolYearId: next.schoolYearId,
         teacherId: next.teacherId,
+        additionalTeacherIds: effectiveAdditionalTeacherIds,
         roomId: existing.roomId,
         dayOfWeek: existing.dayOfWeek,
         startTime: existing.startTime,
@@ -2844,6 +3078,15 @@ async function updateClass(req, res) {
         await tx.classTimeSlot.createMany({
           data: timeSlotIds.map((tsId, idx) => ({ classId: id, timeSlotId: tsId, sortOrder: idx })),
         });
+      }
+
+      if (additionalTeacherIdsProvided) {
+        await tx.classTeacher.deleteMany({ where: { classId: id } });
+        if (additionalTeacherIds.length > 0) {
+          await tx.classTeacher.createMany({
+            data: additionalTeacherIds.map((tid) => ({ classId: id, teacherId: tid })),
+          });
+        }
       }
 
       const updatedClass = await tx.class.update({
@@ -2874,6 +3117,7 @@ async function updateClass(req, res) {
           roomRef: true,
           teacher: { include: { user: true } },
           classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
+          classTeachers: { include: { teacher: { include: { user: true } } } },
         },
       });
 
@@ -3372,11 +3616,23 @@ async function resetTeacherPassword(req, res) {
   }
 }
 
+async function assertUserInCallerScope(req, res, userId) {
+  const poleId = await getPoleIdForRole(req.user.role);
+  if (!poleId) return true; // ADMIN / SUPER_ADMIN : pas de restriction de pôle
+  const inScope = await isUserInPoleScope(userId, poleId);
+  if (!inScope) {
+    res.status(403).json({ error: 'Cet utilisateur ne fait pas partie de votre pôle' });
+    return false;
+  }
+  return true;
+}
+
 async function unlockUser(req, res) {
   try {
     const { id } = req.params;
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (!(await assertUserInCallerScope(req, res, id))) return;
 
     await prisma.user.update({
       where: { id },
@@ -3395,6 +3651,7 @@ async function resetUserPassword(req, res) {
     const { id } = req.params;
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (!(await assertUserInCallerScope(req, res, id))) return;
 
     const temporaryPassword = `AMC-${uuidv4().slice(0, 10)}`;
     const passwordHash = await bcrypt.hash(temporaryPassword, 12);
@@ -3411,14 +3668,151 @@ async function resetUserPassword(req, res) {
   }
 }
 
+/**
+ * PUT /api/admin/users/:id — modifier les informations de base d'un utilisateur
+ */
+async function updateUserDetails(req, res) {
+  try {
+    const { id } = req.params;
+    const { firstName, lastName, email, phone } = req.body;
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (!(await assertUserInCallerScope(req, res, id))) return;
+
+    if (email && email !== user.email) {
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        ...(firstName !== undefined && { firstName }),
+        ...(lastName !== undefined && { lastName }),
+        ...(email !== undefined && { email }),
+        ...(phone !== undefined && { phone }),
+      },
+    });
+
+    // Garder la fiche Professeur cohérente si elle existe
+    if (updated.role === 'PROFESSEUR') {
+      const teacher = await prisma.teacher.findUnique({ where: { userId: id } });
+      if (teacher) {
+        await prisma.teacher.update({
+          where: { id: teacher.id },
+          data: {
+            ...(firstName !== undefined && { firstName }),
+            ...(lastName !== undefined && { lastName }),
+            ...(email !== undefined && { email }),
+            ...(phone !== undefined && { phone }),
+          },
+        });
+      }
+    }
+
+    res.json({
+      user: {
+        id: updated.id, email: updated.email, firstName: updated.firstName, lastName: updated.lastName,
+        phone: updated.phone, role: updated.role, validationStatus: updated.validationStatus, isActive: updated.isActive,
+      },
+    });
+  } catch (error) {
+    console.error('Erreur updateUserDetails:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * PUT /api/admin/users/:id/active — activer ou désactiver un compte (réversible, sans perte de données)
+ */
+async function toggleUserActive(req, res) {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+    if (typeof isActive !== 'boolean') return res.status(400).json({ error: 'isActive doit être un booléen' });
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (!(await assertUserInCallerScope(req, res, id))) return;
+
+    if (req.user.id === id && !isActive) {
+      return res.status(400).json({ error: 'Vous ne pouvez pas désactiver votre propre compte' });
+    }
+
+    const updated = await prisma.user.update({ where: { id }, data: { isActive } });
+    res.json({ user: { id: updated.id, isActive: updated.isActive } });
+  } catch (error) {
+    console.error('Erreur toggleUserActive:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * POST /api/admin/users — créer un utilisateur (Famille, Professeur ou Trésorier ; Trésorier réservé à Admin/Super Admin)
+ */
+async function createUser(req, res) {
+  try {
+    const { firstName, lastName, email, phone, role } = req.body;
+    if (!firstName || !lastName || !email || !role) {
+      return res.status(400).json({ error: 'Prénom, nom, email et rôle sont requis' });
+    }
+
+    const poleId = await getPoleIdForRole(req.user.role);
+    const allowedRoles = poleId ? ['FAMILLE', 'PROFESSEUR'] : ADMIN_VISIBLE_ROLES;
+    if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 jours
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        provider: 'local',
+        firstName,
+        lastName,
+        phone: phone || null,
+        role,
+        validationStatus: 'APPROVED',
+        emailVerified: true,
+        resetPasswordToken: token,
+        resetPasswordExpires: expires,
+      },
+    });
+
+    if (role === 'PROFESSEUR') {
+      await prisma.teacher.create({
+        data: { userId: user.id, firstName: user.firstName, lastName: user.lastName, email: user.email, phone: user.phone, poleId: poleId || null },
+      });
+    }
+
+    try {
+      await sendAccountInvitationEmail(user, token);
+    } catch (emailError) {
+      console.error('Erreur envoi email invitation compte:', emailError);
+    }
+
+    res.status(201).json({ user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role } });
+  } catch (error) {
+    console.error('Erreur createUser:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 async function deleteTeacher(req, res) {
   try {
     const { id } = req.params;
     const teacher = await prisma.teacher.findUnique({ where: { id } });
     if (!teacher) return res.status(404).json({ error: 'Professeur introuvable' });
 
-    const assignedClasses = await prisma.class.count({ where: { teacherId: id } });
-    if (assignedClasses > 0) {
+    const [assignedClasses, assignedAsAdditionalTeacher] = await Promise.all([
+      prisma.class.count({ where: { teacherId: id } }),
+      prisma.classTeacher.count({ where: { teacherId: id } }),
+    ]);
+    if (assignedClasses > 0 || assignedAsAdditionalTeacher > 0) {
       return res.status(400).json({ error: 'Impossible de supprimer un professeur avec des classes assignées' });
     }
 
@@ -3439,6 +3833,9 @@ module.exports = {
   getAllUsers,
   approveUser,
   rejectUser,
+  getPendingRoleRequests,
+  approveRoleRequest,
+  rejectRoleRequest,
   getStats,
   getEnrollmentsByCommune,
   getEnrollments,
@@ -3491,6 +3888,9 @@ module.exports = {
   deleteTeacher,
   resetUserPassword,
   unlockUser,
+  createUser,
+  updateUserDetails,
+  toggleUserActive,
   getRegistrationBlockStatus,
   updateRegistrationBlockStatus,
   getStudentAcademicRecord,

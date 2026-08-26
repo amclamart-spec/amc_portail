@@ -19,6 +19,12 @@ const chatRoutes = require('./chat');
 const familyWizardRoutes = require('./familyWizard');
 const socialRoutes = require('./social');
 const coranRoutes = require('./coran');
+const appreciationsRoutes = require('./appreciations');
+const notesScolairesRoutes = require('./notesScolaires');
+const bulletinsRoutes = require('./bulletins');
+const poleManagerRoutes = require('./poleManager');
+const volunteerRoutes = require('./volunteers');
+const hrRoutes = require('./hr');
 
 const router = Router();
 
@@ -41,6 +47,12 @@ router.use('/family-wizard', familyWizardRoutes);
 router.use('/finance', financeRoutes);
 router.use('/social', socialRoutes);
 router.use('/coran', coranRoutes);
+router.use('/appreciations', appreciationsRoutes);
+router.use('/notes-scolaires', notesScolairesRoutes);
+router.use('/bulletins', bulletinsRoutes);
+router.use('/pole-manager', poleManagerRoutes);
+router.use('/volunteers', volunteerRoutes);
+router.use('/hr', hrRoutes);
 
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'AMC Portail API' });

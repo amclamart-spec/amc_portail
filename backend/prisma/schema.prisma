@@ -19,6 +19,10 @@ enum Role {
   RESPONSABLE_POLE_SCIENCE_IS
   RESPONSABLE_POLE_SOCIAL
   OPERATEUR_SOCIAL
+  RESPONSABLE_POLE_BENEVOLES
+  BENEVOLE
+  RESPONSABLE_RH
+  SALARIE
 }
 
 enum ValidationStatus {
@@ -35,6 +39,7 @@ model User {
   provider             String?
   role                 Role                 @default(FAMILLE)
   validationStatus     ValidationStatus     @default(PENDING) @map("validation_status")
+  isActive             Boolean              @default(true) @map("is_active")
   firstName            String               @map("first_name")
   lastName             String               @map("last_name")
   phone                String?
@@ -46,6 +51,7 @@ model User {
   lockedUntil          DateTime?            @map("locked_until")
   refreshToken         String?              @map("refresh_token")
   lastLogin            DateTime?            @map("last_login")
+  photoUrl             String?              @map("photo_url")
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
   family               Family?
@@ -65,8 +71,51 @@ model User {
   socialCollections    SocialCollection[]   @relation("CollectionOperator")
   purchases            Purchase[]           @relation("PurchaseOperator")
   socialBudgets        SocialBudget[]       @relation("BudgetManager")
+  beneficiaryDocuments SocialBeneficiaryDocument[] @relation("BeneficiaryDocumentUploader")
+  volunteerEventsCreated VolunteerEvent[]   @relation("VolunteerEventCreator")
+  volunteerGroupsCreated VolunteerGroup[]   @relation("VolunteerGroupCreator")
+  volunteerGroupMemberships VolunteerGroupMember[] @relation("VolunteerGroupMembership")
+  volunteerEventParticipations VolunteerEventParticipation[] @relation("VolunteerEventParticipant")
+  volunteerHoursValidations VolunteerEventParticipation[] @relation("VolunteerHoursValidator")
+  additionalRoles UserRole[]
+  roleRequestsDecided UserRole[] @relation("UserRoleDecider")
+  employeeProfile Employee?
+  payslipsUploaded Payslip[] @relation("PayslipUploader")
+  leaveRequestsDecided LeaveRequest[] @relation("LeaveDecider")
 
   @@map("users")
+}
+
+enum UserRoleStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Rôles supplémentaires accordés à un compte en plus de son rôle principal (`User.role`).
+// Ex: une Famille à qui on accorde en plus l'accès Bénévole conserve son rôle principal FAMILLE
+// et obtient l'accès du pôle Bénévoles via une ligne ici, sans perdre son accès existant.
+// Statut par défaut APPROVED : les rôles ajoutés par un responsable/admin sont actifs immédiatement.
+// Statut PENDING : demande d'ajout de rôle faite par l'utilisateur lui-même depuis son espace
+// (rubrique "Mes rôles"), qui doit être validée par le responsable du pôle concerné avant de
+// donner accès — sans jamais bloquer la connexion avec les rôles déjà approuvés du compte.
+model UserRole {
+  id              String         @id @default(uuid())
+  userId          String         @map("user_id")
+  role            Role
+  status          UserRoleStatus @default(APPROVED)
+  poleId          String?        @map("pole_id")
+  decidedBy       String?        @map("decided_by")
+  decidedAt       DateTime?      @map("decided_at")
+  rejectionReason String?        @map("rejection_reason")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  user    User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pole    Pole? @relation(fields: [poleId], references: [id])
+  decider User? @relation("UserRoleDecider", fields: [decidedBy], references: [id])
+
+  @@unique([userId, role])
+  @@map("user_roles")
 }
 
 enum AccountStatus {
@@ -112,11 +161,105 @@ model HomeworkMessage {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
-  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  class       Class                @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacher     Teacher              @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  completions HomeworkCompletion[]
 
   @@unique([classId, date])
   @@map("homework_messages")
+}
+
+model HomeworkCompletion {
+  id          String   @id @default(uuid())
+  homeworkId  String   @map("homework_id")
+  studentId   String   @map("student_id")
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  homework HomeworkMessage @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  student  Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([homeworkId, studentId])
+  @@map("homework_completions")
+}
+
+model AppreciationReguliere {
+  id               String    @id @default(uuid())
+  studentId        String    @map("student_id")
+  classId          String    @map("class_id")
+  teacherId        String    @map("teacher_id")
+  date             DateTime  @default(now())
+  commentaire      String?
+  noteTravail      Int       @map("note_travail")
+  noteComportement Int       @map("note_comportement")
+  vu               Boolean   @default(false)
+  vuAt             DateTime? @map("vu_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, date])
+  @@index([classId])
+  @@map("appreciations_regulieres")
+}
+
+model NoteScolaire {
+  id          String   @id @default(uuid())
+  studentId   String   @map("student_id")
+  classId     String   @map("class_id")
+  period      String   @default("ANNUEL")
+  matiere     String
+  note        Float
+  bareme      Float    @default(20)
+  date        DateTime @default(now())
+  commentaire String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, matiere])
+  @@index([studentId, period])
+  @@index([classId])
+  @@map("notes_scolaires")
+}
+
+model BulletinScolaireUpload {
+  id           String   @id @default(uuid())
+  studentId    String   @map("student_id")
+  classId      String   @map("class_id")
+  period       String   @default("ANNUEL")
+  fileUrl      String   @map("file_url")
+  fileName     String   @map("file_name")
+  uploadedById String   @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, period])
+  @@index([studentId, createdAt])
+  @@map("bulletin_scolaire_uploads")
+}
+
+model Bulletin {
+  id            String   @id @default(uuid())
+  studentId     String   @map("student_id")
+  classId       String   @map("class_id")
+  period        String   @default("ANNUEL")
+  fileUrl       String   @map("file_url")
+  fileName      String   @map("file_name")
+  publishedById String   @map("published_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, createdAt])
+  @@map("bulletins")
 }
 
 enum Civility {
@@ -182,6 +325,12 @@ model Student {
   coranRepetitions     CoranRepetition[]
   coranLectures        CoranLecture[]
   coranBulletinUploads CoranBulletinUpload[]
+  homeworkCompletions  HomeworkCompletion[]
+  appreciationsRegulieres AppreciationReguliere[]
+  notesScolaires          NoteScolaire[]
+  bulletinScolaireUploads BulletinScolaireUpload[]
+  bulletins               Bulletin[]
+  eventRegistrations      VolunteerEventChildRegistration[]
 
   @@map("students")
 }
@@ -287,7 +436,9 @@ model Teacher {
   user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   pole             Pole?             @relation(fields: [poleId], references: [id], onDelete: SetNull)
   classes          Class[]
+  classTeachers    ClassTeacher[]
   homeworkMessages HomeworkMessage[]
+  appreciationsRegulieres AppreciationReguliere[]
 
   @@map("teachers")
 }
@@ -323,6 +474,7 @@ model Pole {
   classes   Class[]
   timeSlots TimeSlot[]
   teachers  Teacher[]
+  roleRequests UserRole[]
 
   @@map("poles")
 }
@@ -388,14 +540,35 @@ model Class {
   lessons              Lesson[]
   homeworkMessages     HomeworkMessage[]
   classTimeSlots       ClassTimeSlot[]
+  classTeachers        ClassTeacher[]
   coranSeances         CoranSeance[]
   coranBulletinUploads CoranBulletinUpload[]
+  appreciationsRegulieres AppreciationReguliere[]
+  notesScolaires          NoteScolaire[]
+  bulletinScolaireUploads BulletinScolaireUpload[]
+  bulletins               Bulletin[]
 
   @@index([schoolYearId, poleId, levelId])
   @@index([timeSlotId])
   @@index([roomId])
   @@index([teacherId])
   @@map("classes")
+}
+
+// Professeurs supplémentaires d'une classe (pôle Coran : une classe peut être
+// gérée par plusieurs professeurs, en plus du professeur référent teacherId).
+model ClassTeacher {
+  id        String   @id @default(uuid())
+  classId   String   @map("class_id")
+  teacherId String   @map("teacher_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, teacherId])
+  @@index([teacherId])
+  @@map("class_teachers")
 }
 
 enum EvaluationStatus {
@@ -910,17 +1083,53 @@ model SocialBeneficiary {
   adultsCount   Int      @default(1) @map("adults_count")
   childrenCount Int      @default(0) @map("children_count")
   monthlyIncome Decimal? @map("monthly_income") @db.Decimal(10, 2)
+  isHosted      Boolean  @default(false) @map("is_hosted")
+  hostFullName  String?  @map("host_full_name")
   observations  String?
   createdBy     String   @map("created_by")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  creator       User           @relation("BeneficiaryCreator", fields: [createdBy], references: [id])
+  creator       User                       @relation("BeneficiaryCreator", fields: [createdBy], references: [id])
   cases         SocialCase[]
   distributions Distribution[]
+  documents     SocialBeneficiaryDocument[]
 
   @@index([lastName, firstName])
   @@map("social_beneficiaries")
+}
+
+// Pièces justificatives d'un bénéficiaire : identité, domicile, hébergeur (si
+// hébergé), ressources (grille multi-justificatifs), avis d'imposition par
+// membre majeur, composition familiale, et attestation de la référente sociale
+// en cas de document manquant.
+enum SocialBeneficiaryDocumentType {
+  IDENTITY_CARD
+  PROOF_OF_ADDRESS
+  HOST_IDENTITY_CARD
+  HOST_PROOF_OF_ADDRESS
+  INCOME_PROOF
+  TAX_NOTICE
+  FAMILY_COMPOSITION_PROOF
+  MISSING_DOCUMENT_ATTESTATION
+}
+
+model SocialBeneficiaryDocument {
+  id            String                        @id @default(uuid())
+  beneficiaryId String                        @map("beneficiary_id")
+  type          SocialBeneficiaryDocumentType
+  subType       String?                       @map("sub_type")
+  label         String?
+  fileUrl       String                        @map("file_url")
+  fileName      String?                       @map("file_name")
+  uploadedBy    String                        @map("uploaded_by")
+  createdAt     DateTime                      @default(now()) @map("created_at")
+
+  beneficiary SocialBeneficiary @relation(fields: [beneficiaryId], references: [id], onDelete: Cascade)
+  uploader    User              @relation("BeneficiaryDocumentUploader", fields: [uploadedBy], references: [id])
+
+  @@index([beneficiaryId, type])
+  @@map("social_beneficiary_documents")
 }
 
 model SocialCase {
@@ -963,17 +1172,23 @@ model CaseDecision {
   @@map("case_decisions")
 }
 
+// Un critère d'éligibilité est composé de 3 conditions obligatoires : revenu
+// global mensuel, composition du foyer (adultes + enfants), villes d'habitation.
+// Plusieurs critères (nommés librement) peuvent être configurés. La validation
+// d'un dossier doit satisfaire les 3 conditions de TOUS les critères actifs
+// pour obtenir un avis automatique favorable ; sinon l'avis est défavorable.
+// La décision finale (acceptation/refus du dossier) reste sous la responsabilité
+// du responsable de pôle.
 model EligibilityCriteria {
-  id          String   @id @default(uuid())
-  key         String   @unique
-  label       String
-  description String?
-  type        String
-  operator    String   @default("LTE")
-  numValue    Decimal? @map("num_value") @db.Decimal(10, 2)
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(uuid())
+  name             String
+  maxMonthlyIncome Decimal  @map("max_monthly_income") @db.Decimal(10, 2)
+  maxHouseholdSize Int      @map("max_household_size")
+  allowedCities    String[] @map("allowed_cities")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdBy        String?  @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("eligibility_criteria")
 }
@@ -1117,19 +1332,21 @@ model Supplier {
 }
 
 model Purchase {
-  id           String         @id @default(uuid())
-  reference    String?
-  supplierId   String?        @map("supplier_id")
-  budgetId     String?        @map("budget_id")
-  status       PurchaseStatus @default(DRAFT)
-  purchasedAt  DateTime       @map("purchased_at")
-  totalAmount  Decimal        @map("total_amount") @db.Decimal(10, 2)
-  description  String?
-  observations String?
-  validatedAt  DateTime?      @map("validated_at")
-  userId       String         @map("user_id")
-  createdAt    DateTime       @default(now()) @map("created_at")
-  updatedAt    DateTime       @updatedAt @map("updated_at")
+  id              String         @id @default(uuid())
+  reference       String?
+  supplierId      String?        @map("supplier_id")
+  budgetId        String?        @map("budget_id")
+  status          PurchaseStatus @default(DRAFT)
+  purchasedAt     DateTime       @map("purchased_at")
+  totalAmount     Decimal        @map("total_amount") @db.Decimal(10, 2)
+  description     String?
+  observations    String?
+  receiptUrl      String?        @map("receipt_url")
+  receiptFileName String?        @map("receipt_file_name")
+  validatedAt     DateTime?      @map("validated_at")
+  userId          String         @map("user_id")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
   supplier Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   budget   SocialBudget?  @relation(fields: [budgetId], references: [id], onDelete: SetNull)
@@ -1302,4 +1519,213 @@ model CoranBulletinUpload {
 
   @@index([studentId, createdAt])
   @@map("coran_bulletin_uploads")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PÔLE BÉNÉVOLES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum VolunteerEventType {
+  JOUMOUAA
+  RAMADAN
+  AID
+  FETE
+  AUTRE
+}
+
+model VolunteerEvent {
+  id               String             @id @default(uuid())
+  title            String
+  type             VolunteerEventType @default(AUTRE)
+  description      String?
+  location         String?
+  posterUrl        String?            @map("poster_url")
+  registrationOpen Boolean            @default(true) @map("registration_open")
+  startDate        DateTime           @map("start_date")
+  endDate          DateTime?          @map("end_date")
+  createdBy        String             @map("created_by")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  creator            User                               @relation("VolunteerEventCreator", fields: [createdBy], references: [id])
+  groups             VolunteerEventGroup[]
+  participations     VolunteerEventParticipation[]
+  childRegistrations VolunteerEventChildRegistration[]
+
+  @@index([startDate])
+  @@map("volunteer_events")
+}
+
+// Inscription d'un enfant (Student) à un événement du pôle bénévoles, saisie par sa famille
+// (distinct de VolunteerEventParticipation qui concerne la présence/imputation d'heures des bénévoles).
+model VolunteerEventChildRegistration {
+  id        String   @id @default(uuid())
+  eventId   String   @map("event_id")
+  studentId String   @map("student_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  event   VolunteerEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  student Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, studentId])
+  @@map("volunteer_event_child_registrations")
+}
+
+// Groupes permettant au responsable d'organiser les bénévoles (un bénévole peut appartenir à plusieurs groupes)
+model VolunteerGroup {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  createdBy   String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator User                   @relation("VolunteerGroupCreator", fields: [createdBy], references: [id])
+  members VolunteerGroupMember[]
+  events  VolunteerEventGroup[]
+
+  @@map("volunteer_groups")
+}
+
+model VolunteerGroupMember {
+  id          String   @id @default(uuid())
+  groupId     String   @map("group_id")
+  volunteerId String   @map("volunteer_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  group     VolunteerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  volunteer User           @relation("VolunteerGroupMembership", fields: [volunteerId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, volunteerId])
+  @@map("volunteer_group_members")
+}
+
+// Affectation d'un événement à un ou plusieurs groupes. Un événement sans groupe est visible par tous les bénévoles.
+model VolunteerEventGroup {
+  id      String @id @default(uuid())
+  eventId String @map("event_id")
+  groupId String @map("group_id")
+
+  event VolunteerEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  group VolunteerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, groupId])
+  @@map("volunteer_event_groups")
+}
+
+enum VolunteerAttendanceStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+}
+
+// Présence + temps passé d'un bénévole pour un événement. L'imputation (heure de début / heure de fin) ne peut être
+// saisie qu'une fois la présence confirmée par le bénévole. hoursSpent est calculé à partir de startTime/endTime.
+// Le responsable consulte, peut corriger les heures puis valide (traçabilité via validatedBy/validatedAt).
+model VolunteerEventParticipation {
+  id               String                     @id @default(uuid())
+  eventId          String                     @map("event_id")
+  volunteerId      String                     @map("volunteer_id")
+  attendanceStatus VolunteerAttendanceStatus  @default(PENDING) @map("attendance_status")
+  startTime        DateTime?                  @map("start_time")
+  endTime          DateTime?                  @map("end_time")
+  hoursSpent       Decimal?                   @map("hours_spent") @db.Decimal(5, 2)
+  hoursNote        String?                    @map("hours_note")
+  hoursValidated   Boolean                    @default(false) @map("hours_validated")
+  validatedBy      String?                    @map("validated_by")
+  validatedAt      DateTime?                  @map("validated_at")
+  createdAt        DateTime                   @default(now()) @map("created_at")
+  updatedAt        DateTime                   @updatedAt @map("updated_at")
+
+  event     VolunteerEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  volunteer User           @relation("VolunteerEventParticipant", fields: [volunteerId], references: [id], onDelete: Cascade)
+  validator User?          @relation("VolunteerHoursValidator", fields: [validatedBy], references: [id])
+
+  @@unique([eventId, volunteerId])
+  @@map("volunteer_event_participations")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  RESSOURCES HUMAINES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum EmployeeContractType {
+  CDI
+  CDD
+  INTERIM
+  ALTERNANCE
+  STAGE
+  AUTRE
+}
+
+// Fiche RH d'un salarié, liée à son compte utilisateur (rôle SALARIE, principal ou additionnel).
+model Employee {
+  id           String                @id @default(uuid())
+  userId       String                @unique @map("user_id")
+  position     String?
+  hireDate     DateTime?             @map("hire_date")
+  contractType EmployeeContractType? @map("contract_type")
+  contractFileUrl  String?           @map("contract_file_url")
+  contractFileName String?           @map("contract_file_name")
+  leaveBalanceDays Float?            @map("leave_balance_days")
+  observations String?
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payslips Payslip[]
+  leaveRequests LeaveRequest[]
+
+  @@map("employees")
+}
+
+enum LeaveType {
+  CONGES_PAYES
+  MALADIE
+  AUTRE
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Demande de congé d'un salarié, validée par le Responsable RH.
+// Seul le type CONGES_PAYES est décompté du solde (`Employee.leaveBalanceDays`).
+model LeaveRequest {
+  id              String      @id @default(uuid())
+  employeeId      String      @map("employee_id")
+  type            LeaveType
+  startDate       DateTime    @map("start_date")
+  endDate         DateTime    @map("end_date")
+  daysCount       Float       @map("days_count")
+  reason          String?
+  status          LeaveStatus @default(PENDING)
+  rejectionReason String?     @map("rejection_reason")
+  decidedBy       String?     @map("decided_by")
+  decidedAt       DateTime?   @map("decided_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  decider  User?    @relation("LeaveDecider", fields: [decidedBy], references: [id])
+
+  @@map("leave_requests")
+}
+
+// Fiche de paie d'un salarié pour une période donnée (format "AAAA-MM"), déposée par le Responsable RH.
+model Payslip {
+  id         String   @id @default(uuid())
+  employeeId String   @map("employee_id")
+  period     String
+  fileUrl    String   @map("file_url")
+  fileName   String?  @map("file_name")
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  uploader User     @relation("PayslipUploader", fields: [uploadedBy], references: [id])
+
+  @@unique([employeeId, period])
+  @@map("payslips")
 }

@@ -120,9 +120,9 @@ function KpiCard({ icon, iconClass, value, label }) {
 function ApprentissageGrid({ repetitions, setRepetitions }) {
   const [currentPage, setCurrentPage] = useState(1);
 
-  const handleEvaluate = async (id, payload) => {
+  const handleEvaluate = async (id, payload, studentId) => {
     try {
-      const { data } = await api.put(`/coran/repetitions/${id}/evaluate`, payload);
+      const { data } = await api.put(`/coran/repetitions/${id}/evaluate`, payload, { params: { studentId } });
       setRepetitions((prev) => prev.map((r) => (r.id === id ? data.repetition : r)));
       toast.success('Appréciation enregistrée');
     } catch (e) {
@@ -154,7 +154,7 @@ function ApprentissageGrid({ repetitions, setRepetitions }) {
                       <td className="nowrap">{fmtDate(r.createdAt)}</td>
                       <td className="nowrap">S{isoWeekNumber(r.createdAt)}</td>
                       <td className="nowrap">{r.compteur} / 30</td>
-                      <td><EvalCell item={r} onSave={(payload) => handleEvaluate(r.id, payload)} /></td>
+                      <td><EvalCell item={r} onSave={(payload) => handleEvaluate(r.id, payload, r.studentId)} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -171,9 +171,9 @@ function ApprentissageGrid({ repetitions, setRepetitions }) {
 }
 
 function RevisionGrid({ revisions, setRevisions }) {
-  const handleEvaluate = async (id, payload) => {
+  const handleEvaluate = async (id, payload, studentId) => {
     try {
-      const { data } = await api.put(`/coran/revisions/${id}/evaluate`, payload);
+      const { data } = await api.put(`/coran/revisions/${id}/evaluate`, payload, { params: { studentId } });
       setRevisions((prev) => prev.map((r) => (r.id === id ? data.revision : r)));
       toast.success('Appréciation enregistrée');
     } catch (e) {
@@ -201,7 +201,7 @@ function RevisionGrid({ revisions, setRevisions }) {
                     <td className="nowrap">{r.pageDebut}–{r.pageFin}</td>
                     <td className="nowrap">{REVISION_TYPE_LABELS[r.type] || r.type}</td>
                     <td className="nowrap">{fmtDate(r.date)}</td>
-                    <td><EvalCell item={r} onSave={(payload) => handleEvaluate(r.id, payload)} /></td>
+                    <td><EvalCell item={r} onSave={(payload) => handleEvaluate(r.id, payload, r.studentId)} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -215,9 +215,9 @@ function RevisionGrid({ revisions, setRevisions }) {
 }
 
 function LectureGrid({ lectures, setLectures }) {
-  const handleEvaluate = async (id, payload) => {
+  const handleEvaluate = async (id, payload, studentId) => {
     try {
-      const { data } = await api.put(`/coran/lectures/${id}/evaluate`, payload);
+      const { data } = await api.put(`/coran/lectures/${id}/evaluate`, payload, { params: { studentId } });
       setLectures((prev) => prev.map((l) => (l.id === id ? data.lecture : l)));
       toast.success('Appréciation enregistrée');
     } catch (e) {
@@ -245,7 +245,7 @@ function LectureGrid({ lectures, setLectures }) {
                     <td className="nowrap">{l.pageDebut}–{l.pageFin}</td>
                     <td className="nowrap">{l.dureeMinutes ? `${l.dureeMinutes} min` : '—'}</td>
                     <td className="nowrap">{fmtDate(l.date)}</td>
-                    <td><EvalCell item={l} onSave={(payload) => handleEvaluate(l.id, payload)} /></td>
+                    <td><EvalCell item={l} onSave={(payload) => handleEvaluate(l.id, payload, l.studentId)} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -352,6 +352,7 @@ export default function CoranTeacherPanel({ classId }) {
         <>
           <div className="stats-grid" style={{ marginBottom: 16 }}>
             <KpiCard icon="🔁" iconClass="primary" value={`${kpis.pagesApprises} / ${MAX_MUSHAF_PAGE} (${kpis.pctApprises}%)`} label="Avancement apprentissage (pages apprises sur le Coran)" />
+            <KpiCard icon="📅" iconClass="primary" value={`${kpis.avgApprentissagePerWeek.toFixed(1)} / sem.`} label="Moyenne de pages apprises par semaine" />
             <KpiCard icon="📖" iconClass="warning" value={`${kpis.avgRevisionPerWeek.toFixed(1)} / sem.`} label="Avancement révision (pages / semaine en moyenne)" />
             <KpiCard icon="🎤" iconClass="success" value={`${kpis.pagesRecitees} / ${MAX_MUSHAF_PAGE} (${kpis.pctRecitees}%)`} label="Avancement lecture (pages récitées sur le Coran)" />
           </div>
