@@ -16,6 +16,7 @@ async function listPoleClasses({ role }) {
     include: {
       level: { include: { pole: true } },
       teacher: { include: { user: true } },
+      classTeachers: { include: { teacher: true } },
     },
     orderBy: [{ level: { name: 'asc' } }, { dayOfWeek: 'asc' }, { startTime: 'asc' }],
   });
@@ -30,6 +31,7 @@ async function listPoleClasses({ role }) {
       pole: cls.level?.pole ? { name: cls.level.pole.name, period: cls.level.pole.period } : null,
     },
     teacherName: cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : null,
+    additionalTeacherNames: cls.classTeachers.map((ct) => `${ct.teacher.firstName} ${ct.teacher.lastName}`),
   }));
 }
 

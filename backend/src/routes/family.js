@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { authenticate, authorize, requireApproved } = require('../middleware/auth');
 const {
   createOrUpdateProfile, getProfile, addParent, updateParent, deleteParent, getDashboard,
+  getOpenEvents, registerForEvent,
 } = require('../controllers/familyController');
 const {
   getPedagogyStudents,
@@ -17,6 +18,8 @@ const router = Router();
 router.use(authenticate, authorize('FAMILLE'));
 
 router.get('/dashboard', getDashboard);
+router.get('/events', getOpenEvents);
+router.put('/events/:id/registration', requireApproved, registerForEvent);
 router.get('/profile', getProfile);
 router.get('/pedagogy/students', getPedagogyStudents);
 router.get('/pedagogy/absences', getPedagogyAbsences);

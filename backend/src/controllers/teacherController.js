@@ -5,7 +5,9 @@ const prisma = new PrismaClient();
 async function getTeacherDashboard(req, res) {
   try {
     const teacherProfile = await prisma.teacher.findUnique({ where: { userId: req.user.id } });
-    const teacherFilter = teacherProfile ? { teacherId: teacherProfile.id } : { teacherUserId: req.user.id };
+    const teacherFilter = teacherProfile
+      ? { OR: [{ teacherId: teacherProfile.id }, { classTeachers: { some: { teacherId: teacherProfile.id } } }] }
+      : { teacherUserId: req.user.id };
 
     const classes = await prisma.class.findMany({
       where: teacherFilter,
@@ -39,7 +41,9 @@ async function getTeacherDashboard(req, res) {
 async function getTeacherClasses(req, res) {
   try {
     const teacherProfile = await prisma.teacher.findUnique({ where: { userId: req.user.id } });
-    const teacherFilter = teacherProfile ? { teacherId: teacherProfile.id } : { teacherUserId: req.user.id };
+    const teacherFilter = teacherProfile
+      ? { OR: [{ teacherId: teacherProfile.id }, { classTeachers: { some: { teacherId: teacherProfile.id } } }] }
+      : { teacherUserId: req.user.id };
 
     const classes = await prisma.class.findMany({
       where: teacherFilter,

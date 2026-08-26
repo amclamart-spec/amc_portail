@@ -73,7 +73,13 @@ async function getTeacherCoranAccess({ teacherUserId, studentId, classId }) {
   const enrollmentWhere = {
     studentId,
     status: { in: TEACHER_VISIBLE_ENROLLMENT_STATUSES },
-    class: { teacherId: teacherProfile.id, ...(classId ? { id: classId } : {}) },
+    class: {
+      OR: [
+        { teacherId: teacherProfile.id },
+        { classTeachers: { some: { teacherId: teacherProfile.id } } },
+      ],
+      ...(classId ? { id: classId } : {}),
+    },
   };
 
   const enrollments = await prisma.enrollment.findMany({

@@ -9,12 +9,14 @@ const {
   createFamilyPortalAccount,
   checkEmailAvailability,
   saveFamilyWizardSepaMandate,
+  getWizardOpenEvents,
 } = require('../controllers/familyWizardController');
 
 const router = Router();
 
 router.post('/draft', saveDraft);
 router.get('/draft', getDraft);
+router.get('/events', getWizardOpenEvents);
 router.post('/pricing-preview', authenticateOptional, getPricingPreview);
 router.post('/create-account-only', createFamilyPortalAccount);
 router.post('/check-email', checkEmailAvailability);

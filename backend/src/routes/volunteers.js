@@ -35,6 +35,13 @@ router.get('/role-requests/pending',     canManage, getPendingVolunteerRoleReque
 router.put('/role-requests/:id/approve', canManage, approveVolunteerRoleRequest);
 router.put('/role-requests/:id/reject',  canManage, rejectVolunteerRoleRequest);
 
+// Profil personnel (bénévole) — doit être déclaré avant les routes génériques
+// /:id ci-dessous, sinon Express matche "me" comme :id (PUT /:id passe alors
+// par canManage au lieu de isSelf, et un bénévole ne peut plus enregistrer son profil).
+router.get('/me',     isSelf, getMyProfile);
+router.put('/me',     isSelf, updateMyProfile);
+router.get('/hours',  isSelf, getMyValidatedHours);
+
 // Gestion des bénévoles (responsable)
 router.get('/pending',        canManage, getPendingVolunteers);
 router.get('/',                canManage, getVolunteers);
@@ -44,11 +51,6 @@ router.post('/:id/reject',     canManage, rejectVolunteer);
 router.put('/:id',                    canManage, updateVolunteerDetails);
 router.post('/:id/generate-password', canManage, generateVolunteerPassword);
 router.put('/:id/active',             canManage, toggleVolunteerActive);
-
-// Profil personnel (bénévole)
-router.get('/me',     isSelf, getMyProfile);
-router.put('/me',     isSelf, updateMyProfile);
-router.get('/hours',  isSelf, getMyValidatedHours);
 
 // Événements (lecture pour bénévole + responsable, écriture pour responsable)
 router.get('/events',            canView,   getEvents);

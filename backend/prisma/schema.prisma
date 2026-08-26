@@ -330,6 +330,7 @@ model Student {
   notesScolaires          NoteScolaire[]
   bulletinScolaireUploads BulletinScolaireUpload[]
   bulletins               Bulletin[]
+  eventRegistrations      VolunteerEventChildRegistration[]
 
   @@map("students")
 }
@@ -435,6 +436,7 @@ model Teacher {
   user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   pole             Pole?             @relation(fields: [poleId], references: [id], onDelete: SetNull)
   classes          Class[]
+  classTeachers    ClassTeacher[]
   homeworkMessages HomeworkMessage[]
   appreciationsRegulieres AppreciationReguliere[]
 
@@ -538,6 +540,7 @@ model Class {
   lessons              Lesson[]
   homeworkMessages     HomeworkMessage[]
   classTimeSlots       ClassTimeSlot[]
+  classTeachers        ClassTeacher[]
   coranSeances         CoranSeance[]
   coranBulletinUploads CoranBulletinUpload[]
   appreciationsRegulieres AppreciationReguliere[]
@@ -550,6 +553,22 @@ model Class {
   @@index([roomId])
   @@index([teacherId])
   @@map("classes")
+}
+
+// Professeurs supplémentaires d'une classe (pôle Coran : une classe peut être
+// gérée par plusieurs professeurs, en plus du professeur référent teacherId).
+model ClassTeacher {
+  id        String   @id @default(uuid())
+  classId   String   @map("class_id")
+  teacherId String   @map("teacher_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, teacherId])
+  @@index([teacherId])
+  @@map("class_teachers")
 }
 
 enum EvaluationStatus {
@@ -1515,23 +1534,41 @@ enum VolunteerEventType {
 }
 
 model VolunteerEvent {
-  id          String             @id @default(uuid())
-  title       String
-  type        VolunteerEventType @default(AUTRE)
-  description String?
-  location    String?
-  startDate   DateTime           @map("start_date")
-  endDate     DateTime?          @map("end_date")
-  createdBy   String             @map("created_by")
-  createdAt   DateTime           @default(now()) @map("created_at")
-  updatedAt   DateTime           @updatedAt @map("updated_at")
+  id               String             @id @default(uuid())
+  title            String
+  type             VolunteerEventType @default(AUTRE)
+  description      String?
+  location         String?
+  posterUrl        String?            @map("poster_url")
+  registrationOpen Boolean            @default(true) @map("registration_open")
+  startDate        DateTime           @map("start_date")
+  endDate          DateTime?          @map("end_date")
+  createdBy        String             @map("created_by")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
 
-  creator       User                          @relation("VolunteerEventCreator", fields: [createdBy], references: [id])
-  groups        VolunteerEventGroup[]
-  participations VolunteerEventParticipation[]
+  creator            User                               @relation("VolunteerEventCreator", fields: [createdBy], references: [id])
+  groups             VolunteerEventGroup[]
+  participations     VolunteerEventParticipation[]
+  childRegistrations VolunteerEventChildRegistration[]
 
   @@index([startDate])
   @@map("volunteer_events")
+}
+
+// Inscription d'un enfant (Student) à un événement du pôle bénévoles, saisie par sa famille
+// (distinct de VolunteerEventParticipation qui concerne la présence/imputation d'heures des bénévoles).
+model VolunteerEventChildRegistration {
+  id        String   @id @default(uuid())
+  eventId   String   @map("event_id")
+  studentId String   @map("student_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  event   VolunteerEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  student Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, studentId])
+  @@map("volunteer_event_child_registrations")
 }
 
 // Groupes permettant au responsable d'organiser les bénévoles (un bénévole peut appartenir à plusieurs groupes)

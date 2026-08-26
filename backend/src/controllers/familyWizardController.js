@@ -102,6 +102,56 @@ function ensureStrongPassword(password) {
 
 }
 
+// Événements du pôle bénévoles ouverts à l'inscription, proposables pendant l'assistant d'inscription famille
+async function getWizardOpenEvents(req, res) {
+  try {
+    const events = await prisma.volunteerEvent.findMany({
+      where: { registrationOpen: true, groups: { none: {} }, startDate: { gte: new Date() } },
+      orderBy: { startDate: 'asc' },
+    });
+    res.json({
+      events: events.map((e) => ({
+        id: e.id,
+        title: e.title,
+        type: e.type,
+        description: e.description,
+        location: e.location,
+        posterUrl: e.posterUrl,
+        startDate: e.startDate,
+        endDate: e.endDate,
+      })),
+    });
+  } catch (error) {
+    console.error('Erreur getWizardOpenEvents:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// Inscrit chaque enfant aux événements qu'il a sélectionnés pendant l'assistant d'inscription.
+// `students` est le tableau des Student créés/résolus par la transaction, indexé comme wizard.members
+// (même convention que courseSelections). `eventSelections` = [{ memberIndex, eventId }].
+async function registerStudentsToEvents(students, eventSelections) {
+  const selections = (eventSelections || []).filter((s) => s && s.eventId && s.memberIndex !== undefined && s.memberIndex !== null);
+  if (selections.length === 0) return;
+
+  const eventIds = [...new Set(selections.map((s) => s.eventId))];
+  const events = await prisma.volunteerEvent.findMany({
+    where: { id: { in: eventIds }, registrationOpen: true, groups: { none: {} } },
+  });
+  const openEventIds = new Set(events.map((e) => e.id));
+
+  for (const selection of selections) {
+    if (!openEventIds.has(selection.eventId)) continue;
+    const student = students[Number(selection.memberIndex)];
+    if (!student) continue;
+    await prisma.volunteerEventChildRegistration.upsert({
+      where: { eventId_studentId: { eventId: selection.eventId, studentId: student.id } },
+      update: {},
+      create: { eventId: selection.eventId, studentId: student.id },
+    });
+  }
+}
+
 
 
 async function ensureCurrentSchoolYear() {
@@ -900,6 +950,8 @@ async function completeExistingFamilyRegistration(req, res) {
     const members = payload.members || [];
 
     const courseSelections = payload.courseSelections || [];
+
+    const eventSelections = payload.eventSelections || [];
 
     const healthForms = payload.healthForms || {};
 
@@ -2317,6 +2369,12 @@ async function completeExistingFamilyRegistration(req, res) {
 
     }
 
+    try {
+      await registerStudentsToEvents(result.students, eventSelections);
+    } catch (err) {
+      console.error('Erreur inscription aux événements sélectionnés:', err?.message || err);
+    }
+
 
 
     return res.status(201).json({
@@ -2793,6 +2851,8 @@ async function completeFamilyRegistration(req, res) {
     const members = payload.members || [];
 
     const courseSelections = payload.courseSelections || [];
+
+    const eventSelections = payload.eventSelections || [];
 
     const healthForms = payload.healthForms || {};
 
@@ -3947,6 +4007,12 @@ async function completeFamilyRegistration(req, res) {
 
     }
 
+    try {
+      await registerStudentsToEvents(result.students, eventSelections);
+    } catch (err) {
+      console.error('Erreur inscription aux événements sélectionnés:', err?.message || err);
+    }
+
 
 
     return res.status(201).json({
@@ -4027,5 +4093,7 @@ module.exports = {
   completeFamilyRegistration,
 
   completeExistingFamilyRegistration,
+
+  getWizardOpenEvents,
 
 };
