@@ -69,6 +69,7 @@ export default function ResponsablePoleSuiviPedagogique() {
                   {DAY_LABELS[cls.dayOfWeek] || cls.dayOfWeek} {cls.startTime}–{cls.endTime}
                   {' · '}
                   {hasTeacher ? `Professeur : ${cls.teacherName}` : 'Aucun professeur assigné'}
+                  {cls.additionalTeacherNames?.length > 0 && ` (+ ${cls.additionalTeacherNames.join(', ')})`}
                 </div>
               </div>
               {hasTeacher && <span style={{ color: 'var(--amc-primary)', fontSize: 13, fontWeight: 700 }}>Voir le détail →</span>}

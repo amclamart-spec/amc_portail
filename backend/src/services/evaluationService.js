@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { validateEvaluationPayload } = require('../models/Evaluation');
 const { sendMail } = require('../services/emailService');
+const { classAccessWhere, teacherHasClassAccess } = require('../utils/classAccessUtils');
 
 const prisma = new PrismaClient();
 
@@ -12,7 +13,7 @@ async function fetchLessonsByClass({ teacherUserId, classId, date }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
 
   const where = { classId };
@@ -34,7 +35,7 @@ async function fetchClassStudents({ teacherUserId, classId }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
 
   const enrollments = await prisma.enrollment.findMany({
@@ -58,7 +59,7 @@ async function fetchAbsenceHistory({ teacherUserId, classId }) {
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
   const classRecord = await prisma.class.findFirst({
-    where: { id: classId, teacherId: teacherProfile.id },
+    where: { id: classId, ...classAccessWhere(teacherProfile.id) },
     include: { schoolYear: true },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
@@ -87,13 +88,14 @@ async function fetchLessonAttendanceSheet({ teacherUserId, lessonId }) {
         include: {
           level: { include: { pole: true } },
           schoolYear: true,
+          classTeachers: true,
         },
       },
     },
   });
 
   if (!lesson) throw new Error('Leçon introuvable');
-  if (!lesson.class || lesson.class.teacherId !== teacherProfile.id) {
+  if (!teacherHasClassAccess(lesson.class, teacherProfile.id)) {
     throw new Error('Vous n\'avez pas accès à cette classe');
   }
 
@@ -167,7 +169,7 @@ async function fetchAbsenceRanking({ teacherUserId, classId }) {
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
   const classRecord = await prisma.class.findFirst({
-    where: { id: classId, teacherId: teacherProfile.id },
+    where: { id: classId, ...classAccessWhere(teacherProfile.id) },
     include: { schoolYear: true },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
@@ -200,7 +202,7 @@ async function fetchAbsenceRoster({ teacherUserId, classId, date }) {
   }
 
   const classRecord = await prisma.class.findFirst({
-    where: { id: classId, teacherId: teacherProfile.id },
+    where: { id: classId, ...classAccessWhere(teacherProfile.id) },
     include: { schoolYear: true },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
@@ -269,7 +271,7 @@ async function saveAbsences({ teacherUserId, classId, date, lessonId, students }
   }
 
   const classRecord = await prisma.class.findFirst({
-    where: { id: classId, teacherId: teacherProfile.id },
+    where: { id: classId, ...classAccessWhere(teacherProfile.id) },
     include: { level: { include: { pole: true } } },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
@@ -394,12 +396,12 @@ async function fetchEvaluations({ teacherUserId, classId, lessonId }) {
 
   const lesson = await prisma.lesson.findUnique({
     where: { id: lessonId },
-    include: { class: true },
+    include: { class: { include: { classTeachers: true } } },
   });
   if (!lesson || lesson.classId !== classId) {
     throw new Error('Leçon ou classe invalide');
   }
-  if (!lesson.class || lesson.class.teacherId !== teacherProfile.id) {
+  if (!teacherHasClassAccess(lesson.class, teacherProfile.id)) {
     throw new Error('Vous n\'avez pas accès à cette classe');
   }
 
@@ -466,7 +468,7 @@ async function fetchPeriodNotes({ teacherUserId, classId, period }) {
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
   const classRecord = await prisma.class.findFirst({
-    where: { id: classId, teacherId: teacherProfile.id },
+    where: { id: classId, ...classAccessWhere(teacherProfile.id) },
     include: { schoolYear: true, level: { include: { pole: true } } },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
@@ -528,7 +530,7 @@ async function computeStats({ teacherUserId, classId, lessonId }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
 
   const totalStudents = await prisma.enrollment.count({
@@ -537,12 +539,12 @@ async function computeStats({ teacherUserId, classId, lessonId }) {
 
   const lesson = await prisma.lesson.findUnique({
     where: { id: lessonId },
-    include: { class: true },
+    include: { class: { include: { classTeachers: true } } },
   });
   if (!lesson || lesson.classId !== classId) {
     throw new Error('Leçon ou classe invalide');
   }
-  if (!lesson.class || lesson.class.teacherId !== teacherProfile.id) {
+  if (!teacherHasClassAccess(lesson.class, teacherProfile.id)) {
     throw new Error('Vous n\'avez pas accès à cette classe');
   }
 
@@ -571,12 +573,12 @@ async function upsertEvaluation({ teacherUserId, studentId, lessonId, grade, app
 
   const lesson = await prisma.lesson.findUnique({
     where: { id: lessonId },
-    include: { class: true },
+    include: { class: { include: { classTeachers: true } } },
   });
   if (!lesson) {
     throw new Error('Leçon invalide');
   }
-  if (!lesson.class || lesson.class.teacherId !== teacherProfile.id) {
+  if (!teacherHasClassAccess(lesson.class, teacherProfile.id)) {
     throw new Error('Vous n\'avez pas accès à cette classe');
   }
 
@@ -603,7 +605,7 @@ async function upsertPeriodNote({ teacherUserId, classId, period, studentId, dis
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
   const classRecord = await prisma.class.findFirst({
-    where: { id: classId, teacherId: teacherProfile.id },
+    where: { id: classId, ...classAccessWhere(teacherProfile.id) },
     include: { schoolYear: true, level: { include: { pole: true } } },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');

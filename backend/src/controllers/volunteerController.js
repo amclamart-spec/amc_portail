@@ -86,7 +86,23 @@ async function getVolunteers(req, res) {
       prisma.user.count({ where }),
       prisma.user.findMany({ where, select: USER_PUBLIC_FIELDS, skip, take: Number(limit), orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }] }),
     ]);
-    return res.json({ volunteers, total, page: Number(page), totalPages: Math.ceil(total / Number(limit)) || 1 });
+
+    // Heures effectuées et validées sur l'année civile en cours (même convention que getMyValidatedHours)
+    const year = new Date().getFullYear();
+    const yearStart = new Date(year, 0, 1);
+    const yearEnd = new Date(year + 1, 0, 1);
+    const volunteerIds = volunteers.map((v) => v.id);
+    const hoursByVolunteer = volunteerIds.length > 0
+      ? await prisma.volunteerEventParticipation.groupBy({
+          by: ['volunteerId'],
+          where: { volunteerId: { in: volunteerIds }, hoursValidated: true, startTime: { gte: yearStart, lt: yearEnd } },
+          _sum: { hoursSpent: true },
+        })
+      : [];
+    const hoursMap = new Map(hoursByVolunteer.map((h) => [h.volunteerId, Number(h._sum.hoursSpent || 0)]));
+    const volunteersWithHours = volunteers.map((v) => ({ ...v, validatedHoursCurrentYear: hoursMap.get(v.id) || 0 }));
+
+    return res.json({ volunteers: volunteersWithHours, total, page: Number(page), totalPages: Math.ceil(total / Number(limit)) || 1 });
   } catch (error) {
     console.error('Erreur getVolunteers:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
@@ -458,6 +474,7 @@ async function updateGroupMembers(req, res) {
 // ─── ÉVÉNEMENTS ────────────────────────────────────────────────────────────────
 
 const VOLUNTEER_EVENT_TYPES = ['JOUMOUAA', 'RAMADAN', 'AID', 'FETE', 'AUTRE'];
+const EVENT_POSTER_MIME_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 
 function fmtEvent(event, { isBenevole } = {}) {
   const base = {
@@ -466,6 +483,8 @@ function fmtEvent(event, { isBenevole } = {}) {
     type: event.type,
     description: event.description,
     location: event.location,
+    posterUrl: event.posterUrl,
+    registrationOpen: event.registrationOpen,
     startDate: event.startDate,
     endDate: event.endDate,
     createdAt: event.createdAt,
@@ -517,11 +536,23 @@ async function getEvents(req, res) {
   }
 }
 
+function saveEventPoster(posterBase64, posterFilename) {
+  const mime = (posterBase64.match(/^data:([a-zA-Z0-9+/.-]+\/[a-zA-Z0-9.+-]+);base64,/) || [])[1];
+  if (!mime || !EVENT_POSTER_MIME_TYPES.includes(mime.toLowerCase())) {
+    const err = new Error('L\'affiche doit être une image (PNG, JPEG, WEBP) ou un PDF');
+    err.status = 400;
+    throw err;
+  }
+  return saveBase64File(posterBase64, 'volunteer-events', posterFilename || 'affiche');
+}
+
 async function createEvent(req, res) {
   try {
-    const { title, type, description, location, startDate, endDate, groupIds } = req.body;
+    const { title, type, description, location, startDate, endDate, groupIds, posterBase64, posterFilename, registrationOpen } = req.body;
     if (!title || !startDate) return res.status(400).json({ error: 'Titre et date de début sont requis' });
     if (type !== undefined && !VOLUNTEER_EVENT_TYPES.includes(type)) return res.status(400).json({ error: 'Type d\'événement invalide' });
+
+    const posterUrl = posterBase64 ? saveEventPoster(posterBase64, posterFilename) : null;
 
     const event = await prisma.volunteerEvent.create({
       data: {
@@ -529,6 +560,8 @@ async function createEvent(req, res) {
         type: type || 'AUTRE',
         description: description || null,
         location: location || null,
+        posterUrl,
+        registrationOpen: registrationOpen === undefined ? true : Boolean(registrationOpen),
         startDate: new Date(startDate),
         endDate: endDate ? new Date(endDate) : null,
         createdBy: req.user.id,
@@ -540,6 +573,7 @@ async function createEvent(req, res) {
     });
     return res.status(201).json({ event: fmtEvent(event) });
   } catch (error) {
+    if (error.status === 400) return res.status(400).json({ error: error.message });
     console.error('Erreur createEvent:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -548,7 +582,7 @@ async function createEvent(req, res) {
 async function updateEvent(req, res) {
   try {
     const { id } = req.params;
-    const { title, type, description, location, startDate, endDate, groupIds } = req.body;
+    const { title, type, description, location, startDate, endDate, groupIds, posterBase64, posterFilename, removePoster, registrationOpen } = req.body;
     if (type !== undefined && !VOLUNTEER_EVENT_TYPES.includes(type)) return res.status(400).json({ error: 'Type d\'événement invalide' });
 
     if (groupIds !== undefined) {
@@ -558,6 +592,17 @@ async function updateEvent(req, res) {
       }
     }
 
+    let posterUrl;
+    if (posterBase64) {
+      const current = await prisma.volunteerEvent.findUnique({ where: { id }, select: { posterUrl: true } });
+      posterUrl = saveEventPoster(posterBase64, posterFilename);
+      deleteOldPhoto(current?.posterUrl);
+    } else if (removePoster) {
+      const current = await prisma.volunteerEvent.findUnique({ where: { id }, select: { posterUrl: true } });
+      deleteOldPhoto(current?.posterUrl);
+      posterUrl = null;
+    }
+
     const event = await prisma.volunteerEvent.update({
       where: { id },
       data: {
@@ -565,6 +610,8 @@ async function updateEvent(req, res) {
         ...(type !== undefined && { type }),
         ...(description !== undefined && { description }),
         ...(location !== undefined && { location }),
+        ...(posterUrl !== undefined && { posterUrl }),
+        ...(registrationOpen !== undefined && { registrationOpen: Boolean(registrationOpen) }),
         ...(startDate !== undefined && { startDate: new Date(startDate) }),
         ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
       },
@@ -572,6 +619,7 @@ async function updateEvent(req, res) {
     });
     return res.json({ event: fmtEvent(event) });
   } catch (error) {
+    if (error.status === 400) return res.status(400).json({ error: error.message });
     console.error('Erreur updateEvent:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -580,7 +628,9 @@ async function updateEvent(req, res) {
 async function deleteEvent(req, res) {
   try {
     const { id } = req.params;
+    const existing = await prisma.volunteerEvent.findUnique({ where: { id }, select: { posterUrl: true } });
     await prisma.volunteerEvent.delete({ where: { id } });
+    deleteOldPhoto(existing?.posterUrl);
     return res.status(204).send();
   } catch (error) {
     console.error('Erreur deleteEvent:', error);
@@ -625,6 +675,9 @@ async function upsertMyParticipation(req, res) {
     const ATTENDANCE_VALUES = ['PENDING', 'CONFIRMED', 'DECLINED'];
     if (attendanceStatus !== undefined && !ATTENDANCE_VALUES.includes(attendanceStatus)) {
       return res.status(400).json({ error: 'Statut de présence invalide' });
+    }
+    if (attendanceStatus === 'CONFIRMED' && !event.registrationOpen) {
+      return res.status(400).json({ error: "Les inscriptions sont fermées pour cet événement" });
     }
 
     const existing = await prisma.volunteerEventParticipation.findUnique({

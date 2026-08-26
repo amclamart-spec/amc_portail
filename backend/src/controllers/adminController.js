@@ -19,6 +19,12 @@ function normalizeId(value) {
   return String(value || '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
 }
 
+// P\u00F4le Coran uniquement : une classe peut y \u00EAtre g\u00E9r\u00E9e par plusieurs professeurs
+// (professeur r\u00E9f\u00E9rent teacherId + professeurs suppl\u00E9mentaires via ClassTeacher).
+function isCoranPoleName(poleName) {
+  return String(poleName || '').toLowerCase().includes('coran');
+}
+
 async function confirmStripePaymentsForEnrollment(enrollmentId) {
   const stripePayments = await prisma.payment.findMany({
     where: {
@@ -111,7 +117,7 @@ function dateRangesOverlap(fromA, toA, fromB, toB) {
 }
 
 // Uses raw SQL to avoid dependency on Prisma client having validFrom/validTo in its schema
-async function validateClassConflicts({ classId, schoolYearId, teacherId, roomId, dayOfWeek, startTime, endTime, validFrom, validTo }) {
+async function validateClassConflicts({ classId, schoolYearId, teacherId, additionalTeacherIds = [], roomId, dayOfWeek, startTime, endTime, validFrom, validTo }) {
   const start = parseTimeToMinutes(startTime);
   const end = parseTimeToMinutes(endTime);
 
@@ -131,10 +137,25 @@ async function validateClassConflicts({ classId, schoolYearId, teacherId, roomId
     }
   }
 
-  if (teacherId) {
+  // Vérifie les conflits pour le professeur référent ET les professeurs
+  // supplémentaires (pôle Coran) : un professeur ne peut pas être affecté
+  // (référent ou non) à deux classes qui se chevauchent le même jour.
+  const allTeacherIds = [...new Set([teacherId, ...additionalTeacherIds].filter(Boolean))];
+  for (const currentTeacherId of allTeacherIds) {
     const teacherClasses = classId
-      ? await prisma.$queryRaw`SELECT id, start_time as "startTime", end_time as "endTime", valid_from as "validFrom", valid_to as "validTo" FROM classes WHERE school_year_id = ${schoolYearId} AND day_of_week = ${dayOfWeek} AND teacher_id = ${teacherId} AND id != ${classId}`
-      : await prisma.$queryRaw`SELECT id, start_time as "startTime", end_time as "endTime", valid_from as "validFrom", valid_to as "validTo" FROM classes WHERE school_year_id = ${schoolYearId} AND day_of_week = ${dayOfWeek} AND teacher_id = ${teacherId}`;
+      ? await prisma.$queryRaw`
+          SELECT DISTINCT c.id, c.start_time as "startTime", c.end_time as "endTime", c.valid_from as "validFrom", c.valid_to as "validTo"
+          FROM classes c
+          LEFT JOIN class_teachers ct ON ct.class_id = c.id
+          WHERE c.school_year_id = ${schoolYearId} AND c.day_of_week = ${dayOfWeek}
+            AND (c.teacher_id = ${currentTeacherId} OR ct.teacher_id = ${currentTeacherId})
+            AND c.id != ${classId}`
+      : await prisma.$queryRaw`
+          SELECT DISTINCT c.id, c.start_time as "startTime", c.end_time as "endTime", c.valid_from as "validFrom", c.valid_to as "validTo"
+          FROM classes c
+          LEFT JOIN class_teachers ct ON ct.class_id = c.id
+          WHERE c.school_year_id = ${schoolYearId} AND c.day_of_week = ${dayOfWeek}
+            AND (c.teacher_id = ${currentTeacherId} OR ct.teacher_id = ${currentTeacherId})`;
 
     for (const cls of teacherClasses) {
       const clsStart = parseTimeToMinutes(cls.startTime);
@@ -2599,6 +2620,7 @@ async function getClasses(req, res) {
         roomRef: true,
         teacher: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } },
         classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
+        classTeachers: { include: { teacher: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } } } },
         _count: {
           select: {
             enrollments: {
@@ -2661,6 +2683,7 @@ async function getClassDetails(req, res) {
         classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
         roomRef: true,
         teacher: { include: { user: { select: { firstName: true, lastName: true, email: true, phone: true } } } },
+        classTeachers: { include: { teacher: { include: { user: { select: { firstName: true, lastName: true, email: true, phone: true } } } } } },
         enrollments: {
           where: { status: { in: ['PENDING', 'CONFIRMED'] } },
           include: {
@@ -2789,6 +2812,10 @@ async function createClass(req, res) {
       ? rawIds
       : (req.body.timeSlotId ? [req.body.timeSlotId] : []);
 
+    // Professeurs supplémentaires (pôle Coran uniquement)
+    const rawAdditionalTeacherIds = Array.isArray(req.body.additionalTeacherIds) ? req.body.additionalTeacherIds : [];
+    const additionalTeacherIds = [...new Set(rawAdditionalTeacherIds.filter((tid) => tid && tid !== teacherId))];
+
     const isProvisionalBool = Boolean(isProvisional);
 
     if (!schoolYearId || !poleId) {
@@ -2809,6 +2836,15 @@ async function createClass(req, res) {
     }
     if (!isProvisionalBool && !teacher) {
       return res.status(404).json({ error: 'Professeur introuvable' });
+    }
+    if (additionalTeacherIds.length > 0 && !isCoranPoleName(pole.name)) {
+      return res.status(400).json({ error: 'Les professeurs supplémentaires ne sont disponibles que pour le pôle Coran' });
+    }
+    if (additionalTeacherIds.length > 0) {
+      const additionalTeachers = await prisma.teacher.findMany({ where: { id: { in: additionalTeacherIds } } });
+      if (additionalTeachers.length !== additionalTeacherIds.length) {
+        return res.status(404).json({ error: 'Un ou plusieurs professeurs supplémentaires sont introuvables' });
+      }
     }
 
     // Resolve level: required for non-provisional; for provisional, fall back to first level of the pole
@@ -2845,6 +2881,7 @@ async function createClass(req, res) {
       const conflictError = await validateClassConflicts({
         schoolYearId,
         teacherId,
+        additionalTeacherIds,
         roomId: slot.roomId,
         dayOfWeek: slot.dayOfWeek,
         startTime: slot.startTime,
@@ -2889,6 +2926,12 @@ async function createClass(req, res) {
         });
       }
 
+      if (additionalTeacherIds.length > 0) {
+        await tx.classTeacher.createMany({
+          data: additionalTeacherIds.map((tid) => ({ classId: created.id, teacherId: tid })),
+        });
+      }
+
       // Set validFrom/validTo/applyEnrollmentFee/examPreparation/isProvisional via raw SQL (Prisma client may not know these fields yet)
       const applyFee = applyEnrollmentFee !== false;
       const examPrep = Boolean(examPreparation);
@@ -2909,6 +2952,7 @@ async function createClass(req, res) {
         roomRef: true,
         teacher: { include: { user: true } },
         classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
+        classTeachers: { include: { teacher: { include: { user: true } } } },
       },
     });
 
@@ -2950,9 +2994,10 @@ async function updateClass(req, res) {
       genre: req.body.genre !== undefined ? ((['Tout', 'Masculin', 'Feminin'].includes(req.body.genre) ? req.body.genre : 'Tout')) : (existingRaw?.genre ?? 'Tout'),
     };
 
-    const [level, teacher] = await Promise.all([
+    const [level, teacher, nextPole] = await Promise.all([
       prisma.level.findUnique({ where: { id: next.levelId } }),
       next.teacherId ? prisma.teacher.findUnique({ where: { id: next.teacherId }, include: { user: true } }) : null,
+      next.poleId ? prisma.pole.findUnique({ where: { id: next.poleId } }) : null,
     ]);
 
     if (!level) return res.status(400).json({ error: 'Niveau invalide' });
@@ -2960,6 +3005,27 @@ async function updateClass(req, res) {
       return res.status(400).json({ error: 'Le niveau sélectionné ne correspond pas au pôle choisi' });
     }
     if (next.teacherId && !teacher) return res.status(400).json({ error: 'Professeur invalide' });
+
+    // Professeurs supplémentaires (pôle Coran uniquement) : non fourni = inchangé
+    const additionalTeacherIdsProvided = Array.isArray(req.body.additionalTeacherIds);
+    const additionalTeacherIds = additionalTeacherIdsProvided
+      ? [...new Set(req.body.additionalTeacherIds.filter((tid) => tid && tid !== next.teacherId))]
+      : null;
+    if (additionalTeacherIdsProvided && additionalTeacherIds.length > 0) {
+      if (!isCoranPoleName(nextPole?.name)) {
+        return res.status(400).json({ error: 'Les professeurs supplémentaires ne sont disponibles que pour le pôle Coran' });
+      }
+      const additionalTeachers = await prisma.teacher.findMany({ where: { id: { in: additionalTeacherIds } } });
+      if (additionalTeachers.length !== additionalTeacherIds.length) {
+        return res.status(404).json({ error: 'Un ou plusieurs professeurs supplémentaires sont introuvables' });
+      }
+    }
+
+    // Pour la validation des conflits : ensemble effectif des profs supplémentaires
+    // (celui envoyé, sinon celui déjà en base pour cette classe)
+    const effectiveAdditionalTeacherIds = additionalTeacherIdsProvided
+      ? additionalTeacherIds
+      : (await prisma.classTeacher.findMany({ where: { classId: id }, select: { teacherId: true } })).map((ct) => ct.teacherId);
 
     // Resolve time slots to update
     let newTimeSlots = null;
@@ -2977,6 +3043,7 @@ async function updateClass(req, res) {
           classId: id,
           schoolYearId: next.schoolYearId,
           teacherId: next.teacherId,
+          additionalTeacherIds: effectiveAdditionalTeacherIds,
           roomId: slot.roomId,
           dayOfWeek: slot.dayOfWeek,
           startTime: slot.startTime,
@@ -2992,6 +3059,7 @@ async function updateClass(req, res) {
         classId: id,
         schoolYearId: next.schoolYearId,
         teacherId: next.teacherId,
+        additionalTeacherIds: effectiveAdditionalTeacherIds,
         roomId: existing.roomId,
         dayOfWeek: existing.dayOfWeek,
         startTime: existing.startTime,
@@ -3010,6 +3078,15 @@ async function updateClass(req, res) {
         await tx.classTimeSlot.createMany({
           data: timeSlotIds.map((tsId, idx) => ({ classId: id, timeSlotId: tsId, sortOrder: idx })),
         });
+      }
+
+      if (additionalTeacherIdsProvided) {
+        await tx.classTeacher.deleteMany({ where: { classId: id } });
+        if (additionalTeacherIds.length > 0) {
+          await tx.classTeacher.createMany({
+            data: additionalTeacherIds.map((tid) => ({ classId: id, teacherId: tid })),
+          });
+        }
       }
 
       const updatedClass = await tx.class.update({
@@ -3040,6 +3117,7 @@ async function updateClass(req, res) {
           roomRef: true,
           teacher: { include: { user: true } },
           classTimeSlots: { include: { timeSlot: { include: { room: true } } }, orderBy: { sortOrder: 'asc' } },
+          classTeachers: { include: { teacher: { include: { user: true } } } },
         },
       });
 
@@ -3730,8 +3808,11 @@ async function deleteTeacher(req, res) {
     const teacher = await prisma.teacher.findUnique({ where: { id } });
     if (!teacher) return res.status(404).json({ error: 'Professeur introuvable' });
 
-    const assignedClasses = await prisma.class.count({ where: { teacherId: id } });
-    if (assignedClasses > 0) {
+    const [assignedClasses, assignedAsAdditionalTeacher] = await Promise.all([
+      prisma.class.count({ where: { teacherId: id } }),
+      prisma.classTeacher.count({ where: { teacherId: id } }),
+    ]);
+    if (assignedClasses > 0 || assignedAsAdditionalTeacher > 0) {
       return res.status(400).json({ error: 'Impossible de supprimer un professeur avec des classes assignées' });
     }
 

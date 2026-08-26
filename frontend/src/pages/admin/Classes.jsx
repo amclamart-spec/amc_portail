@@ -10,6 +10,7 @@ const emptyForm = {
   levelId: '',
   timeSlotIds: [],
   teacherId: '',
+  additionalTeacherIds: [],
   capacity: '',
   status: 'OPEN',
   validFrom: '',
@@ -99,6 +100,20 @@ export default function AdminClasses() {
     return levels.filter((level) => level.poleId === form.poleId);
   }, [levels, form.poleId]);
 
+  const isCoranPoleSelected = String(poles.find((p) => p.id === form.poleId)?.name || '').toLowerCase().includes('coran');
+
+  const toggleAdditionalTeacher = (teacherId) => {
+    setForm((prev) => {
+      const already = prev.additionalTeacherIds.includes(teacherId);
+      return {
+        ...prev,
+        additionalTeacherIds: already
+          ? prev.additionalTeacherIds.filter((id) => id !== teacherId)
+          : [...prev.additionalTeacherIds, teacherId],
+      };
+    });
+  };
+
   // Group time slots by day, filtered by selected pole
   const slotsByDay = useMemo(() => {
     const days = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI', 'DIMANCHE'];
@@ -151,6 +166,7 @@ export default function AdminClasses() {
       levelId: cls.levelId,
       timeSlotIds: slotIds,
       teacherId: cls.teacherId || '',
+      additionalTeacherIds: cls.classTeachers?.map((ct) => ct.teacherId) || [],
       capacity: cls.capacity,
       status: cls.status,
       validFrom: cls.validFrom ? new Date(cls.validFrom).toISOString().slice(0, 10) : (yearObj?.startDate ? new Date(yearObj.startDate).toISOString().slice(0, 10) : ''),
@@ -172,6 +188,7 @@ export default function AdminClasses() {
       levelId: form.levelId,
       timeSlotIds: form.timeSlotIds,
       teacherId: form.teacherId,
+      additionalTeacherIds: isCoranPoleSelected ? form.additionalTeacherIds.filter((id) => id !== form.teacherId) : [],
       capacity: Number(form.capacity || 0),
       status: form.status,
       validFrom: form.validFrom || null,
@@ -347,7 +364,14 @@ export default function AdminClasses() {
                           }
                         </td>
                         <td style={{ fontSize: 12 }}>{rooms.length > 0 ? rooms.join(', ') : (cls.roomRef?.name || cls.room || '-')}</td>
-                        <td>{cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : '-'}</td>
+                        <td>
+                          {cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : '-'}
+                          {cls.classTeachers?.length > 0 && (
+                            <div style={{ fontSize: 11, color: '#6B7280' }}>
+                              + {cls.classTeachers.map((ct) => `${ct.teacher.firstName} ${ct.teacher.lastName}`).join(', ')}
+                            </div>
+                          )}
+                        </td>
                         <td>{indicator(cls)} {cls.enrolledCount}/{cls.capacity}</td>
                         <td><span className={`badge ${cls.status === 'OPEN' ? 'badge-success' : 'badge-warning'}`}>{statusLabel(cls.status)}</span></td>
                         <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
@@ -471,7 +495,7 @@ export default function AdminClasses() {
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Pôle *</label>
-                  <select className="form-control" value={form.poleId} onChange={(e) => setForm((p) => ({ ...p, poleId: e.target.value, levelId: '', timeSlotIds: [] }))}>
+                  <select className="form-control" value={form.poleId} onChange={(e) => setForm((p) => ({ ...p, poleId: e.target.value, levelId: '', timeSlotIds: [], additionalTeacherIds: [] }))}>
                     <option value="">Sélectionner</option>
                     {poles.map((pole) => <option key={pole.id} value={pole.id}>{pole.name}</option>)}
                   </select>
@@ -507,6 +531,44 @@ export default function AdminClasses() {
                   </select>
                 </div>
               </div>
+
+              {/* Professeurs supplémentaires — pôle Coran uniquement */}
+              {isCoranPoleSelected && (
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ marginBottom: 6, display: 'block' }}>
+                    Professeurs supplémentaires <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>(classe gérée par plusieurs professeurs)</span>
+                  </label>
+                  <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, padding: 12, maxHeight: 180, overflowY: 'auto', background: '#F9FAFB', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {teachers.filter((t) => t.id !== form.teacherId).length === 0 ? (
+                      <p style={{ color: '#6B7280', margin: 0 }}>Aucun autre professeur disponible</p>
+                    ) : teachers.filter((t) => t.id !== form.teacherId).map((t) => {
+                      const selected = form.additionalTeacherIds.includes(t.id);
+                      return (
+                        <label
+                          key={t.id}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                            padding: '4px 10px', borderRadius: 20, cursor: 'pointer', fontSize: 12,
+                            border: `1px solid ${selected ? '#2563EB' : '#D1D5DB'}`,
+                            background: selected ? '#EFF6FF' : '#FFFFFF',
+                            color: selected ? '#1D4ED8' : '#374151',
+                            fontWeight: selected ? 700 : 400,
+                            transition: 'all 0.15s',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            style={{ display: 'none' }}
+                            checked={selected}
+                            onChange={() => toggleAdditionalTeacher(t.id)}
+                          />
+                          {t.lastName} {t.firstName}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Sélection multi-créneaux */}
               <div className="form-group" style={{ margin: 0 }}>

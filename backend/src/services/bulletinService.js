@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
 const path = require('path');
+const { classAccessWhere } = require('../utils/classAccessUtils');
 
 const prisma = new PrismaClient();
 const CONFIRMED_ENROLLMENT_STATUS = 'CONFIRMED';
@@ -32,7 +33,7 @@ async function getTeacherClassAccess({ teacherUserId, studentId, classId }) {
   const teacherProfile = await prisma.teacher.findUnique({ where: { userId: teacherUserId } });
   if (!teacherProfile) throw notFound('Profil professeur introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw notFound('Vous n\'avez pas accès à cette classe');
 
   const enrollment = await prisma.enrollment.findFirst({
@@ -61,7 +62,7 @@ async function assertReadAccess({ user, studentId }) {
     const teacherProfile = await prisma.teacher.findUnique({ where: { userId: user.id } });
     if (!teacherProfile) throw notFound('Profil professeur introuvable');
     const hasAccess = await prisma.enrollment.findFirst({
-      where: { studentId, status: { in: TEACHER_VISIBLE_ENROLLMENT_STATUSES }, class: { teacherId: teacherProfile.id } },
+      where: { studentId, status: { in: TEACHER_VISIBLE_ENROLLMENT_STATUSES }, class: classAccessWhere(teacherProfile.id) },
     });
     if (!hasAccess) throw notFound('Vous n\'avez pas accès aux bulletins de cet élève');
   } else {
@@ -131,7 +132,7 @@ async function deleteBulletin({ teacherUserId, id }) {
   const bulletin = await prisma.bulletin.findUnique({ where: { id } });
   if (!bulletin) throw notFound('Bulletin introuvable');
 
-  const classRecord = await prisma.class.findFirst({ where: { id: bulletin.classId, teacherId: teacherProfile.id } });
+  const classRecord = await prisma.class.findFirst({ where: { id: bulletin.classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw notFound('Vous n\'avez pas accès à ce bulletin');
 
   const filePath = path.resolve(__dirname, '../../', bulletin.fileUrl.replace(/^\//, ''));

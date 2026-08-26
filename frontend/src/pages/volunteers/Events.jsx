@@ -2,11 +2,24 @@ import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiMapPin, FiCalendar, FiCheck, FiX, FiClock, FiUsers } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiMapPin, FiCalendar, FiCheck, FiX, FiClock, FiUsers, FiFileText, FiPaperclip } from 'react-icons/fi';
 import { FaMosque, FaMoon, FaGift } from 'react-icons/fa';
 import { GiPartyPopper } from 'react-icons/gi';
 
-const EMPTY = { title: '', type: 'AUTRE', description: '', location: '', startDate: '', endDate: '', groupIds: [] };
+const BACKEND_ORIGIN = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/api$/, '')
+  : (import.meta.env.DEV ? 'http://localhost:4000' : '');
+
+const fileUrl = (url) => (!url ? null : url.startsWith('http') ? url : `${BACKEND_ORIGIN}${url}`);
+const isPdfUrl = (url) => !!url && /\.pdf($|\?)/i.test(url);
+
+const POSTER_MAX_SIZE = 8 * 1024 * 1024; // 8 Mo
+const POSTER_ACCEPTED_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+
+const EMPTY = {
+  title: '', type: 'AUTRE', description: '', location: '', startDate: '', endDate: '', groupIds: [],
+  registrationOpen: true, posterUrl: null,
+};
 
 const ATTENDANCE_LABEL = { PENDING: 'En attente de réponse', CONFIRMED: 'Présence confirmée', DECLINED: 'Absence signalée' };
 const ATTENDANCE_BADGE = { PENDING: 'badge-gray', CONFIRMED: 'badge-success', DECLINED: 'badge-danger' };
@@ -87,6 +100,10 @@ export default function VolunteerEvents() {
   const [editId, setEditId] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  // responsable : affiche de l'événement (upload PDF ou image en base64)
+  const [posterDraft, setPosterDraft] = useState(null); // { base64, filename } | null (pas de changement)
+  const [removePoster, setRemovePoster] = useState(false);
+
   // bénévole : saisie de l'imputation (heure début/fin) par événement
   const [imputationDraft, setImputationDraft] = useState({});
   const [savingParticipation, setSavingParticipation] = useState('');
@@ -115,7 +132,7 @@ export default function VolunteerEvents() {
 
   useEffect(() => { load(); }, []);
 
-  const openCreate = () => { setForm(EMPTY); setEditId(null); setModal(true); };
+  const openCreate = () => { setForm(EMPTY); setEditId(null); setPosterDraft(null); setRemovePoster(false); setModal(true); };
   const openEdit = (e) => {
     setForm({
       title: e.title,
@@ -125,9 +142,33 @@ export default function VolunteerEvents() {
       startDate: toInputValue(e.startDate),
       endDate: toInputValue(e.endDate),
       groupIds: (e.groups || []).map((g) => g.id),
+      registrationOpen: e.registrationOpen !== false,
+      posterUrl: e.posterUrl || null,
     });
     setEditId(e.id);
+    setPosterDraft(null);
+    setRemovePoster(false);
     setModal(true);
+  };
+
+  const handlePosterChange = (ev) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (!file) return;
+    if (!POSTER_ACCEPTED_TYPES.includes(file.type)) { toast.error('Formats acceptés : PDF, PNG, JPEG, WEBP'); return; }
+    if (file.size > POSTER_MAX_SIZE) { toast.error('Fichier trop volumineux (8 Mo max)'); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPosterDraft({ base64: reader.result, filename: file.name });
+      setRemovePoster(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemovePoster = () => {
+    setPosterDraft(null);
+    setRemovePoster(true);
+    setForm((p) => ({ ...p, posterUrl: null }));
   };
 
   const toggleFormGroup = (groupId) => {
@@ -150,11 +191,16 @@ export default function VolunteerEvents() {
         startDate: new Date(form.startDate).toISOString(),
         endDate: form.endDate ? new Date(form.endDate).toISOString() : null,
         groupIds: form.groupIds,
+        registrationOpen: form.registrationOpen,
       };
+      if (posterDraft) { payload.posterBase64 = posterDraft.base64; payload.posterFilename = posterDraft.filename; }
+      else if (removePoster) { payload.removePoster = true; }
       if (editId) await api.put(`/volunteers/events/${editId}`, payload);
       else await api.post('/volunteers/events', payload);
       toast.success(editId ? 'Événement modifié' : 'Événement créé');
       setModal(false);
+      setPosterDraft(null);
+      setRemovePoster(false);
       load();
     } catch (err) { toast.error(err.response?.data?.error || 'Erreur'); }
     finally { setSaving(false); }
@@ -248,11 +294,19 @@ export default function VolunteerEvents() {
       <div key={e.id} className="card" style={{ padding: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
               <h3 style={{ margin: 0, color: 'var(--amc-primary)' }}>{e.title}</h3>
               <span className="badge badge-gray" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <TypeIcon size={10} /> {EVENT_TYPE_LABEL[e.type] || e.type}
               </span>
+              <span className={`badge ${e.registrationOpen === false ? 'badge-danger' : 'badge-success'}`} style={{ fontSize: 11 }}>
+                {e.registrationOpen === false ? 'Inscriptions fermées' : 'Inscriptions ouvertes'}
+              </span>
+              {e.posterUrl && (
+                <a href={fileUrl(e.posterUrl)} target="_blank" rel="noreferrer" className="badge badge-gray" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}>
+                  {isPdfUrl(e.posterUrl) ? <FiFileText size={10} /> : <FiPaperclip size={10} />} Affiche
+                </a>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 13, color: '#6B7280', marginBottom: 8 }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><FiCalendar size={13} /> {fmtDateTime(e.startDate)}{e.endDate ? ` → ${fmtDateTime(e.endDate)}` : ''}</span>
@@ -283,18 +337,22 @@ export default function VolunteerEvents() {
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--amc-border)' }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
               <span className={`badge ${ATTENDANCE_BADGE[attendance]}`}>{ATTENDANCE_LABEL[attendance]}</span>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  className="btn btn-sm btn-primary"
-                  disabled={savingParticipation === e.id + 'CONFIRMED'}
-                  onClick={() => handleAttendance(e.id, 'CONFIRMED')}
-                ><FiCheck size={12} /> Je participe</button>
-                <button
-                  className="btn btn-sm btn-outline"
-                  disabled={savingParticipation === e.id + 'DECLINED'}
-                  onClick={() => handleAttendance(e.id, 'DECLINED')}
-                ><FiX size={12} /> Je ne participe pas</button>
-              </div>
+              {e.registrationOpen === false && attendance !== 'CONFIRMED' ? (
+                <span style={{ color: '#94A3B8', fontSize: 12 }}>Les inscriptions sont fermées pour cet événement</span>
+              ) : (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    disabled={savingParticipation === e.id + 'CONFIRMED' || e.registrationOpen === false}
+                    onClick={() => handleAttendance(e.id, 'CONFIRMED')}
+                  ><FiCheck size={12} /> Je participe</button>
+                  <button
+                    className="btn btn-sm btn-outline"
+                    disabled={savingParticipation === e.id + 'DECLINED'}
+                    onClick={() => handleAttendance(e.id, 'DECLINED')}
+                  ><FiX size={12} /> Je ne participe pas</button>
+                </div>
+              )}
             </div>
 
             {attendance === 'CONFIRMED' ? (
@@ -421,6 +479,35 @@ export default function VolunteerEvents() {
                   <label>Fin</label>
                   <input className="form-control" type="datetime-local" value={form.endDate} onChange={(e) => setForm((p) => ({ ...p, endDate: e.target.value }))} />
                 </div>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Affiche (PDF ou image)</label>
+                {(posterDraft || form.posterUrl) && !removePoster ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                    <a
+                      href={posterDraft ? posterDraft.base64 : fileUrl(form.posterUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+                    >
+                      {isPdfUrl(posterDraft?.filename || form.posterUrl) || (posterDraft && posterDraft.base64.startsWith('data:application/pdf')) ? <FiFileText size={14} /> : <FiPaperclip size={14} />}
+                      {posterDraft ? posterDraft.filename : 'Voir l\'affiche actuelle'}
+                    </a>
+                    <button type="button" className="btn btn-sm btn-outline" onClick={handleRemovePoster}>Retirer</button>
+                  </div>
+                ) : (
+                  <input type="file" className="form-control" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={handlePosterChange} style={{ marginTop: 4 }} />
+                )}
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.registrationOpen}
+                    onChange={(e) => setForm((p) => ({ ...p, registrationOpen: e.target.checked }))}
+                  />
+                  Ouvert à l'inscription des bénévoles
+                </label>
               </div>
               <div className="form-group" style={{ margin: 0 }}>
                 <label>Groupes concernés (laisser vide = ouvert à tous les bénévoles)</label>

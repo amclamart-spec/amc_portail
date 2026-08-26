@@ -268,6 +268,7 @@ navSectionsByRole.FAMILLE = [{
   items: [
     { path: '/famille', icon: FiHome, label: 'Tableau de bord' },
     { path: '/famille/inscription', icon: FiBookOpen, label: 'Inscriptions' },
+    { path: '/famille/evenements', icon: FiCalendar, label: 'Événements' },
     { path: '/famille/suivi-pedagogique', icon: FiBarChart2, label: 'Suivi pédagogique' },
     { path: '/famille/paiements', icon: FiCreditCard, label: 'Paiements' },
     { path: '/famille/profil', icon: FiUser, label: 'Profil' },

@@ -418,6 +418,16 @@ export default function FamilyPedagogy() {
           {/* ════════ DASHBOARD ════════ */}
           {tab === 'dashboard' && (
             <div>
+              {selectedStudent?.enrollments?.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#6B7280' }}>
+                    Classe{selectedStudent.enrollments.length > 1 ? 's' : ''} de {selectedStudent.firstName} :
+                  </span>
+                  {selectedStudent.enrollments.map((e) => (
+                    <span key={e.id} className="sp-course-chip">{e.classLabel || 'Cours'}</span>
+                  ))}
+                </div>
+              )}
               <div className="stats-grid" style={{ marginBottom: 16 }}>
                 <div className="stat-card" style={{ cursor: 'pointer' }} onClick={() => setTab('absences')}>
                   <div className={`stat-icon ${absences.length > 0 ? 'danger' : 'success'}`}>📅</div>
@@ -463,16 +473,6 @@ export default function FamilyPedagogy() {
 
               <div className="sp-dash-grid">
                 <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
-                  {selectedStudent?.enrollments?.length > 0 && (
-                    <div className="sp-sec">
-                      <div className="sp-sec-head">📖 Cours inscrits</div>
-                      <div style={{ padding: '10px 12px' }}>
-                        {selectedStudent.enrollments.map((e) => (
-                          <span key={e.id} className="sp-course-chip">{e.classLabel || 'Cours'}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                   <div className="sp-sec">
                     <div className="sp-sec-head">
                       ⭐ Dernières notes
