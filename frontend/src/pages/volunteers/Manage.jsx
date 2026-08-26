@@ -4,6 +4,9 @@ import toast from 'react-hot-toast';
 import { FiPlus, FiCheck, FiX, FiEdit2, FiKey, FiCopy, FiUserX, FiUserCheck } from 'react-icons/fi';
 
 function fmtDate(d) { return d ? new Date(d).toLocaleDateString('fr-FR') : '—'; }
+function fmtHours(h) { return `${Number(h || 0).toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} h`; }
+
+const currentYear = new Date().getFullYear();
 
 const EMPTY_NEW = { firstName: '', lastName: '', email: '', phone: '' };
 
@@ -275,16 +278,17 @@ export default function VolunteersManage() {
         {listLoading ? <p style={{ padding: 20, textAlign: 'center', color: '#6B7280' }}>Chargement…</p> : (
           <div className="table-container">
             <table>
-              <thead><tr><th>Nom</th><th>Email</th><th>Téléphone</th><th>Compte</th><th>Membre depuis</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Nom</th><th>Email</th><th>Téléphone</th><th>Compte</th><th>Heures {currentYear} (validées)</th><th>Membre depuis</th><th>Actions</th></tr></thead>
               <tbody>
                 {volunteers.length === 0 ? (
-                  <tr><td colSpan="6" style={{ textAlign: 'center', padding: 24, color: '#6B7280' }}>Aucun bénévole trouvé</td></tr>
+                  <tr><td colSpan="7" style={{ textAlign: 'center', padding: 24, color: '#6B7280' }}>Aucun bénévole trouvé</td></tr>
                 ) : volunteers.map((v) => (
                   <tr key={v.id}>
                     <td style={{ fontWeight: 600 }}>{v.lastName} {v.firstName}</td>
                     <td>{v.email}</td>
                     <td>{v.phone || '—'}</td>
                     <td><span className={`badge ${v.isActive === false ? 'badge-danger' : 'badge-success'}`}>{v.isActive === false ? 'Désactivé' : 'Actif'}</span></td>
+                    <td>{fmtHours(v.validatedHoursCurrentYear)}</td>
                     <td>{fmtDate(v.createdAt)}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

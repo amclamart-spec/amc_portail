@@ -77,6 +77,7 @@ import FamilyProfile from './pages/family/Profile';
 import FamilyPayments from './pages/family/Payments';
 import FamilyPedagogy from './pages/family/SuiviPedagogique';
 import FamilyChat from './pages/family/Chat';
+import FamilyEvents from './pages/family/Events';
 
 // Rôles ayant accès à l'espace admin
 const ADMIN_ROLES = ['ADMIN', 'RESPONSABLE_POLE_CORAN', 'RESPONSABLE_POLE_ARABE', 'RESPONSABLE_POLE_SOUTIEN_SCO', 'RESPONSABLE_POLE_SCIENCE_IS'];
@@ -183,6 +184,7 @@ function App() {
       <Route path="/famille/paiements" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyPayments /></Layout></PrivateRoute>} />
       <Route path="/famille/profil" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyProfile /></Layout></PrivateRoute>} />
       <Route path="/famille/suivi-pedagogique" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyPedagogy /></Layout></PrivateRoute>} />
+      <Route path="/famille/evenements" element={<PrivateRoute roles={['FAMILLE']}><Layout><FamilyEvents /></Layout></PrivateRoute>} />
 
       <Route path="/" element={<Navigate to={isAuthenticated ? getHomeForRole(user?.role) : '/login'} />} />
       <Route path="*" element={<Navigate to="/" />} />
