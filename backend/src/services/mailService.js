@@ -396,12 +396,44 @@ async function getPoleStructure(currentSchoolYear = null) {
 
 /**
  * Récupère les destinataires selon 3 critères : population, objet, statut
- * population : 'TOUS' | 'FAMILLES' | 'PROFESSEURS'
+ * population : 'TOUS' | 'FAMILLES' | 'PROFESSEURS' | 'CLASSE'
  * objet      : 'INSCRIPTION' | 'PAIEMENT'
  * statut     : 'EN_ATTENTE' | 'VALIDE'
+ * classIds   : string[] — requis quand population = 'CLASSE'
+ *              (statut filtre alors le statut d'inscription des élèves de ces classes)
  */
-async function getRecipientsByCriteria({ population, objet, statut }) {
+async function getRecipientsByCriteria({ population, objet, statut, classIds }) {
   let all = [];
+
+  if (population === 'CLASSE') {
+    if (!Array.isArray(classIds) || classIds.length === 0) return [];
+
+    const enrollmentStatus = statut === 'VALIDE' ? 'CONFIRMED' : 'PENDING';
+    const enrollments = await prisma.enrollment.findMany({
+      where: { classId: { in: classIds }, status: enrollmentStatus },
+      include: {
+        student: {
+          include: {
+            family: { include: { user: { select: { email: true, firstName: true, lastName: true } } } },
+          },
+        },
+      },
+    });
+
+    const famMap = new Map();
+    for (const e of enrollments) {
+      const fam = e.student?.family;
+      const email = fam?.user?.email;
+      if (email && !famMap.has(email)) {
+        famMap.set(email, {
+          email,
+          firstName: fam.user.firstName || '',
+          lastName: fam.familyName || fam.user.lastName || '',
+        });
+      }
+    }
+    return Array.from(famMap.values());
+  }
 
   if (population === 'FAMILLES' || population === 'TOUS') {
     let famMap = new Map();

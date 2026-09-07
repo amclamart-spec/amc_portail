@@ -19,10 +19,41 @@ function normalizeId(value) {
   return String(value || '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
 }
 
-// P\u00F4le Coran uniquement : une classe peut y \u00EAtre g\u00E9r\u00E9e par plusieurs professeurs
-// (professeur r\u00E9f\u00E9rent teacherId + professeurs suppl\u00E9mentaires via ClassTeacher).
-function isCoranPoleName(poleName) {
-  return String(poleName || '').toLowerCase().includes('coran');
+// Libell\u00E9s fran\u00E7ais du statut d'inscription (EnrollmentStatus), pour l'export Excel \u2014
+// m\u00EAmes libell\u00E9s que statusBadge() c\u00F4t\u00E9 frontend admin.
+const ENROLLMENT_STATUS_LABEL = {
+  PENDING: 'En attente',
+  CONFIRMED: 'Confirm\u00E9e',
+  CANCELLED: 'Annul\u00E9e',
+  ARCHIVED: 'Archiv\u00E9e',
+};
+
+// Filtre "Fiche sanitaire" (rubrique Inscriptions) : mappe une valeur de crit\u00E8re
+// vers le champ bool\u00E9en correspondant de StudentHealthForm.
+const HEALTH_CRITERIA_FIELD = {
+  CHRONIC_DISEASE: 'hasChronicDisease',
+  ALLERGY: 'hasAllergy',
+  MEDICAL_TREATMENT: 'hasMedicalTreatment',
+  DISABILITY: 'hasDisability',
+};
+
+// Construit la clause Prisma `student.healthForms.some(...)` pour un crit\u00E8re de fiche
+// sanitaire donn\u00E9.
+function buildHealthCriteriaWhere(healthCriteria, schoolYearId) {
+  if (!healthCriteria) return null;
+  const field = HEALTH_CRITERIA_FIELD[healthCriteria];
+  if (!field) return null;
+  const scopeWhere = schoolYearId ? { schoolYearId } : {};
+  return { ...scopeWhere, [field]: true };
+}
+
+// P\u00F4les Coran et Soutien scolaire uniquement : une classe peut y \u00EAtre g\u00E9r\u00E9e par
+// plusieurs professeurs (professeur r\u00E9f\u00E9rent teacherId + professeurs
+// suppl\u00E9mentaires via ClassTeacher).
+const MULTI_TEACHER_POLE_KEYWORDS = ['coran', 'soutien'];
+function poleAllowsMultipleTeachers(poleName) {
+  const normalized = String(poleName || '').toLowerCase();
+  return MULTI_TEACHER_POLE_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
 async function confirmStripePaymentsForEnrollment(enrollmentId) {
@@ -706,7 +737,7 @@ async function getScopedPoleId(role) {
  */
 async function getEnrollments(req, res) {
   try {
-    const { schoolYearId, status, studentName, familyName, paymentStatus, poleId, classId, page = 1, limit = 50, testRequired } = req.query;
+    const { schoolYearId, status, studentName, familyName, paymentStatus, poleId, classId, page = 1, limit = 50, testRequired, healthCriteria } = req.query;
     const waitlist = req.query.waitlist === 'true';
     const where = {};
     if (schoolYearId) where.schoolYearId = schoolYearId;
@@ -728,6 +759,10 @@ async function getEnrollments(req, res) {
       studentWhere.family = {
         familyName: { contains: familyName, mode: 'insensitive' },
       };
+    }
+    const healthCriteriaWhere = buildHealthCriteriaWhere(healthCriteria, schoolYearId);
+    if (healthCriteriaWhere) {
+      studentWhere.healthForms = { some: healthCriteriaWhere };
     }
     if (Object.keys(studentWhere).length > 0) {
       where.student = studentWhere;
@@ -1023,7 +1058,9 @@ async function getEnrollmentPayments(req, res) {
         payerName: tx.payerName,
         method: tx.method,
         paymentMethod: tx.payment?.paymentMethod,
-        paymentMetadata: tx.payment?.metadata || {},
+        // Priorité aux infos propres à CETTE transaction (IBAN/échéancier) — le Payment
+        // parent ne sert que de repli si la transaction n'a pas encore sa propre metadata.
+        paymentMetadata: { ...(tx.payment?.metadata || {}), ...(tx.metadata || {}) },
         description: tx.description,
         amount: String(tx.amount),
         status: tx.status,
@@ -1041,7 +1078,7 @@ async function getEnrollmentPayments(req, res) {
 
 async function updateEnrollmentPayment(req, res) {
   try {
-    const { payerName, date, method, status, comment, amount } = req.body;
+    const { payerName, date, method, status, comment, amount, bankDebitIban, bankDebitSwift, numberOfInstallments, firstPaymentDate, scheduleDay, ribDocument } = req.body;
     const { enrollment, transaction } = await findEnrollmentTransaction(req.params.id, req.params.paymentId);
 
     if (String(transaction.status) === 'SUCCEEDED') {
@@ -1106,14 +1143,49 @@ async function updateEnrollmentPayment(req, res) {
       updateData.description = comment || null;
     }
 
+    // Fusionne les infos de prélèvement/chèque (IBAN, nombre d'échéances, date de
+    // départ...) — même mapping que createEnrollmentPayment, basé sur le moyen de
+    // paiement (nouveau si fourni, sinon celui déjà enregistré). Stocké sur la
+    // TRANSACTION elle-même (pas seulement sur le Payment parent, partagé par
+    // toutes ses transactions) : un même Payment peut avoir plusieurs prélèvements/
+    // chèques distincts, chacun avec son propre IBAN/échéancier.
+    const effectiveMethod = method !== undefined ? method : transaction.method;
+    const paymentMetadataUpdate = {};
+    let hasMetadataUpdate = false;
+    if (['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(effectiveMethod)) {
+      if (bankDebitIban !== undefined) { paymentMetadataUpdate.bankDebitIban = String(bankDebitIban || '').trim(); hasMetadataUpdate = true; }
+      if (bankDebitSwift !== undefined) { paymentMetadataUpdate.bankDebitSwift = String(bankDebitSwift || '').trim(); hasMetadataUpdate = true; }
+      if (numberOfInstallments !== undefined) { paymentMetadataUpdate.bankDebitInstallmentsCount = Number(numberOfInstallments) || 1; hasMetadataUpdate = true; }
+      if (firstPaymentDate !== undefined) { paymentMetadataUpdate.firstPaymentDate = String(firstPaymentDate || '').trim(); hasMetadataUpdate = true; }
+      if (scheduleDay !== undefined) { paymentMetadataUpdate.bankDebitDay = Number(scheduleDay) || 10; hasMetadataUpdate = true; }
+      if (ribDocument?.base64) {
+        paymentMetadataUpdate.bankDebitRibUrl = saveBase64File(ribDocument.base64, 'ribs', ribDocument.name || 'rib.pdf');
+        paymentMetadataUpdate.bankDebitRibFilename = String(ribDocument.name || 'RIB');
+        hasMetadataUpdate = true;
+      }
+    } else if (effectiveMethod === 'CHEQUE') {
+      if (numberOfInstallments !== undefined) { paymentMetadataUpdate.chequeInstallmentsCount = Number(numberOfInstallments) || 1; hasMetadataUpdate = true; }
+      if (firstPaymentDate !== undefined) { paymentMetadataUpdate.chequeFirstPaymentDate = String(firstPaymentDate || '').trim(); hasMetadataUpdate = true; }
+      if (scheduleDay !== undefined) { paymentMetadataUpdate.chequeDepositDay = Number(scheduleDay) || 10; hasMetadataUpdate = true; }
+    }
+
+    if (hasMetadataUpdate) {
+      updateData.metadata = { ...(transaction.metadata || {}), ...paymentMetadataUpdate };
+    }
+
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ error: 'Aucune donnée à mettre à jour' });
     }
 
-    const updatedTransaction = await prisma.paymentTransaction.update({
-      where: { id: transaction.id },
-      data: updateData,
-    });
+    const updatedTransaction = await prisma.paymentTransaction.update({ where: { id: transaction.id }, data: updateData });
+
+    if (hasMetadataUpdate) {
+      const currentPayment = await prisma.payment.findUnique({ where: { id: transaction.paymentId } });
+      await prisma.payment.update({
+        where: { id: transaction.paymentId },
+        data: { metadata: { ...(currentPayment?.metadata || {}), ...paymentMetadataUpdate } },
+      });
+    }
 
     await recalculatePaymentAggregate(transaction.paymentId);
 
@@ -1282,22 +1354,33 @@ async function downloadEnrollmentPaymentReceipt(req, res) {
 
     const familyTransactionsForReceipt = familyPayments
       .flatMap((familyPayment) => (familyPayment.transactions || []).map((tx) => {
-        const paymentMetadata = {
+        const parentMetadata = {
           ...((familyPayment.paymentPlan?.metadata && typeof familyPayment.paymentPlan.metadata === 'object') ? familyPayment.paymentPlan.metadata : {}),
           ...((familyPayment.metadata && typeof familyPayment.metadata === 'object') ? familyPayment.metadata : {}),
         };
+        // Priorité aux infos propres à CETTE transaction : un même Payment peut porter
+        // plusieurs prélèvements/chèques distincts (IBAN, échéancier différents), chacun
+        // stocké sur sa propre transaction — le niveau Payment ne sert que de repli pour
+        // les transactions plus anciennes créées avant que ce stockage par transaction existe.
+        const ownMetadata = (tx.metadata && typeof tx.metadata === 'object') ? tx.metadata : {};
+        const paymentMetadata = { ...parentMetadata, ...ownMetadata };
         const installments = Array.isArray(familyPayment.installments) ? familyPayment.installments : [];
         const firstInstallment = installments.length > 0 ? installments[0] : null;
-        const paymentMethod = familyPayment.paymentMethod || paymentMetadata.paymentMethod || paymentMetadata.checkoutMethod || paymentMetadata.paymentPlanType || familyPayment.paymentPlan?.type || null;
-        const paymentInstallmentsCount = familyPayment.numberOfInstallments || familyPayment.paymentPlan?.installmentsCount || paymentMetadata.numberOfInstallments || paymentMetadata.bankDebitInstallmentsCount || paymentMetadata.chequeInstallmentsCount || installments.length || null;
+        const paymentMethod = tx.method || familyPayment.paymentMethod || paymentMetadata.paymentMethod || paymentMetadata.checkoutMethod || paymentMetadata.paymentPlanType || familyPayment.paymentPlan?.type || null;
+        const paymentInstallmentsCount = ownMetadata.bankDebitInstallmentsCount || ownMetadata.chequeInstallmentsCount
+          || familyPayment.numberOfInstallments || familyPayment.paymentPlan?.installmentsCount
+          || paymentMetadata.numberOfInstallments || paymentMetadata.bankDebitInstallmentsCount || paymentMetadata.chequeInstallmentsCount
+          || installments.length || null;
 
         return {
           ...tx,
           paymentMetadata,
           paymentMethod,
           paymentInstallmentsCount,
-          scheduleDay: familyPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
-          firstPaymentDate: paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
+          scheduleDay: ownMetadata.bankDebitDay || ownMetadata.chequeDepositDay
+            || familyPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
+          firstPaymentDate: ownMetadata.firstPaymentDate || ownMetadata.chequeFirstPaymentDate
+            || paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
         };
       }))
       .filter((tx) => String(tx.status || '').toUpperCase() === 'SUCCEEDED');
@@ -1453,6 +1536,10 @@ async function createEnrollmentPayment(req, res) {
       });
     }
 
+    // paymentMetadata est aussi stocké sur la transaction elle-même (et pas seulement sur le
+    // Payment parent, partagé par toutes ses transactions) : un même Payment peut recevoir
+    // plusieurs prélèvements/chèques distincts au fil du temps, chacun avec son propre IBAN/
+    // nombre d'échéances/date — sans ça, le second écrase les infos du premier pour tout le monde.
     const transaction = await prisma.paymentTransaction.create({
       data: {
         paymentId: targetPayment.id,
@@ -1465,6 +1552,7 @@ async function createEnrollmentPayment(req, res) {
         recordedById: req.user.id,
         processedAt: txDate,
         createdAt: txDate,
+        metadata: Object.keys(paymentMetadata).length > 0 ? paymentMetadata : undefined,
       },
     });
 
@@ -1478,7 +1566,7 @@ async function createEnrollmentPayment(req, res) {
 
 async function exportEnrollments(req, res) {
   try {
-    const { schoolYearId, status, studentName, poleId, classId, waitlist, provisional } = req.body || {};
+    const { schoolYearId, status, studentName, poleId, classId, waitlist, provisional, healthCriteria } = req.body || {};
     const where = {};
     if (schoolYearId) where.schoolYearId = schoolYearId;
     if (waitlist) {
@@ -1487,13 +1575,19 @@ async function exportEnrollments(req, res) {
     } else if (status) {
       where.status = status;
     }
+    const studentWhere = {};
     if (studentName) {
-      where.student = {
-        OR: [
-          { firstName: { contains: studentName, mode: 'insensitive' } },
-          { lastName: { contains: studentName, mode: 'insensitive' } },
-        ],
-      };
+      studentWhere.OR = [
+        { firstName: { contains: studentName, mode: 'insensitive' } },
+        { lastName: { contains: studentName, mode: 'insensitive' } },
+      ];
+    }
+    const healthCriteriaWhere = buildHealthCriteriaWhere(healthCriteria, schoolYearId);
+    if (healthCriteriaWhere) {
+      studentWhere.healthForms = { some: healthCriteriaWhere };
+    }
+    if (Object.keys(studentWhere).length > 0) {
+      where.student = studentWhere;
     }
 
     const classWhere = {};
@@ -1509,12 +1603,15 @@ async function exportEnrollments(req, res) {
       where.class = classWhere;
     }
 
+    const healthFormsInclude = schoolYearId ? { where: { schoolYearId } } : true;
+
     const enrollments = await prisma.enrollment.findMany({
       where,
       include: {
         student: {
           include: {
             family: { include: { user: true } },
+            ...(healthCriteriaWhere ? { healthForms: healthFormsInclude } : {}),
           },
         },
         class: {
@@ -1524,12 +1621,14 @@ async function exportEnrollments(req, res) {
         },
         schoolYear: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: healthCriteriaWhere
+        ? [{ class: { level: { pole: { sortOrder: 'asc' } } } }, { class: { level: { sortOrder: 'asc' } } }, { class: { dayOfWeek: 'asc' } }, { class: { startTime: 'asc' } }]
+        : { createdAt: 'desc' },
     });
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Inscriptions');
-    worksheet.columns = [
+    const baseColumns = [
       { header: 'Réf. inscription', key: 'registrationCode', width: 20 },
       { header: 'Élève', key: 'studentName', width: 28 },
       { header: 'Famille', key: 'familyName', width: 24 },
@@ -1540,28 +1639,61 @@ async function exportEnrollments(req, res) {
       { header: 'Liste d\'attente', key: 'waitlist', width: 16 },
       { header: 'Commentaire', key: 'comment', width: 30 },
     ];
+    const healthColumns = [
+      { header: 'Maladies chroniques', key: 'chronicDisease', width: 30 },
+      { header: 'Allergies', key: 'allergy', width: 30 },
+      { header: 'Traitement médical', key: 'medicalTreatment', width: 30 },
+      { header: 'Handicap', key: 'disability', width: 30 },
+    ];
+    worksheet.columns = healthCriteriaWhere ? [...baseColumns, ...healthColumns] : baseColumns;
 
-    const rows = enrollments.map((enrollment) => {
+    const healthFlagCell = (has, details) => (has ? (details ? details : 'Oui') : 'Non');
+
+    // Regroupe visuellement par classe (une ligne de titre par classe) quand on exporte
+    // le résultat du filtre "Fiche sanitaire" — sinon export à plat, ordre chronologique.
+    let currentGroupKey = null;
+    enrollments.forEach((enrollment) => {
+      if (healthCriteriaWhere) {
+        const groupKey = enrollment.class?.id || 'sans-classe';
+        if (groupKey !== currentGroupKey) {
+          currentGroupKey = groupKey;
+          const pole = enrollment.class?.level?.pole?.name || '';
+          const level = enrollment.class?.level?.name || '';
+          const schedule = enrollment.class ? `${enrollment.class.dayOfWeek} ${enrollment.class.startTime}-${enrollment.class.endTime}` : 'Sans classe';
+          const groupRow = worksheet.addRow([`${pole}${pole ? ' - ' : ''}${level} — ${schedule}`]);
+          groupRow.font = { bold: true };
+          groupRow.eachCell((cell) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } }; });
+          worksheet.mergeCells(groupRow.number, 1, groupRow.number, worksheet.columns.length);
+        }
+      }
+
       const studentName = `${enrollment.student.lastName} ${enrollment.student.firstName}`.trim();
       const familyName = enrollment.student.family?.familyName || '';
       const pole = enrollment.class?.level?.pole?.name || '';
       const level = enrollment.class?.level?.name || '';
       const schedule = enrollment.class ? `${enrollment.class.dayOfWeek} ${enrollment.class.startTime}-${enrollment.class.endTime}` : '';
       const isWaitlist = enrollment.status === 'PENDING' && enrollment.isWaitlist === true;
-      return {
+      const healthForm = healthCriteriaWhere ? (enrollment.student.healthForms || [])[0] : null;
+      const rowData = {
         registrationCode: enrollment.registrationCode || '',
         studentName,
         familyName,
         pole,
         level,
         schedule,
-        status: enrollment.status,
+        status: ENROLLMENT_STATUS_LABEL[enrollment.status] || enrollment.status,
         waitlist: isWaitlist ? 'Oui' : 'Non',
         comment: enrollment.comment || '',
+        ...(healthCriteriaWhere ? {
+          chronicDisease: healthFlagCell(healthForm?.hasChronicDisease, healthForm?.chronicDiseaseDetails),
+          allergy: healthFlagCell(healthForm?.hasAllergy, healthForm?.allergyDetails),
+          medicalTreatment: healthFlagCell(healthForm?.hasMedicalTreatment, healthForm?.medicalTreatmentDetails),
+          disability: healthFlagCell(healthForm?.hasDisability, healthForm?.disabilityDetails),
+        } : {}),
       };
+      worksheet.addRow(rowData);
     });
 
-    worksheet.addRows(rows);
     worksheet.getRow(1).font = { bold: true };
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -2837,8 +2969,8 @@ async function createClass(req, res) {
     if (!isProvisionalBool && !teacher) {
       return res.status(404).json({ error: 'Professeur introuvable' });
     }
-    if (additionalTeacherIds.length > 0 && !isCoranPoleName(pole.name)) {
-      return res.status(400).json({ error: 'Les professeurs supplémentaires ne sont disponibles que pour le pôle Coran' });
+    if (additionalTeacherIds.length > 0 && !poleAllowsMultipleTeachers(pole.name)) {
+      return res.status(400).json({ error: 'Les professeurs supplémentaires ne sont disponibles que pour les pôles Coran et Soutien scolaire' });
     }
     if (additionalTeacherIds.length > 0) {
       const additionalTeachers = await prisma.teacher.findMany({ where: { id: { in: additionalTeacherIds } } });
@@ -3012,8 +3144,8 @@ async function updateClass(req, res) {
       ? [...new Set(req.body.additionalTeacherIds.filter((tid) => tid && tid !== next.teacherId))]
       : null;
     if (additionalTeacherIdsProvided && additionalTeacherIds.length > 0) {
-      if (!isCoranPoleName(nextPole?.name)) {
-        return res.status(400).json({ error: 'Les professeurs supplémentaires ne sont disponibles que pour le pôle Coran' });
+      if (!poleAllowsMultipleTeachers(nextPole?.name)) {
+        return res.status(400).json({ error: 'Les professeurs supplémentaires ne sont disponibles que pour les pôles Coran et Soutien scolaire' });
       }
       const additionalTeachers = await prisma.teacher.findMany({ where: { id: { in: additionalTeacherIds } } });
       if (additionalTeachers.length !== additionalTeacherIds.length) {
