@@ -71,6 +71,12 @@ export default function AdminEnrollments() {
   const [exporting, setExporting] = useState(false);
   const [enrollmentsRefreshKey, setEnrollmentsRefreshKey] = useState(0);
 
+  // Filtre "Fiche sanitaire" : vue dédiée, groupée par classe, en remplacement de la
+  // grille habituelle tant qu'un critère est sélectionné.
+  const [healthCriteria, setHealthCriteria] = useState('');
+  const [healthResults, setHealthResults] = useState([]);
+  const [healthLoading, setHealthLoading] = useState(false);
+
   // "Ajouter une inscription" flow
   const [addEnrollmentOpen, setAddEnrollmentOpen] = useState(false);
   const [isExistingFamily, setIsExistingFamily] = useState(true);
@@ -136,6 +142,57 @@ export default function AdminEnrollments() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, selectedPaymentStatus, pagination.page, pagination.limit, enrollmentsRefreshKey]);
+
+  useEffect(() => {
+    if (!healthCriteria) { setHealthResults([]); return; }
+    setHealthLoading(true);
+    const params = new URLSearchParams();
+    params.set('healthCriteria', healthCriteria);
+    if (studentSearch.trim()) params.set('studentName', studentSearch.trim());
+    if (selectedPole) params.set('poleId', selectedPole);
+    if (selectedClassId) params.set('classId', selectedClassId);
+    if (selectedStatusFilter === 'WAITLIST') {
+      params.set('waitlist', 'true');
+    } else if (selectedStatusFilter) {
+      params.set('status', selectedStatusFilter);
+    }
+    if (familySearch.trim()) params.set('familyName', familySearch.trim());
+    params.set('page', '1');
+    params.set('limit', '5000');
+    api.get(`/admin/enrollments?${params.toString()}`)
+      .then(({ data }) => setHealthResults(data.enrollments || []))
+      .catch(() => toast.error('Impossible de charger les inscriptions (fiche sanitaire)'))
+      .finally(() => setHealthLoading(false));
+  }, [healthCriteria, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, enrollmentsRefreshKey]);
+
+  const healthGroupedByClass = useMemo(() => {
+    const groups = new Map();
+    healthResults.forEach((enrollment) => {
+      const cls = enrollment.class;
+      const key = cls?.id || 'sans-classe';
+      if (!groups.has(key)) {
+        groups.set(key, {
+          classId: key,
+          pole: cls?.level?.pole?.name || '—',
+          level: cls?.level?.name || '—',
+          schedule: cls ? `${cls.dayOfWeek} ${cls.startTime}-${cls.endTime}` : 'Sans classe',
+          enrollments: [],
+        });
+      }
+      groups.get(key).enrollments.push(enrollment);
+    });
+    return Array.from(groups.values()).sort((a, b) => (a.pole + a.level + a.schedule).localeCompare(b.pole + b.level + b.schedule));
+  }, [healthResults]);
+
+  const HEALTH_CRITERIA_FIELD = { CHRONIC_DISEASE: 'hasChronicDisease', ALLERGY: 'hasAllergy', MEDICAL_TREATMENT: 'hasMedicalTreatment', DISABILITY: 'hasDisability' };
+  const HEALTH_CRITERIA_DETAILS_FIELD = { CHRONIC_DISEASE: 'chronicDiseaseDetails', ALLERGY: 'allergyDetails', MEDICAL_TREATMENT: 'medicalTreatmentDetails', DISABILITY: 'disabilityDetails' };
+  const HEALTH_CRITERIA_LABEL = { CHRONIC_DISEASE: 'Maladie chronique', ALLERGY: 'Allergie', MEDICAL_TREATMENT: 'Traitement médical', DISABILITY: 'Handicap' };
+  const healthFormForEnrollment = (enrollment) => (enrollment.student?.healthForms || [])[0] || null;
+  const healthFlagsSummary = (enrollment) => {
+    const form = healthFormForEnrollment(enrollment);
+    if (!form || !form[HEALTH_CRITERIA_FIELD[healthCriteria]]) return '—';
+    return form[HEALTH_CRITERIA_DETAILS_FIELD[healthCriteria]] || HEALTH_CRITERIA_LABEL[healthCriteria];
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -305,6 +362,7 @@ export default function AdminEnrollments() {
         status: selectedStatusFilter === 'WAITLIST' ? undefined : selectedStatusFilter || undefined,
         waitlist: selectedStatusFilter === 'WAITLIST',
         provisional: provisionalOnly ? true : undefined,
+        healthCriteria: healthCriteria || undefined,
       };
       const response = await api.post('/admin/enrollments/export', body, {
         responseType: 'blob',
@@ -740,13 +798,16 @@ export default function AdminEnrollments() {
         amount: Number(paymentForm.amount),
       };
 
-      // Add prelevement fields if applicable
-      if (['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(paymentForm.method)) {
-        requestBody.bankDebitIban = paymentForm.bankDebitIban;
-        requestBody.bankDebitSwift = paymentForm.bankDebitSwift;
+      // Add échéancier fields (nombre d'échéances, date de départ, jour) : prélèvement ET chèque
+      if (['VIREMENT', 'PRELEVEMENT_BANCAIRE', 'CHEQUE'].includes(paymentForm.method)) {
         requestBody.numberOfInstallments = Number(paymentForm.numberOfInstallments) || 1;
         requestBody.firstPaymentDate = paymentForm.firstPaymentDate;
         requestBody.scheduleDay = Number(paymentForm.scheduleDay) || 10;
+      }
+      // Add coordonnées bancaires (IBAN/SWIFT/RIB) : prélèvement uniquement
+      if (['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(paymentForm.method)) {
+        requestBody.bankDebitIban = paymentForm.bankDebitIban;
+        requestBody.bankDebitSwift = paymentForm.bankDebitSwift;
         if (paymentForm.ribDocument) {
           requestBody.ribDocument = paymentForm.ribDocument;
         }
@@ -810,9 +871,9 @@ export default function AdminEnrollments() {
       amount: payment.amount || '',
       bankDebitIban: metadata.bankDebitIban || '',
       bankDebitSwift: metadata.bankDebitSwift || '',
-      numberOfInstallments: metadata.bankDebitInstallmentsCount || 1,
-      firstPaymentDate: metadata.firstPaymentDate || new Date().toISOString().slice(0, 10),
-      scheduleDay: metadata.bankDebitDay || 10,
+      numberOfInstallments: metadata.bankDebitInstallmentsCount || metadata.chequeInstallmentsCount || 1,
+      firstPaymentDate: metadata.firstPaymentDate || metadata.chequeFirstPaymentDate || new Date().toISOString().slice(0, 10),
+      scheduleDay: metadata.bankDebitDay || metadata.chequeDepositDay || 10,
       ribDocument: null,
     });
   };
@@ -1434,6 +1495,20 @@ export default function AdminEnrollments() {
               <option value="CANCELLED">Annulé</option>
             </select>
           </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, color: '#374151' }}>Fiche sanitaire</label>
+            <select
+              className="form-control"
+              value={healthCriteria}
+              onChange={(e) => setHealthCriteria(e.target.value)}
+            >
+              <option value="">-- Aucun filtre --</option>
+              <option value="CHRONIC_DISEASE">Maladies chroniques</option>
+              <option value="ALLERGY">Allergies</option>
+              <option value="MEDICAL_TREATMENT">Traitement médical</option>
+              <option value="DISABILITY">Handicap</option>
+            </select>
+          </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'center' }}>
@@ -1443,14 +1518,16 @@ export default function AdminEnrollments() {
               Montrer uniquement les affectations provisoires
             </label>
             <div style={{ color: '#6B7280' }}>
-              Résultats: {enrollments.length} / {pagination.total}
+              {healthCriteria
+                ? `Résultats (fiche sanitaire): ${healthResults.length}`
+                : `Résultats: ${enrollments.length} / ${pagination.total}`}
             </div>
           </div>
           <button
             className="btn btn-primary"
             type="button"
             onClick={exportEnrollments}
-            disabled={exporting || loading}
+            disabled={exporting || loading || healthLoading}
             style={{ minWidth: 160, justifySelf: 'end' }}
           >
             {exporting ? 'Export en cours…' : 'Exporter en Excel'}
@@ -1458,6 +1535,43 @@ export default function AdminEnrollments() {
         </div>
       </div>
 
+      {healthCriteria ? (
+        <div className="card">
+          {healthLoading ? <p>Chargement...</p> : healthGroupedByClass.length === 0 ? (
+            <p style={{ textAlign: 'center', color: '#6B7280', padding: 24 }}>Aucune inscription ne correspond à ce critère de fiche sanitaire.</p>
+          ) : (
+            healthGroupedByClass.map((group) => (
+              <div key={group.classId} style={{ marginBottom: 20 }}>
+                <h4 style={{ margin: '0 0 8px', color: 'var(--amc-primary)' }}>
+                  {group.pole} - {group.level} <span style={{ fontWeight: 400, color: '#6B7280' }}>({group.schedule}) — {group.enrollments.length} élève{group.enrollments.length > 1 ? 's' : ''}</span>
+                </h4>
+                <div className="table-container" style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th>Élève</th>
+                        <th>Famille</th>
+                        <th>Statut</th>
+                        <th>Fiche sanitaire</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.enrollments.map((enrollment) => (
+                        <tr key={enrollment.id}>
+                          <td>{enrollment.student?.lastName} {enrollment.student?.firstName}</td>
+                          <td>{enrollment.student?.family?.familyName || '—'}</td>
+                          <td>{statusBadge(enrollment.status, isEnrollmentWaitlist(enrollment))}</td>
+                          <td>{healthFlagsSummary(enrollment)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      ) : (
       <div className="card">
         {loading ? <p>Chargement...</p> : (
           <>
@@ -1670,6 +1784,7 @@ export default function AdminEnrollments() {
           </>
         )}
       </div>
+      )}
 
       {modalOpen && editForm && (
         <div className="modal-overlay">
@@ -2342,38 +2457,42 @@ export default function AdminEnrollments() {
                       />
                     </div>
 
-                    {['VIREMENT', 'PRELEVEMENT_BANCAIRE'].includes(paymentForm.method) && (
+                    {['VIREMENT', 'PRELEVEMENT_BANCAIRE', 'CHEQUE'].includes(paymentForm.method) && (
                       <div style={{ border: '1px solid #D1D5DB', borderRadius: 8, padding: 12, background: '#F9FAFB', marginTop: 12 }}>
-                        <h6 style={{ margin: '0 0 12px 0', color: '#111827', fontSize: 14, fontWeight: 600 }}>Informations de prélèvement</h6>
-                        
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-                          <div className="form-group" style={{ margin: 0 }}>
-                            <label>IBAN</label>
-                            <input
-                              type="text"
-                              className="form-control"
-                              placeholder="Ex: FR1420041010050500013M02606"
-                              value={paymentForm.bankDebitIban}
-                              onChange={(event) => setPaymentForm((prev) => ({ ...prev, bankDebitIban: normalizeBankValue(event.target.value) }))}
-                              style={{ fontFamily: 'monospace', letterSpacing: '0.05em' }}
-                            />
+                        <h6 style={{ margin: '0 0 12px 0', color: '#111827', fontSize: 14, fontWeight: 600 }}>
+                          {paymentForm.method === 'CHEQUE' ? 'Échéancier de chèques' : 'Informations de prélèvement'}
+                        </h6>
+
+                        {paymentForm.method !== 'CHEQUE' && (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label>IBAN</label>
+                              <input
+                                type="text"
+                                className="form-control"
+                                placeholder="Ex: FR1420041010050500013M02606"
+                                value={paymentForm.bankDebitIban}
+                                onChange={(event) => setPaymentForm((prev) => ({ ...prev, bankDebitIban: normalizeBankValue(event.target.value) }))}
+                                style={{ fontFamily: 'monospace', letterSpacing: '0.05em' }}
+                              />
+                            </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label>SWIFT / BIC</label>
+                              <input
+                                type="text"
+                                className="form-control"
+                                placeholder="Ex: BNPAFRPP"
+                                value={paymentForm.bankDebitSwift}
+                                onChange={(event) => setPaymentForm((prev) => ({ ...prev, bankDebitSwift: normalizeBankValue(event.target.value) }))}
+                                style={{ fontFamily: 'monospace', letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                              />
+                            </div>
                           </div>
-                          <div className="form-group" style={{ margin: 0 }}>
-                            <label>SWIFT / BIC</label>
-                            <input
-                              type="text"
-                              className="form-control"
-                              placeholder="Ex: BNPAFRPP"
-                              value={paymentForm.bankDebitSwift}
-                              onChange={(event) => setPaymentForm((prev) => ({ ...prev, bankDebitSwift: normalizeBankValue(event.target.value) }))}
-                              style={{ fontFamily: 'monospace', letterSpacing: '0.05em', textTransform: 'uppercase' }}
-                            />
-                          </div>
-                        </div>
+                        )}
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
                           <div className="form-group" style={{ margin: 0 }}>
-                            <label>Nombre d'échéances</label>
+                            <label>{paymentForm.method === 'CHEQUE' ? 'Nombre de chèques' : "Nombre d'échéances"}</label>
                             <input
                               type="number"
                               className="form-control"
@@ -2384,7 +2503,7 @@ export default function AdminEnrollments() {
                             />
                           </div>
                           <div className="form-group" style={{ margin: 0 }}>
-                            <label>Date début prélèvement</label>
+                            <label>{paymentForm.method === 'CHEQUE' ? 'Date du premier chèque' : 'Date début prélèvement'}</label>
                             <input
                               type="date"
                               className="form-control"
@@ -2393,7 +2512,7 @@ export default function AdminEnrollments() {
                             />
                           </div>
                           <div className="form-group" style={{ margin: 0 }}>
-                            <label>Jour de prélèvement</label>
+                            <label>{paymentForm.method === 'CHEQUE' ? 'Jour de dépôt' : 'Jour de prélèvement'}</label>
                             <select
                               className="form-control"
                               value={paymentForm.scheduleDay}
@@ -2406,36 +2525,38 @@ export default function AdminEnrollments() {
                           </div>
                         </div>
 
-                        <div className="form-group" style={{ margin: 0 }}>
-                          <label>Fichier RIB (PDF/Image)</label>
-                          <input
-                            type="file"
-                            className="form-control"
-                            accept=".pdf,.jpg,.jpeg,.png"
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              if (file) {
-                                const reader = new FileReader();
-                                reader.onload = (e) => {
-                                  setPaymentForm((prev) => ({
-                                    ...prev,
-                                    ribDocument: {
-                                      base64: e.target.result,
-                                      name: file.name,
-                                      type: file.type,
-                                    },
-                                  }));
-                                };
-                                reader.readAsDataURL(file);
-                              }
-                            }}
-                          />
-                          {paymentForm.ribDocument && (
-                            <small style={{ color: '#059669', marginTop: 4, display: 'block' }}>
-                              ✓ Fichier sélectionné : {paymentForm.ribDocument.name}
-                            </small>
-                          )}
-                        </div>
+                        {paymentForm.method !== 'CHEQUE' && (
+                          <div className="form-group" style={{ margin: 0 }}>
+                            <label>Fichier RIB (PDF/Image)</label>
+                            <input
+                              type="file"
+                              className="form-control"
+                              accept=".pdf,.jpg,.jpeg,.png"
+                              onChange={(event) => {
+                                const file = event.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = (e) => {
+                                    setPaymentForm((prev) => ({
+                                      ...prev,
+                                      ribDocument: {
+                                        base64: e.target.result,
+                                        name: file.name,
+                                        type: file.type,
+                                      },
+                                    }));
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                            {paymentForm.ribDocument && (
+                              <small style={{ color: '#059669', marginTop: 4, display: 'block' }}>
+                                ✓ Fichier sélectionné : {paymentForm.ribDocument.name}
+                              </small>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -2499,6 +2620,7 @@ export default function AdminEnrollments() {
                               const bankDebitFirstPaymentDate = metadata.firstPaymentDate || payment.firstPaymentDate;
                               const bankDebitRibUrl = metadata.bankDebitRibUrl;
                               const bankDebitRibFilename = metadata.bankDebitRibFilename || 'RIB';
+                              const chequeInstallmentsCount = metadata.chequeInstallmentsCount || payment.numberOfInstallments || payment.installmentsCount;
                               const chequeDepositDay = metadata.chequeDepositDay || payment.scheduleDay;
                               const chequeFirstPaymentDate = metadata.chequeFirstPaymentDate || payment.firstPaymentDate;
                               const isBankDebit = method === 'PRELEVEMENT_BANCAIRE'
@@ -2513,11 +2635,14 @@ export default function AdminEnrollments() {
                                   {method === 'CHEQUE' ? (
                                     <>
                                       <div><strong>Date dépôt :</strong> {formatDate(payment.processedAt || payment.createdAt)}</div>
-                                      {chequeDepositDay !== undefined && chequeDepositDay !== null && (
-                                        <div><strong>Jour dépôt :</strong> {chequeDepositDay}</div>
+                                      {chequeInstallmentsCount !== undefined && chequeInstallmentsCount !== null && (
+                                        <div><strong>Nombre de chèques :</strong> {chequeInstallmentsCount}</div>
                                       )}
                                       {chequeFirstPaymentDate && (
                                         <div><strong>Date premier chèque :</strong> {formatDate(chequeFirstPaymentDate)}</div>
+                                      )}
+                                      {chequeDepositDay !== undefined && chequeDepositDay !== null && (
+                                        <div><strong>Jour dépôt :</strong> {chequeDepositDay}</div>
                                       )}
                                     </>
                                   ) : (

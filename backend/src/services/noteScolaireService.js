@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
 const path = require('path');
+const { classAccessWhere } = require('../utils/classAccessUtils');
 
 const prisma = new PrismaClient();
 const CONFIRMED_ENROLLMENT_STATUS = 'CONFIRMED';
@@ -55,7 +56,7 @@ async function getTeacherSoutienScolaireAccess({ teacherUserId, studentId, class
     where: {
       studentId,
       status: { in: TEACHER_VISIBLE_ENROLLMENT_STATUSES },
-      class: { teacherId: teacherProfile.id, ...(classId ? { id: classId } : {}) },
+      class: { ...classAccessWhere(teacherProfile.id), ...(classId ? { id: classId } : {}) },
     },
     include: { class: { include: { level: { include: { pole: true } } } } },
   });

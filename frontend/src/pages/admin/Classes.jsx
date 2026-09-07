@@ -100,7 +100,8 @@ export default function AdminClasses() {
     return levels.filter((level) => level.poleId === form.poleId);
   }, [levels, form.poleId]);
 
-  const isCoranPoleSelected = String(poles.find((p) => p.id === form.poleId)?.name || '').toLowerCase().includes('coran');
+  const selectedPoleNameLower = String(poles.find((p) => p.id === form.poleId)?.name || '').toLowerCase();
+  const isMultiTeacherPoleSelected = selectedPoleNameLower.includes('coran') || selectedPoleNameLower.includes('soutien');
 
   const toggleAdditionalTeacher = (teacherId) => {
     setForm((prev) => {
@@ -188,7 +189,7 @@ export default function AdminClasses() {
       levelId: form.levelId,
       timeSlotIds: form.timeSlotIds,
       teacherId: form.teacherId,
-      additionalTeacherIds: isCoranPoleSelected ? form.additionalTeacherIds.filter((id) => id !== form.teacherId) : [],
+      additionalTeacherIds: isMultiTeacherPoleSelected ? form.additionalTeacherIds.filter((id) => id !== form.teacherId) : [],
       capacity: Number(form.capacity || 0),
       status: form.status,
       validFrom: form.validFrom || null,
@@ -532,8 +533,8 @@ export default function AdminClasses() {
                 </div>
               </div>
 
-              {/* Professeurs supplémentaires — pôle Coran uniquement */}
-              {isCoranPoleSelected && (
+              {/* Professeurs supplémentaires — pôles Coran et Soutien scolaire uniquement */}
+              {isMultiTeacherPoleSelected && (
                 <div className="form-group" style={{ margin: 0 }}>
                   <label style={{ marginBottom: 6, display: 'block' }}>
                     Professeurs supplémentaires <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 12 }}>(classe gérée par plusieurs professeurs)</span>

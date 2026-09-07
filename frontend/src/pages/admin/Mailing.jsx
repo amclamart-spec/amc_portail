@@ -24,6 +24,9 @@ export default function AdminMailing() {
   // --- Critères de ciblage ---
   const [criteria, setCriteria] = useState({ population: '', objet: '', statut: '' });
   const [criteriaLoading, setCriteriaLoading] = useState(false);
+  // --- Sous-critère "Classe" : pôle puis classes du pôle (sélection multiple) ---
+  const [criteriaPoleId, setCriteriaPoleId] = useState('');
+  const [criteriaClassIds, setCriteriaClassIds] = useState(new Set());
 
   // --- Modale destinataires ---
   const [modalOpen, setModalOpen] = useState(false);
@@ -58,19 +61,54 @@ export default function AdminMailing() {
       .finally(() => setLoading(false));
   }, []);
 
+  // --- Sous-critère "Classe" : classes du pôle sélectionné (toutes niveaux confondus) ---
+  const criteriaSelectedPole = structure.find((p) => p.id === criteriaPoleId);
+  const classesForCriteriaPole = criteriaSelectedPole
+    ? criteriaSelectedPole.levels.flatMap((l) => l.classes.map((c) => ({ ...c, levelName: l.name })))
+    : [];
+
+  function toggleCriteriaClass(id) {
+    setCriteriaClassIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllCriteriaClasses() {
+    setCriteriaClassIds((prev) => (
+      prev.size === classesForCriteriaPole.length
+        ? new Set()
+        : new Set(classesForCriteriaPole.map((c) => c.id))
+    ));
+  }
+
   // --- Recherche destinataires par critères ---
   async function searchByCriteria() {
     if (!criteria.population) {
       toast.error('Veuillez sélectionner une population');
       return;
     }
-    if (criteria.population !== 'PROFESSEURS' && (!criteria.objet || !criteria.statut)) {
+    if (criteria.population === 'CLASSE') {
+      if (criteriaClassIds.size === 0) {
+        toast.error('Veuillez sélectionner au moins une classe');
+        return;
+      }
+      if (!criteria.statut) {
+        toast.error('Veuillez sélectionner le statut d\'inscription');
+        return;
+      }
+    } else if (criteria.population !== 'PROFESSEURS' && (!criteria.objet || !criteria.statut)) {
       toast.error('Veuillez sélectionner l\'objet et le statut');
       return;
     }
     setCriteriaLoading(true);
     try {
-      const { data } = await api.post('/admin/mailing/recipients-by-criteria', criteria);
+      const payload = criteria.population === 'CLASSE'
+        ? { population: criteria.population, statut: criteria.statut, classIds: Array.from(criteriaClassIds) }
+        : criteria;
+      const { data } = await api.post('/admin/mailing/recipients-by-criteria', payload);
       const recipients = data.recipients || [];
       setModalRecipients(recipients);
       setCheckedEmails(new Set(recipients.map((r) => r.email)));
@@ -160,6 +198,8 @@ export default function AdminMailing() {
       setBccEmails('');
       setAttachment(null);
       setCriteria({ population: '', objet: '', statut: '' });
+      setCriteriaPoleId('');
+      setCriteriaClassIds(new Set());
     } catch (err) {
       toast.error(err.response?.data?.error || 'Erreur envoi mail');
     } finally {
@@ -245,42 +285,64 @@ export default function AdminMailing() {
               <select
                 className="form-control"
                 value={criteria.population}
-                onChange={(e) => setCriteria((p) => ({ ...p, population: e.target.value }))}
+                onChange={(e) => {
+                  const population = e.target.value;
+                  setCriteria({ population, objet: '', statut: '' });
+                  setCriteriaPoleId('');
+                  setCriteriaClassIds(new Set());
+                }}
               >
                 <option value="">-- Choisir --</option>
                 <option value="TOUS">Tous</option>
                 <option value="FAMILLES">Familles</option>
                 <option value="PROFESSEURS">Professeurs</option>
+                <option value="CLASSE">Classe</option>
               </select>
             </div>
 
-            <div className="form-group" style={{ margin: 0 }}>
-              <label>Objet</label>
-              <select
-                className="form-control"
-                value={criteria.objet}
-                onChange={(e) => setCriteria((p) => ({ ...p, objet: e.target.value }))}
-                disabled={!criteria.population || criteria.population === 'PROFESSEURS'}
-              >
-                <option value="">-- Choisir --</option>
-                <option value="INSCRIPTION">Inscription</option>
-                <option value="PAIEMENT">Paiement</option>
-              </select>
-            </div>
+            {criteria.population === 'CLASSE' ? (
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Pôle</label>
+                <select
+                  className="form-control"
+                  value={criteriaPoleId}
+                  onChange={(e) => { setCriteriaPoleId(e.target.value); setCriteriaClassIds(new Set()); }}
+                >
+                  <option value="">-- Choisir un pôle --</option>
+                  {structure.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Objet</label>
+                <select
+                  className="form-control"
+                  value={criteria.objet}
+                  onChange={(e) => setCriteria((p) => ({ ...p, objet: e.target.value }))}
+                  disabled={!criteria.population || criteria.population === 'PROFESSEURS'}
+                >
+                  <option value="">-- Choisir --</option>
+                  <option value="INSCRIPTION">Inscription</option>
+                  <option value="PAIEMENT">Paiement</option>
+                </select>
+              </div>
+            )}
 
-            <div className="form-group" style={{ margin: 0 }}>
-              <label>Statut</label>
-              <select
-                className="form-control"
-                value={criteria.statut}
-                onChange={(e) => setCriteria((p) => ({ ...p, statut: e.target.value }))}
-                disabled={!criteria.objet || criteria.population === 'PROFESSEURS'}
-              >
-                <option value="">-- Choisir --</option>
-                <option value="EN_ATTENTE">En attente</option>
-                <option value="VALIDE">Validé</option>
-              </select>
-            </div>
+            {criteria.population !== 'PROFESSEURS' && (
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Statut {criteria.population === 'CLASSE' ? 'd\'inscription' : ''}</label>
+                <select
+                  className="form-control"
+                  value={criteria.statut}
+                  onChange={(e) => setCriteria((p) => ({ ...p, statut: e.target.value }))}
+                  disabled={criteria.population === 'CLASSE' ? false : !criteria.objet}
+                >
+                  <option value="">-- Choisir --</option>
+                  <option value="EN_ATTENTE">En attente</option>
+                  <option value="VALIDE">Validé</option>
+                </select>
+              </div>
+            )}
           </div>
 
           {criteria.population === 'PROFESSEURS' && (
@@ -289,12 +351,52 @@ export default function AdminMailing() {
             </p>
           )}
 
+          {criteria.population === 'CLASSE' && (
+            <p style={{ marginTop: 12, fontSize: 13, color: '#6B7280' }}>
+              Seules les familles des élèves dont l'inscription correspond au statut choisi ci-dessus seront ciblées.
+            </p>
+          )}
+
+          {/* Sélection des classes du pôle choisi */}
+          {criteria.population === 'CLASSE' && criteriaPoleId && (
+            <div className="form-group" style={{ marginTop: 16 }}>
+              <label style={{ marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>
+                  Classes <span style={{ fontWeight: 400, fontSize: 12, color: '#6B7280' }}>({criteriaClassIds.size} sélectionnée{criteriaClassIds.size > 1 ? 's' : ''})</span>
+                </span>
+                {classesForCriteriaPole.length > 0 && (
+                  <button type="button" className="sp-link-btn" style={{ fontSize: 12, color: 'var(--amc-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }} onClick={toggleAllCriteriaClasses}>
+                    {criteriaClassIds.size === classesForCriteriaPole.length ? 'Tout désélectionner' : 'Tout sélectionner'}
+                  </button>
+                )}
+              </label>
+              <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, padding: 12, maxHeight: 260, overflowY: 'auto', background: '#F9FAFB' }}>
+                {classesForCriteriaPole.length === 0 ? (
+                  <p style={{ color: '#6B7280', margin: 0 }}>Aucune classe pour ce pôle</p>
+                ) : classesForCriteriaPole.map((cls) => {
+                  const checked = criteriaClassIds.has(cls.id);
+                  return (
+                    <label key={cls.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', cursor: 'pointer', fontSize: 13 }}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleCriteriaClass(cls.id)} style={{ cursor: 'pointer', width: 16, height: 16, flexShrink: 0 }} />
+                      <span><strong>{cls.levelName}</strong> — {cls.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div style={{ marginTop: 16 }}>
             <button
               type="button"
               className="btn btn-outline"
               onClick={searchByCriteria}
-              disabled={criteriaLoading || !criteria.population || (criteria.population !== 'PROFESSEURS' && (!criteria.objet || !criteria.statut))}
+              disabled={
+                criteriaLoading ||
+                !criteria.population ||
+                (criteria.population === 'CLASSE' && (criteriaClassIds.size === 0 || !criteria.statut)) ||
+                (!['PROFESSEURS', 'CLASSE'].includes(criteria.population) && (!criteria.objet || !criteria.statut))
+              }
             >
               <FiSearch style={{ marginRight: 6, display: 'inline' }} />
               {criteriaLoading ? 'Recherche...' : 'Rechercher les destinataires'}
