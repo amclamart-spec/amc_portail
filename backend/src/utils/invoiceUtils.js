@@ -57,11 +57,25 @@ function ensureMetadataObject(maybe) {
   return {};
 }
 
+// Formate une date "calendrier" (ex: date début prélèvement saisie par l'admin) en
+// JJ/MM/AAAA sans jamais passer par une conversion de fuseau horaire — une chaîne
+// "AAAA-MM-JJ" (input type=date) est interprétée par `new Date()` comme minuit UTC,
+// et l'afficher ensuite via toLocaleDateString() dépend du fuseau horaire du serveur
+// qui génère le PDF : sur un serveur en décalage négatif par rapport à UTC, ça décale
+// la date affichée d'un jour en arrière. On lit donc les composants directement.
 function formatDateValue(value) {
   if (!value) return null;
+  const dateOnlyMatch = String(value).trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    return `${day}/${month}/${year}`;
+  }
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return String(value).trim();
-  return date.toLocaleDateString('fr-FR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const year = date.getUTCFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 function normalizeBankValue(value) {
@@ -411,8 +425,13 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
         })
         .reduce((sum, tx) => sum + Number(tx.amount || tx.total || 0), 0);
 
+      // Bloc "Détail paiements" : uniquement Espèces / Carte bancaire (tout ce qui n'est
+      // pas prélèvement ou chèque, affichés séparément ci-dessous).
       const detailTransactions = transactionSource.filter((tx) => !isChequeOrDirectDebitTransaction(tx));
       const shouldShowTransactionTable = detailTransactions.length > 0;
+      // Bloc "Prélèvements et chèque" : une ligne PAR transaction — chaque prélèvement ou
+      // chèque est une opération distincte (IBAN, date, jour, nombre d'échéances propres),
+      // même si plusieurs partagent le même Payment parent.
       const scheduleRows = transactionSource
         .filter((tx) => {
           const status = String(tx.status || '').trim().toUpperCase();
@@ -428,7 +447,7 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
         }
 
         currentY += 10;
-        doc.fontSize(10).font('Helvetica-Bold').text('DÉTAILS DES PAIEMENTS', 40, currentY);
+        doc.fontSize(10).font('Helvetica-Bold').text('DÉTAIL PAIEMENTS (ESPÈCES / CARTE BANCAIRE)', 40, currentY);
         currentY += 18;
 
         if (shouldShowTransactionTable) {
@@ -484,7 +503,7 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
               currentY = 40;
             }
 
-            doc.fontSize(10).font('Helvetica-Bold').text('ÉCHÉANCES PRÉLÈVEMENT / CHÈQUE', 40, currentY);
+            doc.fontSize(10).font('Helvetica-Bold').text('PRÉLÈVEMENTS ET CHÈQUE', 40, currentY);
             currentY += 18;
 
             const scTableX = 40;
@@ -540,7 +559,7 @@ async function generateInvoicePDF(paymentData, familyData, enrollmentData, payme
         }
 
         currentY += 10;
-        doc.fontSize(10).font('Helvetica-Bold').text('ÉCHÉANCES PRÉLÈVEMENT / CHÈQUE', 40, currentY);
+        doc.fontSize(10).font('Helvetica-Bold').text('PRÉLÈVEMENTS ET CHÈQUE', 40, currentY);
         currentY += 18;
 
         const scTableX = 40;

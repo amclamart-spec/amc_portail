@@ -163,21 +163,32 @@ async function generateInvoiceForPayment(paymentId) {
 
     const familyTransactionsForReceipt = familyPayments
       .flatMap((familyPayment) => (familyPayment.transactions || []).map((transaction) => {
-        const paymentMetadata = {
+        const parentMetadata = {
           ...((familyPayment.paymentPlan?.metadata && typeof familyPayment.paymentPlan.metadata === 'object') ? familyPayment.paymentPlan.metadata : {}),
           ...((familyPayment.metadata && typeof familyPayment.metadata === 'object') ? familyPayment.metadata : {}),
         };
+        // Priorité aux infos propres à CETTE transaction : un même Payment peut porter
+        // plusieurs prélèvements/chèques distincts (IBAN, échéancier différents), chacun
+        // stocké sur sa propre transaction — le niveau Payment ne sert que de repli pour
+        // les transactions plus anciennes créées avant que ce stockage par transaction existe.
+        const ownMetadata = (transaction.metadata && typeof transaction.metadata === 'object') ? transaction.metadata : {};
+        const paymentMetadata = { ...parentMetadata, ...ownMetadata };
         const installments = Array.isArray(familyPayment.installments) ? familyPayment.installments : [];
         const firstInstallment = installments.length > 0 ? installments[0] : null;
-        const paymentMethod = familyPayment.paymentMethod || paymentMetadata.paymentMethod || paymentMetadata.checkoutMethod || paymentMetadata.paymentPlanType || familyPayment.paymentPlan?.type || null;
-        const paymentInstallmentsCount = familyPayment.numberOfInstallments || familyPayment.paymentPlan?.installmentsCount || paymentMetadata.numberOfInstallments || paymentMetadata.bankDebitInstallmentsCount || paymentMetadata.chequeInstallmentsCount || installments.length || null;
+        const paymentMethod = transaction.method || familyPayment.paymentMethod || paymentMetadata.paymentMethod || paymentMetadata.checkoutMethod || paymentMetadata.paymentPlanType || familyPayment.paymentPlan?.type || null;
+        const paymentInstallmentsCount = ownMetadata.bankDebitInstallmentsCount || ownMetadata.chequeInstallmentsCount
+          || familyPayment.numberOfInstallments || familyPayment.paymentPlan?.installmentsCount
+          || paymentMetadata.numberOfInstallments || paymentMetadata.bankDebitInstallmentsCount || paymentMetadata.chequeInstallmentsCount
+          || installments.length || null;
         return {
           ...transaction,
           paymentMetadata,
           paymentMethod,
           paymentInstallmentsCount,
-          scheduleDay: familyPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
-          firstPaymentDate: paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
+          scheduleDay: ownMetadata.bankDebitDay || ownMetadata.chequeDepositDay
+            || familyPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
+          firstPaymentDate: ownMetadata.firstPaymentDate || ownMetadata.chequeFirstPaymentDate
+            || paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
         };
       }))
       .filter((transaction) => String(transaction.status || '').toUpperCase() === 'SUCCEEDED');
@@ -2457,13 +2468,19 @@ async function generatePaymentReceiptPDF(req, res) {
           const transactionMetadata = transaction.metadata && typeof transaction.metadata === 'object'
             ? transaction.metadata
             : {};
+          // Priorité aux infos propres à CETTE transaction : un même Payment peut porter
+          // plusieurs prélèvements/chèques distincts (IBAN, échéancier différents), chacun
+          // stocké sur sa propre transaction — le niveau Payment ne sert que de repli pour
+          // les transactions plus anciennes créées avant que ce stockage par transaction existe.
           return {
             ...transaction,
             paymentMethod,
             paymentMetadata,
-            paymentInstallmentsCount,
-            scheduleDay: currentPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
-            firstPaymentDate: paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
+            paymentInstallmentsCount: transactionMetadata.bankDebitInstallmentsCount || transactionMetadata.chequeInstallmentsCount || paymentInstallmentsCount,
+            scheduleDay: transactionMetadata.bankDebitDay || transactionMetadata.chequeDepositDay
+              || currentPayment.paymentPlan?.scheduleDay || paymentMetadata.bankDebitDay || paymentMetadata.chequeDepositDay || null,
+            firstPaymentDate: transactionMetadata.firstPaymentDate || transactionMetadata.chequeFirstPaymentDate
+              || paymentMetadata.firstPaymentDate || paymentMetadata.chequeFirstPaymentDate || firstInstallment?.dueDate || null,
             metadata: {
               ...paymentMetadata,
               ...transactionMetadata,

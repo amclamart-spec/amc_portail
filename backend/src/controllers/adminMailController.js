@@ -202,14 +202,21 @@ async function getMailingPreview(req, res) {
  */
 async function getMailingRecipientsByCriteria(req, res) {
   try {
-    const { population, objet, statut } = req.body;
+    const { population, objet, statut, classIds } = req.body;
     if (!population) {
       return res.status(400).json({ error: 'population est requis' });
     }
-    if (population !== 'PROFESSEURS' && (!objet || !statut)) {
+    if (population === 'CLASSE') {
+      if (!Array.isArray(classIds) || classIds.length === 0) {
+        return res.status(400).json({ error: 'Au moins une classe est requise pour cette population' });
+      }
+      if (!statut) {
+        return res.status(400).json({ error: 'Le statut d\'inscription est requis pour cette population' });
+      }
+    } else if (population !== 'PROFESSEURS' && (!objet || !statut)) {
       return res.status(400).json({ error: 'objet et statut sont requis pour cette population' });
     }
-    const recipients = await getRecipientsByCriteria({ population, objet, statut });
+    const recipients = await getRecipientsByCriteria({ population, objet, statut, classIds });
     return res.json({ recipients });
   } catch (error) {
     console.error('Erreur getMailingRecipientsByCriteria:', error.message);
