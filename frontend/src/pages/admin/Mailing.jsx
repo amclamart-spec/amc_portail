@@ -32,6 +32,9 @@ export default function AdminMailing() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalRecipients, setModalRecipients] = useState([]);
   const [checkedEmails, setCheckedEmails] = useState(new Set());
+  const [recipientSearch, setRecipientSearch] = useState('');
+  const [modalPage, setModalPage] = useState(1);
+  const RECIPIENTS_PER_PAGE = 20;
 
   // --- Champ BCC ---
   const [bccEmails, setBccEmails] = useState('');
@@ -112,6 +115,8 @@ export default function AdminMailing() {
       const recipients = data.recipients || [];
       setModalRecipients(recipients);
       setCheckedEmails(new Set(recipients.map((r) => r.email)));
+      setRecipientSearch('');
+      setModalPage(1);
       setModalOpen(true);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Erreur lors de la recherche');
@@ -139,12 +144,31 @@ export default function AdminMailing() {
     });
   }
 
+  // --- Filtre + pagination de la modale destinataires ---
+  const recipientSearchLower = recipientSearch.trim().toLowerCase();
+  const filteredRecipients = recipientSearchLower
+    ? modalRecipients.filter((r) => (
+        (r.firstName || '').toLowerCase().includes(recipientSearchLower) ||
+        (r.lastName || '').toLowerCase().includes(recipientSearchLower) ||
+        (r.email || '').toLowerCase().includes(recipientSearchLower)
+      ))
+    : modalRecipients;
+  const modalPageCount = Math.max(1, Math.ceil(filteredRecipients.length / RECIPIENTS_PER_PAGE));
+  const currentModalPage = Math.min(modalPage, modalPageCount);
+  const visibleRecipients = filteredRecipients.slice((currentModalPage - 1) * RECIPIENTS_PER_PAGE, currentModalPage * RECIPIENTS_PER_PAGE);
+  const allFilteredChecked = filteredRecipients.length > 0 && filteredRecipients.every((r) => checkedEmails.has(r.email));
+  const someFilteredChecked = filteredRecipients.some((r) => checkedEmails.has(r.email));
+
   function toggleAll() {
-    if (checkedEmails.size === modalRecipients.length) {
-      setCheckedEmails(new Set());
-    } else {
-      setCheckedEmails(new Set(modalRecipients.map((r) => r.email)));
-    }
+    setCheckedEmails((prev) => {
+      const next = new Set(prev);
+      if (allFilteredChecked) {
+        filteredRecipients.forEach((r) => next.delete(r.email));
+      } else {
+        filteredRecipients.forEach((r) => next.add(r.email));
+      }
+      return next;
+    });
   }
 
   // --- Pièce jointe ---
@@ -593,10 +617,29 @@ export default function AdminMailing() {
               </button>
             </div>
 
+            {/* Filtre nom / email */}
+            {modalRecipients.length > 0 && (
+              <div style={{ padding: '16px 24px 0' }}>
+                <div style={{ position: 'relative' }}>
+                  <FiSearch size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF' }} />
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Filtrer par nom ou email…"
+                    value={recipientSearch}
+                    onChange={(e) => { setRecipientSearch(e.target.value); setModalPage(1); }}
+                    style={{ paddingLeft: 32 }}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Table */}
-            <div style={{ flex: 1, overflow: 'auto', padding: '0 24px' }}>
+            <div style={{ flex: 1, overflow: 'auto', padding: '12px 24px 0' }}>
               {modalRecipients.length === 0 ? (
                 <p style={{ textAlign: 'center', color: '#6B7280', padding: 32 }}>Aucun destinataire trouvé pour ces critères.</p>
+              ) : filteredRecipients.length === 0 ? (
+                <p style={{ textAlign: 'center', color: '#6B7280', padding: 32 }}>Aucun destinataire ne correspond à « {recipientSearch} ».</p>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                   <thead>
@@ -604,10 +647,10 @@ export default function AdminMailing() {
                       <th style={{ padding: '12px 8px', width: 36 }}>
                         <input
                           type="checkbox"
-                          checked={checkedEmails.size === modalRecipients.length}
-                          ref={(el) => { if (el) el.indeterminate = checkedEmails.size > 0 && checkedEmails.size < modalRecipients.length; }}
+                          checked={allFilteredChecked}
+                          ref={(el) => { if (el) el.indeterminate = !allFilteredChecked && someFilteredChecked; }}
                           onChange={toggleAll}
-                          title="Tout sélectionner / désélectionner"
+                          title="Tout sélectionner / désélectionner (résultats filtrés)"
                           style={{ cursor: 'pointer', width: 16, height: 16 }}
                         />
                       </th>
@@ -617,7 +660,7 @@ export default function AdminMailing() {
                     </tr>
                   </thead>
                   <tbody>
-                    {modalRecipients.map((r, i) => {
+                    {visibleRecipients.map((r, i) => {
                       const checked = checkedEmails.has(r.email);
                       return (
                         <tr
@@ -644,6 +687,15 @@ export default function AdminMailing() {
                 </table>
               )}
             </div>
+
+            {/* Pagination */}
+            {filteredRecipients.length > RECIPIENTS_PER_PAGE && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: '12px 24px' }}>
+                <button type="button" className="btn btn-outline btn-sm" disabled={currentModalPage <= 1} onClick={() => setModalPage(currentModalPage - 1)}>Précédent</button>
+                <span style={{ fontSize: 13, color: '#6B7280' }}>Page {currentModalPage} / {modalPageCount}</span>
+                <button type="button" className="btn btn-outline btn-sm" disabled={currentModalPage >= modalPageCount} onClick={() => setModalPage(currentModalPage + 1)}>Suivant</button>
+              </div>
+            )}
 
             {/* Footer modale */}
             <div style={{ padding: '16px 24px', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
