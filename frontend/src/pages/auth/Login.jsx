@@ -56,7 +56,7 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await login(email, password);
+      await login(email.trim(), password);
     } catch {
       // handled in context
     }
