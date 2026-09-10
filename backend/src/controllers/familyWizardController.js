@@ -1400,6 +1400,10 @@ async function completeExistingFamilyRegistration(req, res) {
 
               emergencyContactPhone: m.emergencyContactPhone || null,
 
+              phone: m.phone || null,
+
+              email: m.email || null,
+
               isReturningStudent: Boolean(m.isOldStudent),
 
               schoolGrade: m.schoolGrade || null,
@@ -3151,6 +3155,10 @@ async function completeFamilyRegistration(req, res) {
             emergencyContactName: m.emergencyContactName || null,
 
             emergencyContactPhone: m.emergencyContactPhone || null,
+
+            phone: m.phone || null,
+
+            email: m.email || null,
 
             isReturningStudent: Boolean(m.isOldStudent),
 

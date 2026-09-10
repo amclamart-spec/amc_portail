@@ -5,9 +5,38 @@ const {
   getPoleStructure,
   getRecipients,
   getRecipientsByCriteria,
+  buildClassicRecipientLabel,
 } = require('../services/mailService');
 
 const prisma = new PrismaClient();
+
+// Historise une campagne envoyée (rubrique "Mails envoyés") — best-effort : une erreur
+// de journalisation ne doit jamais faire échouer un envoi déjà parti.
+async function logMailSend({ subject, content, mode, recipientLabel, recipients, successCount, failedCount, attachmentFilename, sentById }) {
+  try {
+    const cleanRecipients = (recipients || []).filter((r) => r?.email);
+    await prisma.mailLog.create({
+      data: {
+        subject,
+        content,
+        mode,
+        recipientLabel: recipientLabel || null,
+        recipients: cleanRecipients.map((r) => ({
+          email: r.email,
+          name: r.name || [r.firstName, r.lastName].filter(Boolean).join(' ') || null,
+        })),
+        recipientEmails: cleanRecipients.map((r) => r.email),
+        recipientCount: cleanRecipients.length,
+        successCount: successCount || 0,
+        failedCount: failedCount || 0,
+        attachmentFilename: attachmentFilename || null,
+        sentById,
+      },
+    });
+  } catch (error) {
+    console.error('Erreur logMailSend:', error.message);
+  }
+}
 
 /**
  * GET /admin/mailing/structure
@@ -100,6 +129,19 @@ async function sendMailing(req, res) {
       adminId,
     });
 
+    const recipientLabel = await buildClassicRecipientLabel(recipientType, poleId, levelId, classId, recipients.length);
+    await logMailSend({
+      subject,
+      content,
+      mode: 'CLASSIC',
+      recipientLabel,
+      recipients,
+      successCount: result.successCount,
+      failedCount: result.failedCount,
+      attachmentFilename: attachmentFile?.originalname,
+      sentById: adminId,
+    });
+
     // Supprimer le fichier temporaire après envoi
     if (attachmentFile) {
       const fs = require('fs');
@@ -153,29 +195,7 @@ async function getMailingPreview(req, res) {
     );
 
     // Informations sur les destinataires
-    let recipientInfo = '';
-    if (recipientType === 'ALL_FAMILIES') {
-      recipientInfo = `Toutes les familles inscrites (${recipients.length})`;
-    } else if (recipientType === 'TEACHERS') {
-      recipientInfo = `Tous les professeurs (${recipients.length})`;
-    } else if (recipientType === 'CLASS_FAMILIES') {
-      const cls = await prisma.class.findUnique({
-        where: { id: classId },
-        include: { level: { include: { pole: true } } },
-      });
-      recipientInfo = `Classe: ${cls?.level?.pole?.name} - ${cls?.level?.name} (${recipients.length} familles)`;
-    } else if (recipientType === 'LEVEL_FAMILIES') {
-      const level = await prisma.level.findUnique({
-        where: { id: levelId },
-        include: { pole: true },
-      });
-      recipientInfo = `Niveau: ${level?.pole?.name} - ${level?.name} (${recipients.length} familles)`;
-    } else if (recipientType === 'POLE_FAMILIES') {
-      const pole = await prisma.pole.findUnique({
-        where: { id: poleId },
-      });
-      recipientInfo = `Pôle: ${pole?.name} (${recipients.length} familles)`;
-    }
+    const recipientInfo = await buildClassicRecipientLabel(recipientType, poleId, levelId, classId, recipients.length);
 
     res.json({
       success: true,
@@ -232,7 +252,7 @@ async function getMailingRecipientsByCriteria(req, res) {
  */
 async function sendMailingBcc(req, res) {
   try {
-    let { bccEmails, subject, content } = req.body;
+    let { bccEmails, subject, content, recipientLabel } = req.body;
     const attachmentFile = req.file;
 
     if (!subject || !content) {
@@ -254,6 +274,26 @@ async function sendMailingBcc(req, res) {
 
     const result = await sendMailBcc({ bccEmails, subject, content, attachmentInfo });
 
+    // Enrichit best-effort avec les noms connus, pour l'affichage dans l'historique
+    const knownUsers = await prisma.user.findMany({
+      where: { email: { in: bccEmails } },
+      select: { email: true, firstName: true, lastName: true },
+    });
+    const nameByEmail = new Map(knownUsers.map((u) => [u.email, `${u.firstName || ''} ${u.lastName || ''}`.trim()]));
+    const recipients = bccEmails.map((email) => ({ email, name: nameByEmail.get(email) || null }));
+
+    await logMailSend({
+      subject,
+      content,
+      mode: 'CRITERIA',
+      recipientLabel,
+      recipients,
+      successCount: result.successCount,
+      failedCount: result.failedCount,
+      attachmentFilename: attachmentFile?.originalname,
+      sentById: req.user.id,
+    });
+
     if (attachmentFile) {
       const fs = require('fs');
       fs.unlink(attachmentFile.path, () => {});
@@ -267,10 +307,118 @@ async function sendMailingBcc(req, res) {
   }
 }
 
+/**
+ * GET /admin/mailing/sent
+ * Historique des mails envoyés — filtrable par date (3 derniers mois par défaut) et
+ * recherche libre (objet du mail ou adresse d'un destinataire).
+ */
+async function getMailLogs(req, res) {
+  try {
+    const { from, to, search, page = 1, limit = 20 } = req.query;
+
+    const defaultFrom = new Date();
+    defaultFrom.setMonth(defaultFrom.getMonth() - 3);
+    const fromDate = from ? new Date(from) : defaultFrom;
+    const toDate = to ? new Date(to) : new Date();
+    toDate.setHours(23, 59, 59, 999);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      return res.status(400).json({ error: 'Dates invalides' });
+    }
+
+    const searchTerm = (search || '').trim();
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.max(parseInt(limit, 10) || 20, 1);
+
+    // Recherche sur l'objet OU sur une adresse destinataire (unnest du tableau
+    // recipient_emails) : au-delà de ce que l'ORM Prisma sait exprimer simplement,
+    // d'où le passage par du SQL brut (paramétré) pour ce filtre.
+    const [totalRows, logRows] = await Promise.all([
+      prisma.$queryRaw`
+        SELECT COUNT(*)::int AS count FROM "mail_logs"
+        WHERE "created_at" BETWEEN ${fromDate} AND ${toDate}
+          AND (
+            ${searchTerm} = ''
+            OR "subject" ILIKE '%' || ${searchTerm} || '%'
+            OR EXISTS (SELECT 1 FROM unnest("recipient_emails") AS e WHERE e ILIKE '%' || ${searchTerm} || '%')
+          )
+      `,
+      prisma.$queryRaw`
+        SELECT "id", "subject", "mode", "recipient_label" AS "recipientLabel", "recipient_count" AS "recipientCount",
+               "success_count" AS "successCount", "failed_count" AS "failedCount", "attachment_filename" AS "attachmentFilename",
+               "sent_by_id" AS "sentById", "created_at" AS "createdAt"
+        FROM "mail_logs"
+        WHERE "created_at" BETWEEN ${fromDate} AND ${toDate}
+          AND (
+            ${searchTerm} = ''
+            OR "subject" ILIKE '%' || ${searchTerm} || '%'
+            OR EXISTS (SELECT 1 FROM unnest("recipient_emails") AS e WHERE e ILIKE '%' || ${searchTerm} || '%')
+          )
+        ORDER BY "created_at" DESC
+        LIMIT ${safeLimit} OFFSET ${(safePage - 1) * safeLimit}
+      `,
+    ]);
+
+    const total = totalRows[0]?.count || 0;
+    const senderIds = [...new Set(logRows.map((row) => row.sentById))];
+    const senders = senderIds.length > 0
+      ? await prisma.user.findMany({ where: { id: { in: senderIds } }, select: { id: true, firstName: true, lastName: true } })
+      : [];
+    const senderNameById = new Map(senders.map((u) => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim()]));
+
+    res.json({
+      logs: logRows.map((row) => ({ ...row, sentByName: senderNameById.get(row.sentById) || '—' })),
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.max(Math.ceil(total / safeLimit), 1),
+    });
+  } catch (error) {
+    console.error('Erreur getMailLogs:', error.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+/**
+ * GET /admin/mailing/sent/:id
+ * Détail d'un mail envoyé : destinataires complets + contenu du message.
+ */
+async function getMailLogDetail(req, res) {
+  try {
+    const { id } = req.params;
+    const log = await prisma.mailLog.findUnique({
+      where: { id },
+      include: { sentBy: { select: { firstName: true, lastName: true } } },
+    });
+    if (!log) return res.status(404).json({ error: 'Mail introuvable' });
+
+    res.json({
+      log: {
+        id: log.id,
+        subject: log.subject,
+        content: log.content,
+        mode: log.mode,
+        recipientLabel: log.recipientLabel,
+        recipients: log.recipients,
+        recipientCount: log.recipientCount,
+        successCount: log.successCount,
+        failedCount: log.failedCount,
+        attachmentFilename: log.attachmentFilename,
+        sentByName: `${log.sentBy?.firstName || ''} ${log.sentBy?.lastName || ''}`.trim(),
+        createdAt: log.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('Erreur getMailLogDetail:', error.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   getMailingStructure,
   sendMailing,
   getMailingPreview,
   getMailingRecipientsByCriteria,
   sendMailingBcc,
+  getMailLogs,
+  getMailLogDetail,
 };

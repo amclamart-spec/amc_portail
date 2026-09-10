@@ -1942,6 +1942,8 @@ async function updateEnrollment(req, res) {
       if (student.gender !== undefined) studentUpdates.gender = student.gender;
       if (student.allergies !== undefined) studentUpdates.allergies = student.allergies;
       if (student.currentTreatments !== undefined) studentUpdates.currentTreatments = student.currentTreatments;
+      if (student.phone !== undefined) studentUpdates.phone = student.phone;
+      if (student.email !== undefined) studentUpdates.email = student.email;
       if (student.isReturningStudent !== undefined) studentUpdates.isReturningStudent = Boolean(student.isReturningStudent);
       if (student.photoBase64 !== undefined) {
         studentUpdates.photoUrl = student.photoBase64 ? savePhotoBase64(student.photoBase64) : null;

@@ -82,6 +82,7 @@ model User {
   employeeProfile Employee?
   payslipsUploaded Payslip[] @relation("PayslipUploader")
   leaveRequestsDecided LeaveRequest[] @relation("LeaveDecider")
+  mailLogsSent MailLog[] @relation("MailLogSender")
 
   @@map("users")
 }
@@ -309,6 +310,8 @@ model Student {
   currentTreatments     String?  @map("current_treatments")
   emergencyContactName  String?  @map("emergency_contact_name")
   emergencyContactPhone String?  @map("emergency_contact_phone")
+  phone                 String?
+  email                 String?
   medicalCertUrl        String?  @map("medical_cert_url")
   isReturningStudent    Boolean  @default(false) @map("is_returning_student")
   schoolGrade           String?  @map("school_grade")
@@ -1728,4 +1731,28 @@ model Payslip {
 
   @@unique([employeeId, period])
   @@map("payslips")
+}
+
+// Historique des envois de mailing en masse (espace admin, rubrique Mailing) — une
+// entrée par campagne envoyée (pas par destinataire), pour retrouver ensuite qui a
+// reçu quoi et le contenu exact du message envoyé.
+model MailLog {
+  id                 String   @id @default(uuid())
+  subject            String
+  content            String   @db.Text
+  mode               String   // 'CRITERIA' (ciblage par critères, BCC) | 'CLASSIC' (ciblage par type)
+  recipientLabel     String?  @map("recipient_label") // ex: "Familles", "Classe : Arabe - Niveau 1", "Toutes les familles inscrites"
+  recipients         Json     // snapshot [{ email, firstName?, lastName?, name? }] pour la vue détail
+  recipientEmails    String[] @map("recipient_emails") // dénormalisé pour filtrer/rechercher par destinataire
+  recipientCount     Int      @map("recipient_count")
+  successCount       Int      @default(0) @map("success_count")
+  failedCount        Int      @default(0) @map("failed_count")
+  attachmentFilename String?  @map("attachment_filename")
+  sentById           String   @map("sent_by_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  sentBy User @relation("MailLogSender", fields: [sentById], references: [id])
+
+  @@index([createdAt])
+  @@map("mail_logs")
 }
