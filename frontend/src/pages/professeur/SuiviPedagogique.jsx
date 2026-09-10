@@ -206,6 +206,8 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
   /* ── absences ranking sidebar (classe Coran) ── */
   const [absenceRanking,      setAbsenceRanking]      = useState([]);
   const [loadingRanking,      setLoadingRanking]      = useState(false);
+  const [rankingJustifFilter, setRankingJustifFilter] = useState('ALL'); // ALL | JUSTIFIED | UNJUSTIFIED
+  const [exportingRanking,    setExportingRanking]    = useState(false);
 
   /* ── derived ── */
   const selectedClass  = classes.find((c) => String(c.id) === String(selectedClassId)) || null;
@@ -232,6 +234,18 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
     ];
     return [{ label: 'Année complète', value: 'ANNUEL' }];
   }, [classPeriod]);
+
+  /* ── classement absences/retards : compte affiché + tri + filtrage justifié/non justifié ──
+     "Toutes" affiche tous les élèves (comportement historique). "Justifiées"/"Non justifiées"
+     ne gardent que les élèves ayant au moins une absence ou un retard de ce type. */
+  const displayedAbsenceRanking = useMemo(() => {
+    const pickAbsence = (r) => (rankingJustifFilter === 'JUSTIFIED' ? r.absenceCountJustified : rankingJustifFilter === 'UNJUSTIFIED' ? r.absenceCountUnjustified : r.absenceCount);
+    const pickLate = (r) => (rankingJustifFilter === 'JUSTIFIED' ? r.lateCountJustified : rankingJustifFilter === 'UNJUSTIFIED' ? r.lateCountUnjustified : r.lateCount);
+    return absenceRanking
+      .map((r) => ({ ...r, displayAbsenceCount: pickAbsence(r), displayLateCount: pickLate(r) }))
+      .filter((r) => rankingJustifFilter === 'ALL' || r.displayAbsenceCount > 0 || r.displayLateCount > 0)
+      .sort((a, b) => b.displayAbsenceCount - a.displayAbsenceCount || b.displayLateCount - a.displayLateCount);
+  }, [absenceRanking, rankingJustifFilter]);
 
   const {
     evaluations, stats, homeworkHistory, loading, error,
@@ -367,6 +381,31 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
 
     return () => { cancelled = true; };
   }, [selectedClassId, isCoranClass]);
+
+  /* ── export Excel du classement absences/retards (respecte le filtre actif) ── */
+  const handleExportRanking = async () => {
+    if (!selectedClassId) return;
+    setExportingRanking(true);
+    try {
+      const response = await api.get('/absences/ranking/export', {
+        params: { classId: selectedClassId, justified: rankingJustifFilter },
+        responseType: 'blob',
+      });
+      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `classement-absences-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Impossible d\'exporter le classement');
+    } finally {
+      setExportingRanking(false);
+    }
+  };
 
   /* ── day-of-week validation for absence date ── */
   const DAY_MAP = { DIMANCHE: 0, LUNDI: 1, MARDI: 2, MERCREDI: 3, JEUDI: 4, VENDREDI: 5, SAMEDI: 6 };
@@ -720,21 +759,48 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
 
         {isCoranClass && (
           <div className="ep-sec">
-            <SecHead>📊 Classement absences / retards</SecHead>
+            <SecHead
+              action={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <select
+                    className="form-control"
+                    style={{ fontSize: 12, padding: '3px 6px', width: 'auto' }}
+                    value={rankingJustifFilter}
+                    onChange={(e) => setRankingJustifFilter(e.target.value)}
+                  >
+                    <option value="ALL">Toutes</option>
+                    <option value="JUSTIFIED">Justifiées</option>
+                    <option value="UNJUSTIFIED">Non justifiées</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    title="Exporter en Excel"
+                    onClick={handleExportRanking}
+                    disabled={exportingRanking || displayedAbsenceRanking.length === 0}
+                    style={{ padding: '3px 8px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <FiDownload size={12} /> {exportingRanking ? '…' : 'Excel'}
+                  </button>
+                </div>
+              }
+            >
+              📊 Classement absences / retards
+            </SecHead>
             <div className="ep-sec-body">
               {loadingRanking ? (
                 <p style={{ textAlign: 'center', color: '#6B7280', fontSize: 13 }}>Chargement…</p>
-              ) : absenceRanking.length === 0 ? (
-                <EmptyState icon="📊" text="Aucun élève dans cette classe" />
+              ) : displayedAbsenceRanking.length === 0 ? (
+                <EmptyState icon="📊" text={rankingJustifFilter === 'ALL' ? 'Aucun élève dans cette classe' : 'Aucun élève ne correspond à ce filtre'} />
               ) : (
                 <div className="ep-rank-list">
-                  {absenceRanking.map((r, index) => (
+                  {displayedAbsenceRanking.map((r, index) => (
                     <div key={r.studentId} className="ep-rank-item">
                       <span className="ep-rank-pos">#{index + 1}</span>
                       <span className="ep-rank-name">{r.studentName}</span>
                       <div className="ep-rank-counts">
-                        <span className="badge badge-danger" style={{ fontSize: 10 }}>{r.absenceCount} abs.</span>
-                        <span className="badge badge-warning" style={{ fontSize: 10 }}>{r.lateCount} ret.</span>
+                        <span className="badge badge-danger" style={{ fontSize: 10 }}>{r.displayAbsenceCount} abs.</span>
+                        <span className="badge badge-warning" style={{ fontSize: 10 }}>{r.displayLateCount} ret.</span>
                       </div>
                     </div>
                   ))}

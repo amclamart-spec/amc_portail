@@ -671,6 +671,8 @@ export default function AdminEnrollments() {
         gender: enrollment.student?.gender || 'GARCON',
         allergies: enrollment.student?.allergies || '',
         currentTreatments: enrollment.student?.currentTreatments || '',
+        phone: enrollment.student?.phone || '',
+        email: enrollment.student?.email || '',
         isReturningStudent: enrollment.student?.isReturningStudent || false,
         photoUrl: enrollment.student?.photoUrl || '',
         photoBase64: '',
@@ -1220,6 +1222,8 @@ export default function AdminEnrollments() {
         gender: editForm.student.gender,
         allergies: editForm.student.allergies,
         currentTreatments: editForm.student.currentTreatments,
+        phone: editForm.student.phone,
+        email: editForm.student.email,
         isReturningStudent: editForm.student.isReturningStudent,
       };
       if (editForm.student.dateOfBirth) studentPayload.dateOfBirth = editForm.student.dateOfBirth;
@@ -2049,6 +2053,25 @@ export default function AdminEnrollments() {
                     className="form-control"
                     value={editForm.student.currentTreatments}
                     onChange={(event) => updateEditForm('student', 'currentTreatments', event.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Téléphone élève</label>
+                  <input
+                    type="tel"
+                    className="form-control"
+                    maxLength={10}
+                    value={editForm.student.phone}
+                    onChange={(event) => updateEditForm('student', 'phone', event.target.value.replace(/\D/g, '').slice(0, 10))}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Email élève</label>
+                  <input
+                    type="email"
+                    className="form-control"
+                    value={editForm.student.email}
+                    onChange={(event) => updateEditForm('student', 'email', event.target.value)}
                   />
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>

@@ -30,7 +30,7 @@ const engagementBulletPoints = [
 
 const STEP_LABELS = ['Info famille', 'Membres', 'Cours & tarifs', 'Fiche sanitaire', 'Engagement', 'Paiement'];
 
-const emptyMember = { firstName: '', lastName: '', dateOfBirth: '', gender: 'GARCON', photoBase64: '', isOldStudent: false };
+const emptyMember = { firstName: '', lastName: '', dateOfBirth: '', gender: 'GARCON', phone: '', email: '', photoBase64: '', isOldStudent: false };
 
 const emptyHealthForm = {
   hasChronicDisease: false, chronicDiseaseDetails: '',
@@ -203,6 +203,8 @@ export default function AdminEnrollmentWizard({ family, familyDetails, isNewFami
       lastName: student.lastName,
       dateOfBirth: student.dateOfBirth ? student.dateOfBirth.slice(0, 10) : '',
       gender: student.gender || 'GARCON',
+      phone: student.phone || '',
+      email: student.email || '',
       photoBase64: '',
       isOldStudent: true,
     };
@@ -550,6 +552,10 @@ export default function AdminEnrollmentWizard({ family, familyDetails, isNewFami
               <option value="GARCON">Garçon</option>
               <option value="FILLE">Fille</option>
             </select>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>
+            <input type="tel" className="form-control" placeholder="Téléphone élève" maxLength={10} value={memberForm.phone} onChange={(e) => setMemberForm((p) => ({ ...p, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
+            <input type="email" className="form-control" placeholder="Email élève" value={memberForm.email} onChange={(e) => setMemberForm((p) => ({ ...p, email: e.target.value }))} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
