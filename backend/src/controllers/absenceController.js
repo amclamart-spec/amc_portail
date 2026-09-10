@@ -1,4 +1,5 @@
 const PDFDocument = require('pdfkit');
+const ExcelJS = require('exceljs');
 const fs = require('fs');
 const path = require('path');
 const { PrismaClient } = require('@prisma/client');
@@ -58,6 +59,49 @@ async function getAbsenceRanking(req, res) {
     console.error('Erreur getAbsenceRanking:', error);
     const status = error.statusCode || (error.message.includes('accès') ? 403 : 500);
     return res.status(status).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+// Même logique de filtre/tri que le classement affiché côté frontend (displayedAbsenceRanking) :
+// 'ALL' garde tous les élèves, 'JUSTIFIED'/'UNJUSTIFIED' ne gardent que ceux ayant au moins
+// une absence ou un retard de ce type.
+function pickRankingCounts(row, justified) {
+  if (justified === 'JUSTIFIED') return { absence: row.absenceCountJustified, late: row.lateCountJustified };
+  if (justified === 'UNJUSTIFIED') return { absence: row.absenceCountUnjustified, late: row.lateCountUnjustified };
+  return { absence: row.absenceCount, late: row.lateCount };
+}
+
+async function exportAbsenceRanking(req, res) {
+  try {
+    const { classId, justified } = req.query;
+    if (!classId) {
+      return res.status(400).json({ error: 'classId est requis' });
+    }
+
+    const ranking = await fetchAbsenceRanking({ teacherUserId: req.user.id, classId });
+    const rows = ranking
+      .map((row) => ({ studentName: row.studentName, ...pickRankingCounts(row, justified) }))
+      .filter((row) => justified === 'JUSTIFIED' || justified === 'UNJUSTIFIED' ? (row.absence > 0 || row.late > 0) : true)
+      .sort((a, b) => b.absence - a.absence || b.late - a.late);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Classement absences');
+    worksheet.columns = [
+      { header: 'Élève', key: 'studentName', width: 32 },
+      { header: 'Absences', key: 'absence', width: 14 },
+      { header: 'Retards', key: 'late', width: 14 },
+    ];
+    worksheet.addRows(rows);
+    worksheet.getRow(1).font = { bold: true };
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="classement-absences-${Date.now()}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Erreur exportAbsenceRanking:', error);
+    const status = error.statusCode || (error.message.includes('accès') ? 403 : 500);
+    res.status(status).json({ error: error.message || 'Erreur serveur' });
   }
 }
 
@@ -300,6 +344,7 @@ async function patchJustification(req, res) {
 module.exports = {
   getAbsences,
   getAbsenceRanking,
+  exportAbsenceRanking,
   getClassStudents,
   getAbsenceHistory,
   exportLessonAttendancePdf,
