@@ -23,6 +23,8 @@ const emptyMember = {
   lastName: '',
   dateOfBirth: '',
   gender: 'GARCON',
+  phone: '',
+  email: '',
   photoBase64: '',
   isOldStudent: false,
   schoolGrade: '',
@@ -574,6 +576,8 @@ const selectedEnrollmentsLabel = useMemo(() => {
       lastName: student.lastName || '',
       dateOfBirth: student.dateOfBirth ? student.dateOfBirth.split('T')[0] : '',
       gender: student.gender || 'GARCON',
+      phone: student.phone || '',
+      email: student.email || '',
       photoBase64: '',
       photoUrl: student.photoUrl || '',
       isOldStudent: true,
@@ -1143,6 +1147,14 @@ const selectedEnrollmentsLabel = useMemo(() => {
                     <option value="GARCON">Garçon</option>
                     <option value="FILLE">Fille</option>
                   </select>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-group member-inline">
+                  <input type="tel" className="form-control" placeholder="Téléphone élève" maxLength={10} value={memberForm.phone} onChange={(e) => setMemberForm((p) => ({ ...p, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
+                </div>
+                <div className="form-group member-inline">
+                  <input type="email" className="form-control" placeholder="Email élève" value={memberForm.email} onChange={(e) => setMemberForm((p) => ({ ...p, email: e.target.value }))} />
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

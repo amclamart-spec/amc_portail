@@ -85,6 +85,26 @@ export default function AdminClassDetails() {
     }
   };
 
+  const copyWhatsappList = async () => {
+    const lines = students
+      .map((enrollment) => enrollment.student)
+      .filter((student) => student?.phone)
+      .map((student) => `${student.firstName} ${student.lastName} - ${student.phone}`);
+
+    if (lines.length === 0) {
+      toast.error("Aucun élève n'a de numéro de téléphone renseigné");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      toast.success(`Liste copiée (${lines.length} élève${lines.length > 1 ? 's' : ''} avec numéro)`);
+    } catch (error) {
+      console.error(error);
+      toast.error('Impossible de copier la liste');
+    }
+  };
+
   const sendMessage = async (event) => {
     event.preventDefault();
     if (!messageForm.subject || !messageForm.message) {
@@ -190,6 +210,7 @@ if (loading) return <p>Chargement...</p>;
           <button className="btn btn-outline" onClick={closeRegistrations}>Fermer les inscriptions</button>
           <button className="btn btn-primary" onClick={() => exportFile('excel')}>Exporter Excel</button>
           <button className="btn btn-primary" onClick={() => exportFile('pdf')}>Exporter PDF</button>
+          <button className="btn btn-outline" onClick={copyWhatsappList}>📋 Copier liste WhatsApp (Nom/Tél. élève)</button>
         </div>
 
         <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr auto', gap: 10 }}>
@@ -212,13 +233,14 @@ if (loading) return <p>Chargement...</p>;
                 <th>Nom</th>
                 <th>Âge</th>
                 <th>Date d'inscription</th>
+                <th>Téléphone élève</th>
                 <th>Coordonnées famille</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {students.length === 0 ? (
-                <tr><td colSpan="5" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun élève inscrit</td></tr>
+                <tr><td colSpan="6" style={{ textAlign: 'center', color: '#6B7280' }}>Aucun élève inscrit</td></tr>
               ) : (
                 paginatedStudents.map((enrollment) => {
                   const student = enrollment.student;
@@ -229,6 +251,7 @@ if (loading) return <p>Chargement...</p>;
                       <td>{student.lastName} {student.firstName}</td>
                       <td>{age} ans</td>
                       <td>{new Date(enrollment.enrolledAt).toLocaleDateString('fr-FR')}</td>
+                      <td>{student.phone || '-'}</td>
                       <td>{familyUser?.email || '-'} / {familyUser?.phone || '-'}</td>
                       <td>
                         <button className="btn btn-danger btn-sm" onClick={() => removeStudent(enrollment.id)}>Retirer</button>

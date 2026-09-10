@@ -536,11 +536,32 @@ async function sendMailBcc({ bccEmails, subject, content, attachmentInfo }) {
   return { successCount, failedCount, errors };
 }
 
+// Libellé lisible du ciblage "par type" (mode classic), utilisé à la fois pour
+// l'aperçu et pour l'historique des mails envoyés (MailLog.recipientLabel).
+async function buildClassicRecipientLabel(recipientType, poleId, levelId, classId, recipientsCount) {
+  if (recipientType === 'ALL_FAMILIES') return `Toutes les familles inscrites (${recipientsCount})`;
+  if (recipientType === 'TEACHERS') return `Tous les professeurs (${recipientsCount})`;
+  if (recipientType === 'CLASS_FAMILIES') {
+    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { level: { include: { pole: true } } } });
+    return `Classe : ${cls?.level?.pole?.name} - ${cls?.level?.name} (${recipientsCount} familles)`;
+  }
+  if (recipientType === 'LEVEL_FAMILIES') {
+    const level = await prisma.level.findUnique({ where: { id: levelId }, include: { pole: true } });
+    return `Niveau : ${level?.pole?.name} - ${level?.name} (${recipientsCount} familles)`;
+  }
+  if (recipientType === 'POLE_FAMILIES') {
+    const pole = await prisma.pole.findUnique({ where: { id: poleId } });
+    return `Pôle : ${pole?.name} (${recipientsCount} familles)`;
+  }
+  return `${recipientsCount} destinataire(s)`;
+}
+
 module.exports = {
   getRecipients,
   getRecipientsByCriteria,
   renderMailHtml,
   sendBulkMail,
   sendMailBcc,
+  buildClassicRecipientLabel,
   getPoleStructure,
 };

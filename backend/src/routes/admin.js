@@ -94,6 +94,8 @@ const {
   getMailingPreview,
   getMailingRecipientsByCriteria,
   sendMailingBcc,
+  getMailLogs,
+  getMailLogDetail,
 } = require('../controllers/adminMailController');
 const { generatePaymentReceiptPDF } = require('../controllers/paymentController');
 
@@ -235,6 +237,8 @@ router.post('/mailing/preview', authorizePermission(PERMISSIONS.CLASSES_MANAGE),
 router.post('/mailing/send', authorizePermission(PERMISSIONS.CLASSES_MANAGE), upload.single('attachment'), sendMailing);
 router.post('/mailing/recipients-by-criteria', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailingRecipientsByCriteria);
 router.post('/mailing/send-bcc', authorizePermission(PERMISSIONS.CLASSES_MANAGE), upload.single('attachment'), sendMailingBcc);
+router.get('/mailing/sent', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailLogs);
+router.get('/mailing/sent/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE), getMailLogDetail);
 
 // Familles
 router.get('/families', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilies);

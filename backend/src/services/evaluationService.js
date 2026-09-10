@@ -128,40 +128,51 @@ async function fetchLessonAttendanceSheet({ teacherUserId, lessonId }) {
 
 // Compte les absences et retards ('missing'/'late') de chaque élève d'une classe
 // sur toute l'année scolaire — partagé entre la feuille d'appel et le classement.
+// Le classement a en plus besoin de la répartition justifiée/non justifiée (filtre),
+// donc on groupe aussi par justificationStatus ; seul VALIDATED compte comme "justifiée".
 async function computeYearlyAttendanceCounts(classRecord, classId) {
   const absentCountByStudent = new Map();
   const lateCountByStudent = new Map();
-  if (!classRecord.schoolYear) return { absentCountByStudent, lateCountByStudent };
+  const absentJustifiedByStudent = new Map();
+  const absentUnjustifiedByStudent = new Map();
+  const lateJustifiedByStudent = new Map();
+  const lateUnjustifiedByStudent = new Map();
+  // Les maps sont partagées par référence : `result` reflète déjà leur contenu une
+  // fois `accumulate` appelé plus bas, pas besoin de reconstruire l'objet au retour.
+  const result = { absentCountByStudent, lateCountByStudent, absentJustifiedByStudent, absentUnjustifiedByStudent, lateJustifiedByStudent, lateUnjustifiedByStudent };
+  if (!classRecord.schoolYear) return result;
+
+  const lessonDateWhere = {
+    classId,
+    date: { gte: classRecord.schoolYear.startDate, lte: classRecord.schoolYear.endDate },
+  };
 
   const [schoolYearAbsences, schoolYearLates] = await Promise.all([
     prisma.evaluation.groupBy({
-      by: ['studentId'],
-      where: {
-        lesson: {
-          classId,
-          date: { gte: classRecord.schoolYear.startDate, lte: classRecord.schoolYear.endDate },
-        },
-        status: 'missing',
-      },
+      by: ['studentId', 'justificationStatus'],
+      where: { lesson: lessonDateWhere, status: 'missing' },
       _count: { id: true },
     }),
     prisma.evaluation.groupBy({
-      by: ['studentId'],
-      where: {
-        lesson: {
-          classId,
-          date: { gte: classRecord.schoolYear.startDate, lte: classRecord.schoolYear.endDate },
-        },
-        status: 'late',
-      },
+      by: ['studentId', 'justificationStatus'],
+      where: { lesson: lessonDateWhere, status: 'late' },
       _count: { id: true },
     }),
   ]);
 
-  schoolYearAbsences.forEach((record) => absentCountByStudent.set(record.studentId, record._count.id));
-  schoolYearLates.forEach((record) => lateCountByStudent.set(record.studentId, record._count.id));
+  const accumulate = (records, totalMap, justifiedMap, unjustifiedMap) => {
+    records.forEach((record) => {
+      const count = record._count.id;
+      totalMap.set(record.studentId, (totalMap.get(record.studentId) || 0) + count);
+      const targetMap = record.justificationStatus === 'VALIDATED' ? justifiedMap : unjustifiedMap;
+      targetMap.set(record.studentId, (targetMap.get(record.studentId) || 0) + count);
+    });
+  };
 
-  return { absentCountByStudent, lateCountByStudent };
+  accumulate(schoolYearAbsences, absentCountByStudent, absentJustifiedByStudent, absentUnjustifiedByStudent);
+  accumulate(schoolYearLates, lateCountByStudent, lateJustifiedByStudent, lateUnjustifiedByStudent);
+
+  return result;
 }
 
 async function fetchAbsenceRanking({ teacherUserId, classId }) {
@@ -180,7 +191,11 @@ async function fetchAbsenceRanking({ teacherUserId, classId }) {
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
   });
 
-  const { absentCountByStudent, lateCountByStudent } = await computeYearlyAttendanceCounts(classRecord, classId);
+  const {
+    absentCountByStudent, lateCountByStudent,
+    absentJustifiedByStudent, absentUnjustifiedByStudent,
+    lateJustifiedByStudent, lateUnjustifiedByStudent,
+  } = await computeYearlyAttendanceCounts(classRecord, classId);
 
   return enrollments
     .map((enrollment) => ({
@@ -188,6 +203,10 @@ async function fetchAbsenceRanking({ teacherUserId, classId }) {
       studentName: `${enrollment.student.firstName} ${enrollment.student.lastName}`,
       absenceCount: absentCountByStudent.get(enrollment.student.id) || 0,
       lateCount: lateCountByStudent.get(enrollment.student.id) || 0,
+      absenceCountJustified: absentJustifiedByStudent.get(enrollment.student.id) || 0,
+      absenceCountUnjustified: absentUnjustifiedByStudent.get(enrollment.student.id) || 0,
+      lateCountJustified: lateJustifiedByStudent.get(enrollment.student.id) || 0,
+      lateCountUnjustified: lateUnjustifiedByStudent.get(enrollment.student.id) || 0,
     }))
     .sort((a, b) => b.absenceCount - a.absenceCount || b.lateCount - a.lateCount);
 }
