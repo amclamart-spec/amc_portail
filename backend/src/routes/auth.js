@@ -22,7 +22,12 @@ const { authenticate } = require('../middleware/auth');
 const router = Router();
 
 const registerValidation = [
-  body('email').isEmail().withMessage('Email invalide').normalizeEmail(),
+  // Pas de .normalizeEmail() : par défaut elle supprime les points et le "+tag" de la
+  // partie locale des adresses Gmail/Google (ex: jean.dupont@gmail.com -> jeandupont@gmail.com),
+  // ce qui ne correspond plus à l'email réellement stocké en base et fait échouer la
+  // recherche de compte (login, mot de passe oublié) même avec l'email correctement saisi.
+  // Les contrôleurs font eux-mêmes un trim + lowercase, sans cette transformation.
+  body('email').isEmail().withMessage('Email invalide'),
   body('phone').trim().notEmpty().withMessage('Téléphone requis'),
   body('password')
     .isLength({ min: 8 }).withMessage('Minimum 8 caractères')
@@ -34,12 +39,22 @@ const registerValidation = [
 ];
 
 const loginValidation = [
-  body('email').isEmail().withMessage('Email invalide').normalizeEmail(),
+  // Pas de .normalizeEmail() : par défaut elle supprime les points et le "+tag" de la
+  // partie locale des adresses Gmail/Google (ex: jean.dupont@gmail.com -> jeandupont@gmail.com),
+  // ce qui ne correspond plus à l'email réellement stocké en base et fait échouer la
+  // recherche de compte (login, mot de passe oublié) même avec l'email correctement saisi.
+  // Les contrôleurs font eux-mêmes un trim + lowercase, sans cette transformation.
+  body('email').isEmail().withMessage('Email invalide'),
   body('password').notEmpty().withMessage('Mot de passe requis'),
 ];
 
 const forgotPasswordValidation = [
-  body('email').isEmail().withMessage('Email invalide').normalizeEmail(),
+  // Pas de .normalizeEmail() : par défaut elle supprime les points et le "+tag" de la
+  // partie locale des adresses Gmail/Google (ex: jean.dupont@gmail.com -> jeandupont@gmail.com),
+  // ce qui ne correspond plus à l'email réellement stocké en base et fait échouer la
+  // recherche de compte (login, mot de passe oublié) même avec l'email correctement saisi.
+  // Les contrôleurs font eux-mêmes un trim + lowercase, sans cette transformation.
+  body('email').isEmail().withMessage('Email invalide'),
 ];
 
 const resetPasswordValidation = [
