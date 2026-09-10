@@ -58,13 +58,17 @@ async function issueTokensForUser(user) {
  */
 async function register(req, res) {
   try {
-    const { email, password, firstName, lastName, phone, role } = req.body;
+    const { password, firstName, lastName, phone, role } = req.body;
+    // Normalisé pour éviter qu'un même email crée deux comptes distincts qui ne
+    // diffèrent que par la casse (ce qui rendrait la connexion insensible à la casse
+    // ambiguë entre les deux) — voir login() ci-dessus.
+    const email = String(req.body.email || '').trim().toLowerCase();
 
     if (!phone || !phone.trim()) {
       return res.status(400).json({ error: 'Téléphone requis' });
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
     if (existing) {
       return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
     }
@@ -127,8 +131,13 @@ async function register(req, res) {
 async function login(req, res) {
   try {
     const { email, password } = req.body;
+    // Comparaison insensible à la casse et aux espaces : certains comptes ont été créés
+    // (inscription directe, création admin d'un professeur/bénévole/salarié...) sans
+    // normaliser l'email saisi, et un findUnique strict ratait alors la correspondance
+    // dès que l'utilisateur tapait son email avec une casse différente à la connexion.
+    const normalizedEmail = String(email || '').trim().toLowerCase();
 
-    const user = await prisma.user.findUnique({ where: { email }, include: { additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } } } });
+    const user = await prisma.user.findFirst({ where: { email: { equals: normalizedEmail, mode: 'insensitive' } }, include: { additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } } } });
     if (!user) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
@@ -376,8 +385,9 @@ async function forgotPassword(req, res) {
     if (!email) {
       return res.status(400).json({ error: 'Email requis' });
     }
+    const normalizedEmail = String(email).trim().toLowerCase();
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findFirst({ where: { email: { equals: normalizedEmail, mode: 'insensitive' } } });
     if (!user) {
       return res.json({ message: 'Si cet email existe dans notre système, un lien de réinitialisation a été envoyé.' });
     }
