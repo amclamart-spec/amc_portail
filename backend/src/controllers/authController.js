@@ -3,12 +3,13 @@ const crypto = require('crypto');
 const passport = require('passport');
 const { v4: uuidv4 } = require('uuid');
 const { PrismaClient } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { sendVerificationEmail, sendResetPasswordEmail, sendRoleRequestApprovedEmail } = require('../services/emailService');
 const { sendPasswordResetSms } = require('../services/smsService');
 const config = require('../config');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 const OAUTH_STATE_COOKIE = 'amc_google_oauth_state';
 

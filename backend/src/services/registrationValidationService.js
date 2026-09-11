@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 function normalizeToPaymentMethod(value) {
   const raw = String(value || '').trim().toUpperCase();
