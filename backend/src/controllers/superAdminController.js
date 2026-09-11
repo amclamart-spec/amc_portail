@@ -1,9 +1,10 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const { sendAccountInvitationEmail } = require('../services/emailService');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 const VALID_ROLES = [
   'SUPER_ADMIN',

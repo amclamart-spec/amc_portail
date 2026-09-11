@@ -130,7 +130,7 @@ function ApprentissageGrid({ repetitions, setRepetitions }) {
     }
   };
 
-  const sorted = useMemo(() => [...repetitions].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [repetitions]);
+  const sorted = useMemo(() => [...repetitions].sort((a, b) => new Date(b.dateDebut) - new Date(a.dateDebut)), [repetitions]);
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const pageItems = sorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
@@ -151,8 +151,8 @@ function ApprentissageGrid({ repetitions, setRepetitions }) {
                     <tr key={r.id}>
                       <td className="nowrap">{r.sourate?.nomFr || '—'}</td>
                       <td className="nowrap" style={{ fontWeight: 800 }}>{r.numeroPage}</td>
-                      <td className="nowrap">{fmtDate(r.createdAt)}</td>
-                      <td className="nowrap">S{isoWeekNumber(r.createdAt)}</td>
+                      <td className="nowrap">{fmtDate(r.dateDebut)}</td>
+                      <td className="nowrap">S{isoWeekNumber(r.dateDebut)}</td>
                       <td className="nowrap">{r.compteur} / 30</td>
                       <td><EvalCell item={r} onSave={(payload) => handleEvaluate(r.id, payload, r.studentId)} /></td>
                     </tr>
@@ -165,7 +165,7 @@ function ApprentissageGrid({ repetitions, setRepetitions }) {
           </>
         )}
       </div>
-      <MonthCalendar markedDates={repetitions.map((r) => r.createdAt)} legendLabel="Jour d'ajout d'une page" />
+      <MonthCalendar markedDates={repetitions.map((r) => r.dateDebut)} legendLabel="Jour d'ajout d'une page" />
     </div>
   );
 }
