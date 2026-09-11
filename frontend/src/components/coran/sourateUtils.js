@@ -65,7 +65,7 @@ function averagePerWeek(dates, total) {
 export function computeCoranKpis({ repetitions, revisions, lectures }) {
   const pagesApprises = repetitions.length;
   const mastered = repetitions.filter((r) => r.compteur >= 30).length;
-  const avgApprentissagePerWeek = averagePerWeek(repetitions.map((r) => new Date(r.createdAt).getTime()), pagesApprises);
+  const avgApprentissagePerWeek = averagePerWeek(repetitions.map((r) => new Date(r.dateDebut).getTime()), pagesApprises);
 
   const totalRevisionPages = revisions.reduce((sum, r) => sum + (r.pageFin - r.pageDebut + 1), 0);
   const avgRevisionPerWeek = averagePerWeek(revisions.map((r) => new Date(r.date).getTime()), totalRevisionPages);

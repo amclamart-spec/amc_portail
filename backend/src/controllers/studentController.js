@@ -1,7 +1,8 @@
 const { PrismaClient } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const { savePhotoBase64, deletePhotoFile } = require('../utils/photoUtils');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 /**
  * POST /api/students

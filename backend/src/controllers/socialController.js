@@ -1,11 +1,12 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { PrismaClient, Prisma } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const { saveBeneficiaryDocumentFile, deleteBeneficiaryDocumentFile } = require('../utils/beneficiaryDocumentUtils');
 const { savePurchaseReceiptFile, deletePurchaseReceiptFile } = require('../utils/purchaseReceiptUtils');
 const { sendRoleRequestApprovedEmail, sendRoleRequestRejectedEmail, sendOperatorRoleAddedEmail, sendAccountInvitationEmail } = require('../services/emailService');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 

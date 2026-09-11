@@ -34,7 +34,14 @@ export default function AdminClassDetails() {
     fetchData();
   }, [id]);
 
-  const students = useMemo(() => classData?.enrollments || [], [classData]);
+  const students = useMemo(() => {
+    const enrollments = classData?.enrollments || [];
+    return [...enrollments].sort((a, b) => {
+      const nameA = `${a.student?.lastName || ''} ${a.student?.firstName || ''}`.trim();
+      const nameB = `${b.student?.lastName || ''} ${b.student?.firstName || ''}`.trim();
+      return nameA.localeCompare(nameB, 'fr', { sensitivity: 'base' });
+    });
+  }, [classData]);
   const STUDENTS_PER_PAGE = 15;
   const [currentPage, setCurrentPage] = useState(1);
 

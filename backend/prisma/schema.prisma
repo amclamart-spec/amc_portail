@@ -1450,7 +1450,7 @@ model CoranSeance {
 model CoranRevision {
   id              String             @id @default(uuid())
   studentId       String             @map("student_id")
-  sourateId       String             @map("sourate_id")
+  sourateId       String?            @map("sourate_id")
   pageDebut       Int                @map("page_debut")
   pageFin         Int                @map("page_fin")
   type            CoranRevisionType
@@ -1460,8 +1460,8 @@ model CoranRevision {
   evaluatedAt     DateTime?          @map("evaluated_at")
   createdAt       DateTime           @default(now()) @map("created_at")
 
-  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  sourate SourateCoran @relation(fields: [sourateId], references: [id])
+  student Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sourate SourateCoran? @relation(fields: [sourateId], references: [id])
 
   @@index([studentId, date])
   @@map("coran_revisions")
@@ -1472,6 +1472,7 @@ model CoranRepetition {
   studentId       String             @map("student_id")
   numeroPage      Int                @map("numero_page")
   sourateId       String?            @map("sourate_id")
+  dateDebut       DateTime           @default(now()) @map("date_debut")
   compteur        Int                @default(0)
   derniereDate    DateTime?          @map("derniere_date")
   appreciation    CoranAppreciation?
@@ -1490,7 +1491,7 @@ model CoranRepetition {
 model CoranLecture {
   id              String             @id @default(uuid())
   studentId       String             @map("student_id")
-  sourateId       String             @map("sourate_id")
+  sourateId       String?            @map("sourate_id")
   pageDebut       Int                @map("page_debut")
   pageFin         Int                @map("page_fin")
   date            DateTime
@@ -1501,8 +1502,8 @@ model CoranLecture {
   evaluatedAt     DateTime?          @map("evaluated_at")
   createdAt       DateTime           @default(now()) @map("created_at")
 
-  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  sourate SourateCoran @relation(fields: [sourateId], references: [id])
+  student Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sourate SourateCoran? @relation(fields: [sourateId], references: [id])
 
   @@index([studentId, date])
   @@map("coran_lectures")

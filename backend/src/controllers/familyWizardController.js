@@ -3,6 +3,7 @@
 const { v4: uuidv4 } = require('uuid');
 
 const { PrismaClient, Prisma } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 
 const {
 
@@ -34,7 +35,7 @@ const config = require('../config');
 
 
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 
 

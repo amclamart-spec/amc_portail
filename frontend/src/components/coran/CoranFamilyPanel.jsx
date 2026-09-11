@@ -64,6 +64,7 @@ function ApprentissageTab({ studentId, sourates }) {
   const [addSourateId, setAddSourateId] = useState('');
   const [addPageDebut, setAddPageDebut] = useState('');
   const [addPageFin, setAddPageFin] = useState('');
+  const [addDate, setAddDate] = useState(new Date().toISOString().slice(0, 10));
   const [adding, setAdding] = useState(false);
 
   const [filterSourateId, setFilterSourateId] = useState('');
@@ -101,7 +102,7 @@ function ApprentissageTab({ studentId, sourates }) {
     const conflictsBeforeSubmit = addRangeConflicts;
     setAdding(true);
     try {
-      const { data } = await api.post('/coran/repetitions', { studentId, sourateId: addSourateId || undefined, pageDebut: debut, pageFin: fin });
+      const { data } = await api.post('/coran/repetitions', { studentId, sourateId: addSourateId || undefined, pageDebut: debut, pageFin: fin, date: addDate });
       setRepetitions((prev) => {
         const byId = new Map(prev.map((r) => [r.id, r]));
         (data.created || []).forEach((row) => byId.set(row.id, row));
@@ -113,6 +114,7 @@ function ApprentissageTab({ studentId, sourates }) {
       }
       setAddPageDebut('');
       setAddPageFin('');
+      setAddDate(new Date().toISOString().slice(0, 10));
       setCurrentPage(1);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Erreur lors de l\'ajout');
@@ -151,7 +153,7 @@ function ApprentissageTab({ studentId, sourates }) {
   const filtered = useMemo(() => repetitions
     .filter((r) => !filterSourateId || r.sourateId === filterSourateId)
     .filter((r) => !filterPage.trim() || String(r.numeroPage) === filterPage.trim())
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [repetitions, filterSourateId, filterPage]);
+    .sort((a, b) => new Date(b.dateDebut) - new Date(a.dateDebut)), [repetitions, filterSourateId, filterPage]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageItems = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -178,6 +180,10 @@ function ApprentissageTab({ studentId, sourates }) {
               <label>Page fin (optionnel)</label>
               <input type="number" min={1} max={MAX_MUSHAF_PAGE} className="form-control" value={addPageFin} onChange={(e) => setAddPageFin(e.target.value)} placeholder="= page début si vide" />
             </div>
+          </div>
+          <div className="form-group">
+            <label>Date de début</label>
+            <input type="date" className="form-control" value={addDate} onChange={(e) => setAddDate(e.target.value)} />
           </div>
         </div>
         {addRangeConflicts.length > 0 && (
@@ -218,8 +224,8 @@ function ApprentissageTab({ studentId, sourates }) {
                   <tr key={r.id}>
                     <td>{r.sourate?.nomFr || '—'}</td>
                     <td style={{ fontWeight: 800 }}>{r.numeroPage}</td>
-                    <td>{fmtDate(r.createdAt)}</td>
-                    <td>S{isoWeekNumber(r.createdAt)}</td>
+                    <td>{fmtDate(r.dateDebut)}</td>
+                    <td>S{isoWeekNumber(r.dateDebut)}</td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontWeight: 700, color: barColor(r.compteur) }}>{r.compteur} / 30</span>
@@ -252,7 +258,7 @@ function ApprentissageTab({ studentId, sourates }) {
         </>
       )}
       </div>
-      <MonthCalendar markedDates={repetitions.map((r) => r.createdAt)} legendLabel="Jour d'ajout d'une page" />
+      <MonthCalendar markedDates={repetitions.map((r) => r.dateDebut)} legendLabel="Jour d'ajout d'une page" />
     </div>
   );
 }
@@ -268,7 +274,6 @@ function EntryModal({ title, sourates, onClose, onSubmit, showDuree, showComment
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async () => {
-    if (!sourateId) { toast.error('Sélectionnez une sourate'); return; }
     const debut = Number(pageDebut);
     const fin = Number(pageFin);
     if (!Number.isInteger(debut) || !Number.isInteger(fin) || debut < 1 || fin > MAX_MUSHAF_PAGE || debut > fin) {
@@ -277,7 +282,7 @@ function EntryModal({ title, sourates, onClose, onSubmit, showDuree, showComment
     }
     setSaving(true);
     try {
-      await onSubmit({ sourateId, pageDebut: debut, pageFin: fin, date, dureeMinutes: dureeMinutes || undefined, commentaire: commentaire || undefined });
+      await onSubmit({ sourateId: sourateId || undefined, pageDebut: debut, pageFin: fin, date, dureeMinutes: dureeMinutes || undefined, commentaire: commentaire || undefined });
       onClose();
     } catch (e) {
       toast.error(e.response?.data?.error || 'Erreur lors de l\'enregistrement');
@@ -293,7 +298,7 @@ function EntryModal({ title, sourates, onClose, onSubmit, showDuree, showComment
         <div style={{ padding: 16 }}>
           <div className="cor-modal-grid">
             <div className="form-group">
-              <label>Sourate</label>
+              <label>Sourate (optionnel)</label>
               <SourateSelect sourates={sourates} value={sourateId} onChange={setSourateId} />
             </div>
             <div className="cor-modal-grid cor-2col">
@@ -385,7 +390,7 @@ function RevisionsTab({ studentId, sourates }) {
               <tbody>
                 {items.map((r) => (
                   <tr key={r.id}>
-                    <td>{r.sourate?.nomFr}</td>
+                    <td>{r.sourate?.nomFr || '—'}</td>
                     <td>{r.pageDebut}–{r.pageFin}</td>
                     <td>{fmtDate(r.date)}</td>
                     <td><AppreciationBadge value={r.appreciation} /></td>
@@ -476,7 +481,7 @@ function LectureTab({ studentId, sourates }) {
               <tbody>
                 {sorted.map((l) => (
                   <tr key={l.id}>
-                    <td>{l.sourate?.nomFr}</td>
+                    <td>{l.sourate?.nomFr || '—'}</td>
                     <td>{l.pageDebut}–{l.pageFin}</td>
                     <td>{l.dureeMinutes ? `${l.dureeMinutes} min` : '—'}</td>
                     <td>{fmtDate(l.date)}</td>
