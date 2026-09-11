@@ -1,8 +1,11 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const { PrismaClient, Prisma } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const { v4: uuidv4 } = require('uuid');
 const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendAccountInvitationEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail, sendRoleRequestApprovedEmail, sendRoleRequestRejectedEmail } = require('../services/emailService');
 const { finalizeStripePayment, cancelStripePayment } = require('./paymentController');
@@ -13,10 +16,29 @@ const { getRegistrationBlock, setRegistrationBlock } = require('../services/syst
 const { getReceiptInfo } = require('../utils/receiptUtils');
 const { generateInvoicePDF } = require('../utils/invoiceUtils');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 function normalizeId(value) {
   return String(value || '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
+}
+
+// M\u00EAme recherche de logo que les autres exports (absenceController, invoiceUtils) \u2014
+// amc_logo.png et amc_logo_partner.png sont les deux logos affich\u00E9s dans les documents
+// envoy\u00E9s aux familles.
+function findLogo(names) {
+  const bases = [
+    path.join(process.cwd(), '../frontend/public'),
+    path.join(process.cwd(), '../../frontend/public'),
+    path.join(__dirname, '../../../frontend/public'),
+    path.join(__dirname, '../../uploads'),
+  ];
+  for (const name of names) {
+    for (const base of bases) {
+      const p = path.join(base, name);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return null;
 }
 
 // Libell\u00E9s fran\u00E7ais du statut d'inscription (EnrollmentStatus), pour l'export Excel \u2014
@@ -3332,6 +3354,20 @@ async function removeStudentFromClass(req, res) {
   }
 }
 
+// Détecte le vrai format d'une image (certains fichiers du dossier public ont une
+// extension .png alors que le contenu est en réalité un JPEG) pour renseigner le bon
+// `extension` à ExcelJS — un mauvais type produit un fichier Excel dont l'image ne
+// s'affiche pas.
+function detectImageExtension(filePath) {
+  const buf = fs.readFileSync(filePath);
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'jpeg';
+  return 'png';
+}
+
+const CLASS_EXPORT_PRIMARY = '213B88';
+const CLASS_EXPORT_ZEBRA = 'F0F4FA';
+const CLASS_EXPORT_BORDER = 'D6DCE5';
+
 async function exportClassStudentsExcel(req, res) {
   try {
     const { id } = req.params;
@@ -3352,39 +3388,156 @@ async function exportClassStudentsExcel(req, res) {
               },
             },
           },
-          orderBy: { enrolledAt: 'asc' },
         },
       },
     });
 
     if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
 
+    const sortedEnrollments = [...cls.enrollments].sort((a, b) => {
+      const nameA = `${a.student.lastName} ${a.student.firstName}`;
+      const nameB = `${b.student.lastName} ${b.student.firstName}`;
+      return nameA.localeCompare(nameB, 'fr', { sensitivity: 'base' });
+    });
+
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Classe');
+    workbook.creator = 'AMC Portail';
+    const worksheet = workbook.addWorksheet('Classe', {
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    });
 
-    worksheet.addRow(['Classe', `${cls.pole?.name || '-'} / ${cls.level?.name || '-'}`]);
-    worksheet.addRow(['Année scolaire', cls.schoolYear?.label || '-']);
-    worksheet.addRow(['Créneau', `${cls.dayOfWeek} ${cls.startTime} - ${cls.endTime}`]);
-    worksheet.addRow(['Salle', cls.roomRef?.name || cls.room || '-']);
-    worksheet.addRow(['Professeur', cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : '-']);
-    worksheet.addRow(['Effectif', `${cls.enrolledCount}/${cls.capacity}`]);
-    worksheet.addRow([]);
+    const COLUMN_COUNT = 5;
+    worksheet.columns = [
+      { width: 22 },
+      { width: 18 },
+      { width: 18 },
+      { width: 32 },
+      { width: 20 },
+    ];
 
-    worksheet.addRow(['Nom élève', 'Prénom', 'Date inscription', 'Email famille', 'Téléphone famille']);
+    let rowCursor = 1;
 
-    cls.enrollments.forEach((enrollment) => {
-      worksheet.addRow([
+    // ── En-tête : logos + nom de l'association ──────────────────────────────
+    worksheet.mergeCells(rowCursor, 1, rowCursor, COLUMN_COUNT);
+    const titleCell = worksheet.getCell(rowCursor, 1);
+    titleCell.value = 'ASSOCIATION PARTAGE ET DES MUSULMANS DE CLAMART';
+    titleCell.font = { bold: true, size: 13, color: { argb: `FF${CLASS_EXPORT_PRIMARY}` } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    worksheet.getRow(rowCursor).height = 46;
+    rowCursor += 1;
+
+    worksheet.mergeCells(rowCursor, 1, rowCursor, COLUMN_COUNT);
+    const subtitleCell = worksheet.getCell(rowCursor, 1);
+    subtitleCell.value = `Liste des élèves — ${cls.pole?.name || '-'} / ${cls.level?.name || '-'}`;
+    subtitleCell.font = { bold: true, size: 11, color: { argb: 'FF6B7280' } };
+    subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    worksheet.getRow(rowCursor).height = 20;
+    rowCursor += 1;
+
+    try {
+      const amcLogoPath = findLogo(['amc_logo.png']);
+      const partnerLogoPath = findLogo(['amc_logo_partner.png']);
+      if (amcLogoPath) {
+        const imageId = workbook.addImage({ filename: amcLogoPath, extension: detectImageExtension(amcLogoPath) });
+        worksheet.addImage(imageId, { tl: { col: 0.15, row: 0.1 }, ext: { width: 46, height: 68 } });
+      }
+      if (partnerLogoPath) {
+        const imageId = workbook.addImage({ filename: partnerLogoPath, extension: detectImageExtension(partnerLogoPath) });
+        worksheet.addImage(imageId, { tl: { col: COLUMN_COUNT - 0.9, row: 0.1 }, ext: { width: 46, height: 56 } });
+      }
+    } catch (logoError) {
+      console.warn('Export classe Excel: erreur logo', logoError?.message);
+    }
+
+    rowCursor += 1; // ligne d'espacement
+
+    // ── Bloc informations classe ─────────────────────────────────────────────
+    const infoRows = [
+      ['Classe', `${cls.pole?.name || '-'} / ${cls.level?.name || '-'}`],
+      ['Année scolaire', cls.schoolYear?.label || '-'],
+      ['Créneau', `${cls.dayOfWeek} ${cls.startTime} - ${cls.endTime}`],
+      ['Salle', cls.roomRef?.name || cls.room || '-'],
+      ['Professeur', cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : '-'],
+      ['Effectif', `${cls.enrolledCount}/${cls.capacity}`],
+    ];
+    infoRows.forEach(([label, value]) => {
+      const row = worksheet.getRow(rowCursor);
+      const labelCell = row.getCell(1);
+      labelCell.value = label;
+      labelCell.font = { bold: true, color: { argb: `FF${CLASS_EXPORT_PRIMARY}` } };
+      labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${CLASS_EXPORT_ZEBRA}` } };
+      labelCell.alignment = { vertical: 'middle' };
+      worksheet.mergeCells(rowCursor, 2, rowCursor, COLUMN_COUNT);
+      const valueCell = row.getCell(2);
+      valueCell.value = value;
+      valueCell.alignment = { vertical: 'middle' };
+      row.height = 18;
+      rowCursor += 1;
+    });
+
+    rowCursor += 1; // ligne d'espacement
+
+    // ── Tableau des élèves ────────────────────────────────────────────────────
+    const headerRowIndex = rowCursor;
+    const headerRow = worksheet.getRow(headerRowIndex);
+    ['Nom élève', 'Prénom', 'Date inscription', 'Email famille', 'Téléphone famille'].forEach((label, idx) => {
+      const cell = headerRow.getCell(idx + 1);
+      cell.value = label;
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${CLASS_EXPORT_PRIMARY}` } };
+      cell.alignment = { horizontal: idx === 2 ? 'center' : 'left', vertical: 'middle' };
+      cell.border = {
+        top: { style: 'thin', color: { argb: `FF${CLASS_EXPORT_PRIMARY}` } },
+        bottom: { style: 'thin', color: { argb: `FF${CLASS_EXPORT_PRIMARY}` } },
+      };
+    });
+    headerRow.height = 22;
+    rowCursor += 1;
+
+    sortedEnrollments.forEach((enrollment, index) => {
+      const row = worksheet.getRow(rowCursor);
+      const values = [
         enrollment.student.lastName,
         enrollment.student.firstName,
         new Date(enrollment.enrolledAt).toLocaleDateString('fr-FR'),
         enrollment.student.family?.user?.email || '-',
         enrollment.student.family?.user?.phone || '-',
-      ]);
+      ];
+      values.forEach((value, idx) => {
+        const cell = row.getCell(idx + 1);
+        cell.value = value;
+        cell.alignment = { horizontal: idx === 2 ? 'center' : 'left', vertical: 'middle' };
+        cell.border = {
+          top: { style: 'thin', color: { argb: `FF${CLASS_EXPORT_BORDER}` } },
+          bottom: { style: 'thin', color: { argb: `FF${CLASS_EXPORT_BORDER}` } },
+          left: { style: 'thin', color: { argb: `FF${CLASS_EXPORT_BORDER}` } },
+          right: { style: 'thin', color: { argb: `FF${CLASS_EXPORT_BORDER}` } },
+        };
+        if (index % 2 === 1) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${CLASS_EXPORT_ZEBRA}` } };
+        }
+      });
+      row.height = 18;
+      rowCursor += 1;
     });
 
-    worksheet.columns.forEach((column) => {
-      column.width = 24;
-    });
+    if (sortedEnrollments.length === 0) {
+      worksheet.mergeCells(rowCursor, 1, rowCursor, COLUMN_COUNT);
+      const emptyCell = worksheet.getCell(rowCursor, 1);
+      emptyCell.value = 'Aucun élève inscrit';
+      emptyCell.font = { italic: true, color: { argb: 'FF6B7280' } };
+      emptyCell.alignment = { horizontal: 'center' };
+      rowCursor += 1;
+    }
+
+    worksheet.views = [{ state: 'frozen', ySplit: headerRowIndex }];
+
+    rowCursor += 1; // ligne d'espacement
+    worksheet.mergeCells(rowCursor, 1, rowCursor, COLUMN_COUNT);
+    const footerCell = worksheet.getCell(rowCursor, 1);
+    footerCell.value = `Document généré le ${new Date().toLocaleDateString('fr-FR')} — Association PARTAGE`;
+    footerCell.font = { italic: true, size: 9, color: { argb: 'FF9CA3AF' } };
+    footerCell.alignment = { horizontal: 'center' };
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="classe-${id}.xlsx"`);
@@ -3423,6 +3576,12 @@ async function exportClassStudentsPdf(req, res) {
     });
 
     if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
+
+    cls.enrollments.sort((a, b) => {
+      const nameA = `${a.student.lastName} ${a.student.firstName}`;
+      const nameB = `${b.student.lastName} ${b.student.firstName}`;
+      return nameA.localeCompare(nameB, 'fr', { sensitivity: 'base' });
+    });
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="classe-${id}.pdf"`);

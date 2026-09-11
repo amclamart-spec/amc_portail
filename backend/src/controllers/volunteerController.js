@@ -3,11 +3,12 @@ const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const { saveBase64File } = require('../utils/fileUtils');
 const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendVolunteerInvitationEmail, sendVolunteerRoleAddedEmail, sendRoleRequestApprovedEmail, sendRoleRequestRejectedEmail } = require('../services/emailService');
 const { PERMISSIONS, hasPermission } = require('../config/permissions');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 const USER_PUBLIC_FIELDS = {
   id: true,

@@ -1,8 +1,9 @@
 const { PrismaClient } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const bcrypt = require('bcryptjs');
 const { createActivityLog } = require('../services/activityLogService');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 function buildFamilySearchWhere({ search, accountStatus }) {
   const where = {};

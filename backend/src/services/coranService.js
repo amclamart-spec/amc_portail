@@ -174,19 +174,21 @@ async function listRevisions({ studentId }) {
 }
 
 async function createRevision({ familyUserId, studentId, sourateId, pageDebut, pageFin, type, date }) {
-  if (!studentId || !sourateId || !type) throw badRequest('studentId, sourateId et type sont requis');
+  if (!studentId || !type) throw badRequest('studentId et type sont requis');
   if (!REVISION_TYPES.includes(type)) throw badRequest('Type de révision invalide');
   const { debut, fin } = validatePageRange(pageDebut, pageFin);
 
   await getFamilyCoranStudent({ familyUserId, studentId });
 
-  const sourate = await prisma.sourateCoran.findUnique({ where: { id: sourateId } });
-  if (!sourate) throw notFound('Sourate introuvable');
+  if (sourateId) {
+    const sourate = await prisma.sourateCoran.findUnique({ where: { id: sourateId } });
+    if (!sourate) throw notFound('Sourate introuvable');
+  }
 
   return prisma.coranRevision.create({
     data: {
       studentId,
-      sourateId,
+      sourateId: sourateId || null,
       pageDebut: debut,
       pageFin: fin,
       type,
@@ -222,11 +224,11 @@ async function listRepetitions({ studentId }) {
   return prisma.coranRepetition.findMany({
     where: { studentId },
     include: { sourate: true },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { dateDebut: 'desc' },
   });
 }
 
-async function addRepetitionPages({ familyUserId, studentId, sourateId, pageDebut, pageFin }) {
+async function addRepetitionPages({ familyUserId, studentId, sourateId, pageDebut, pageFin, date }) {
   if (!studentId) throw badRequest('studentId est requis');
   const { debut, fin } = validatePageRange(pageDebut, pageFin ?? pageDebut);
 
@@ -236,6 +238,8 @@ async function addRepetitionPages({ familyUserId, studentId, sourateId, pageDebu
     const sourate = await prisma.sourateCoran.findUnique({ where: { id: sourateId } });
     if (!sourate) throw notFound('Sourate introuvable');
   }
+
+  const dateDebut = date ? new Date(date) : new Date();
 
   const pages = [];
   for (let p = debut; p <= fin; p += 1) pages.push(p);
@@ -249,7 +253,7 @@ async function addRepetitionPages({ familyUserId, studentId, sourateId, pageDebu
 
   if (toCreate.length > 0) {
     await prisma.coranRepetition.createMany({
-      data: toCreate.map((numeroPage) => ({ studentId, numeroPage, sourateId: sourateId || null, compteur: 0 })),
+      data: toCreate.map((numeroPage) => ({ studentId, numeroPage, sourateId: sourateId || null, compteur: 0, dateDebut })),
     });
   }
 
@@ -333,18 +337,20 @@ async function listLectures({ studentId }) {
 }
 
 async function createLecture({ familyUserId, studentId, sourateId, pageDebut, pageFin, date, dureeMinutes, commentaire }) {
-  if (!studentId || !sourateId) throw badRequest('studentId et sourateId sont requis');
+  if (!studentId) throw badRequest('studentId est requis');
   const { debut, fin } = validatePageRange(pageDebut, pageFin);
 
   await getFamilyCoranStudent({ familyUserId, studentId });
 
-  const sourate = await prisma.sourateCoran.findUnique({ where: { id: sourateId } });
-  if (!sourate) throw notFound('Sourate introuvable');
+  if (sourateId) {
+    const sourate = await prisma.sourateCoran.findUnique({ where: { id: sourateId } });
+    if (!sourate) throw notFound('Sourate introuvable');
+  }
 
   return prisma.coranLecture.create({
     data: {
       studentId,
-      sourateId,
+      sourateId: sourateId || null,
       pageDebut: debut,
       pageFin: fin,
       date: date ? new Date(date) : new Date(),
@@ -456,7 +462,7 @@ async function getBulletinData({ studentId }) {
 
   const pagesApprises = repetitions.length;
   const mastered = repetitions.filter((r) => r.compteur >= 30).length;
-  const avgApprentissagePerWeek = averagePerWeek(repetitions.map((r) => new Date(r.createdAt).getTime()), pagesApprises);
+  const avgApprentissagePerWeek = averagePerWeek(repetitions.map((r) => new Date(r.dateDebut).getTime()), pagesApprises);
 
   const totalRevisionPages = revisions.reduce((sum, r) => sum + (r.pageFin - r.pageDebut + 1), 0);
   const avgRevisionPerWeek = averagePerWeek(revisions.map((r) => new Date(r.date).getTime()), totalRevisionPages);

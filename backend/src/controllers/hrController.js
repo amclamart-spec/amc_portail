@@ -1,11 +1,12 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
+const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const { savePayslipFile, deletePayslipFile } = require('../utils/payslipUtils');
 const { saveContractFile, deleteContractFile } = require('../utils/contractUtils');
 const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendAccountInvitationEmail, sendEmployeeRoleAddedEmail } = require('../services/emailService');
 
-const prisma = new PrismaClient();
+const prisma = applyNameCasing(new PrismaClient());
 
 const CONTRACT_TYPES = ['CDI', 'CDD', 'INTERIM', 'ALTERNANCE', 'STAGE', 'AUTRE'];
 const LEAVE_TYPES = ['CONGES_PAYES', 'MALADIE', 'AUTRE'];
