@@ -84,6 +84,7 @@ export default function AdminJustificatifs() {
                   <th>Famille</th>
                   <th>Cours</th>
                   <th>Justificatif famille</th>
+                  <th>Documents</th>
                   <th>Note professeur</th>
                   <th>Statut</th>
                   {filter === 'PENDING' && <th>Actions</th>}
@@ -100,6 +101,23 @@ export default function AdminJustificatifs() {
                       <div style={{ fontSize: 13, color: 'var(--amc-text)', whiteSpace: 'pre-wrap' }}>
                         {j.familyJustification || '-'}
                       </div>
+                    </td>
+                    <td style={{ maxWidth: 220 }}>
+                      {j.justificationDocuments && j.justificationDocuments.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {j.justificationDocuments.map((doc) => (
+                            <a
+                              key={doc.id}
+                              href={doc.fileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ fontSize: 12, color: 'var(--amc-primary)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}
+                            >
+                              📎 {doc.fileName}
+                            </a>
+                          ))}
+                        </div>
+                      ) : '-'}
                     </td>
                     <td style={{ maxWidth: 200, fontSize: 12, color: '#6B7280' }}>
                       {j.teacherJustification || '-'}

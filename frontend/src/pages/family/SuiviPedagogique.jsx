@@ -157,12 +157,26 @@ const TABS = [
   { id: 'bulletins', label: 'Bulletins',         icon: '📄' },
 ];
 
+const MAX_JUSTIFICATION_DOCUMENTS = 5;
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 /* ─── AbsenceCard ───────────────────────────────────────────────────────────── */
 function AbsenceCard({ absence, onJustified }) {
   const [open, setOpen]       = useState(false);
   const [comment, setComment] = useState('');
   const [saving, setSaving]   = useState(false);
+  const [pendingFiles, setPendingFiles] = useState([]); // [{ fileName, base64 }]
+  const [deletingDocId, setDeletingDocId] = useState(null);
 
+  const documents = absence.justificationDocuments || [];
   const canJustify = absence.justificationStatus === 'NONE' || absence.justificationStatus === 'REJECTED';
   const borderColor = absence.justificationStatus === 'VALIDATED'
     ? '#16A34A'
@@ -170,14 +184,51 @@ function AbsenceCard({ absence, onJustified }) {
       ? '#D97706'
       : '#DC2626';
 
+  const handleFilesSelected = async (event) => {
+    const selected = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (selected.length === 0) return;
+    if (documents.length + pendingFiles.length + selected.length > MAX_JUSTIFICATION_DOCUMENTS) {
+      toast.error(`Vous ne pouvez pas joindre plus de ${MAX_JUSTIFICATION_DOCUMENTS} documents`);
+      return;
+    }
+    try {
+      const encoded = await Promise.all(selected.map(async (file) => ({
+        fileName: file.name,
+        base64: await fileToBase64(file),
+      })));
+      setPendingFiles((prev) => [...prev, ...encoded]);
+    } catch {
+      toast.error('Impossible de lire un des fichiers sélectionnés');
+    }
+  };
+
+  const removePendingFile = (index) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDeleteDocument = async (documentId) => {
+    setDeletingDocId(documentId);
+    try {
+      await api.delete(`/family/pedagogy/absences/${absence.id}/documents/${documentId}`);
+      toast.success('Document supprimé');
+      if (typeof onJustified === 'function') onJustified();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Impossible de supprimer ce document');
+    } finally {
+      setDeletingDocId(null);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!comment.trim()) { toast.error('Veuillez saisir un commentaire'); return; }
     setSaving(true);
     try {
-      await api.post(`/family/pedagogy/absences/${absence.id}/justify`, { comment });
+      await api.post(`/family/pedagogy/absences/${absence.id}/justify`, { comment, documents: pendingFiles });
       toast.success('Justificatif envoyé — en attente de validation');
       setOpen(false);
       setComment('');
+      setPendingFiles([]);
       if (typeof onJustified === 'function') onJustified();
     } catch (e) {
       toast.error(e.response?.data?.error || 'Impossible d\'envoyer le justificatif');
@@ -216,6 +267,26 @@ function AbsenceCard({ absence, onJustified }) {
           <div style={{ fontSize: 13, color: 'var(--amc-text)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
             {absence.familyJustification}
           </div>
+          {documents.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {documents.map((doc) => (
+                <div key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid var(--amc-border)', borderRadius: 8, padding: '4px 8px' }}>
+                  <a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--amc-primary)', textDecoration: 'none', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    📎 {doc.fileName}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteDocument(doc.id)}
+                    disabled={deletingDocId === doc.id}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#DC2626', fontSize: 13, padding: 0, lineHeight: 1 }}
+                    aria-label={`Supprimer ${doc.fileName}`}
+                  >
+                    {deletingDocId === doc.id ? '…' : '✕'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           {absence.justificationStatus === 'REJECTED' && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#DC2626', fontStyle: 'italic' }}>
               Ce justificatif a été refusé. Vous pouvez en soumettre un nouveau.
@@ -246,6 +317,37 @@ function AbsenceCard({ absence, onJustified }) {
             onChange={(e) => setComment(e.target.value)}
             style={{ marginBottom: 8, fontSize: 13 }}
           />
+
+          <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>
+            Documents (optionnel)
+          </label>
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+            onChange={handleFilesSelected}
+            style={{ marginBottom: 8, fontSize: 13 }}
+          />
+          {pendingFiles.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {pendingFiles.map((file, index) => (
+                <div key={`${file.fileName}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#F8FAFC', border: '1px solid var(--amc-border)', borderRadius: 8, padding: '4px 8px' }}>
+                  <span style={{ fontSize: 12, color: 'var(--amc-text)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    📎 {file.fileName}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removePendingFile(index)}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#DC2626', fontSize: 13, padding: 0, lineHeight: 1 }}
+                    aria-label={`Retirer ${file.fileName}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button type="button" className="btn btn-outline btn-sm" onClick={() => setOpen(false)}>Annuler</button>
             <button type="button" className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={saving}>

@@ -612,10 +612,26 @@ model Evaluation {
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   lesson  Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  justificationDocuments AbsenceJustificationDocument[]
 
   @@unique([studentId, lessonId])
   @@index([lessonId])
   @@map("evaluations")
+}
+
+// Pièces jointes du justificatif famille d'une absence (espace famille, suivi
+// pédagogique, onglet Absences) — plusieurs documents possibles par absence.
+model AbsenceJustificationDocument {
+  id           String   @id @default(uuid())
+  evaluationId String   @map("evaluation_id")
+  fileUrl      String   @map("file_url")
+  fileName     String   @map("file_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@index([evaluationId])
+  @@map("absence_justification_documents")
 }
 
 enum EnrollmentStatus {
