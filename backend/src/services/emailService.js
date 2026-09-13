@@ -214,11 +214,15 @@ function isBrevoConfigured() {
 
 /**
  * Tente d'envoyer via un fallback (Brevo API > SMTP) quand le provider
- * principal echoue.
+ * principal echoue. `excludeProvider` ne doit JAMAIS être retenté ici : si le
+ * provider principal a déjà échoué (ou si l'appel a levé une erreur alors que
+ * l'email était en réalité parti côté fournisseur, ex. timeout réseau en lisant
+ * la réponse), le retenter en "fallback" envoie le même email une deuxième fois
+ * au même destinataire — c'était la cause des envois en double du mailing.
  */
-async function sendWithFallback(payload, originalError) {
-  // Essayer Brevo API en fallback si configure
-  if (isBrevoConfigured()) {
+async function sendWithFallback(payload, originalError, excludeProvider = null) {
+  // Essayer Brevo API en fallback si configure (sauf si c'était déjà le provider principal)
+  if (excludeProvider !== 'BREVO' && isBrevoConfigured()) {
     try {
       console.warn('[EMAIL] Tentative fallback via Brevo API...');
       return await sendWithBrevo(payload);
@@ -227,8 +231,8 @@ async function sendWithFallback(payload, originalError) {
     }
   }
 
-  // Essayer SMTP en fallback si configure
-  if (isSmtpConfigured()) {
+  // Essayer SMTP en fallback si configure (sauf si c'était déjà le provider principal)
+  if (excludeProvider !== 'SMTP' && isSmtpConfigured()) {
     try {
       console.warn('[EMAIL] Tentative fallback via SMTP...');
       return await sendWithSmtp(payload);
@@ -262,7 +266,7 @@ async function sendMail(payload) {
         return await sendWithBrevo(payload);
       } catch (error) {
         console.warn('[EMAIL] Brevo echoue, tentative de fallback:', error.message);
-        return await sendWithFallback(payload, error);
+        return await sendWithFallback(payload, error, 'BREVO');
       }
     }
 
@@ -286,7 +290,7 @@ async function sendMail(payload) {
         return await sendWithAbacus(payload);
       } catch (error) {
         console.warn('[EMAIL] Abacus echoue, tentative de fallback:', error.message);
-        return await sendWithFallback(payload, error);
+        return await sendWithFallback(payload, error, 'ABACUS');
       }
     }
 
