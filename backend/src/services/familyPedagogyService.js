@@ -1,6 +1,10 @@
+const fs = require('fs');
+const path = require('path');
 const { PrismaClient } = require('@prisma/client');
+const { saveBase64File } = require('../utils/fileUtils');
 
 const prisma = new PrismaClient();
+const MAX_JUSTIFICATION_DOCUMENTS = 5;
 // Le suivi pédagogique (absences, notes, devoirs) ne doit être visible en espace
 // famille que pour les inscriptions confirmées administrativement — une inscription
 // PENDING n'est pas encore validée et ne doit rien afficher côté famille.
@@ -95,6 +99,7 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
           },
         },
       },
+      justificationDocuments: { orderBy: { createdAt: 'asc' } },
     },
     orderBy: [{ lesson: { date: 'desc' } }],
   });
@@ -117,6 +122,11 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
     justification: evaluation.justification,
     familyJustification: rawFieldsMap[evaluation.id]?.familyJustification || null,
     justificationStatus: rawFieldsMap[evaluation.id]?.justificationStatus || 'NONE',
+    justificationDocuments: (evaluation.justificationDocuments || []).map((doc) => ({
+      id: doc.id,
+      fileName: doc.fileName,
+      fileUrl: doc.fileUrl,
+    })),
     date: evaluation.lesson?.date || null,
     lessonTitle: evaluation.lesson?.title || null,
     classLabel: formatClassLabel(evaluation.lesson?.class),
@@ -124,7 +134,7 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
   }));
 }
 
-async function submitFamilyJustification({ familyUserId, evaluationId, comment }) {
+async function submitFamilyJustification({ familyUserId, evaluationId, comment, documents }) {
   if (!comment || !comment.trim()) {
     const err = new Error('Le commentaire est requis');
     err.statusCode = 400;
@@ -136,6 +146,7 @@ async function submitFamilyJustification({ familyUserId, evaluationId, comment }
     where: { id: evaluationId },
     include: {
       student: { include: { family: true } },
+      justificationDocuments: true,
     },
   });
   if (!evaluation || evaluation.student?.family?.userId !== familyUserId) {
@@ -149,11 +160,57 @@ async function submitFamilyJustification({ familyUserId, evaluationId, comment }
     throw err;
   }
 
+  const newDocuments = Array.isArray(documents) ? documents.filter((doc) => doc && doc.base64) : [];
+  if (evaluation.justificationDocuments.length + newDocuments.length > MAX_JUSTIFICATION_DOCUMENTS) {
+    const err = new Error(`Vous ne pouvez pas joindre plus de ${MAX_JUSTIFICATION_DOCUMENTS} documents`);
+    err.statusCode = 400;
+    throw err;
+  }
+
   await prisma.$queryRawUnsafe(
     `UPDATE evaluations SET family_justification = $1, justification_status = 'PENDING' WHERE id = $2`,
     comment.trim(),
     evaluationId,
   );
+
+  for (const doc of newDocuments) {
+    const fileUrl = saveBase64File(doc.base64, 'absence-justifications', doc.fileName);
+    await prisma.absenceJustificationDocument.create({
+      data: {
+        evaluationId,
+        fileUrl,
+        fileName: doc.fileName || path.basename(fileUrl),
+      },
+    });
+  }
+
+  return { success: true };
+}
+
+async function deleteJustificationDocument({ familyUserId, evaluationId, documentId }) {
+  const evaluation = await prisma.evaluation.findUnique({
+    where: { id: evaluationId },
+    include: { student: { include: { family: true } } },
+  });
+  if (!evaluation || evaluation.student?.family?.userId !== familyUserId) {
+    const err = new Error('Absence introuvable');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const document = await prisma.absenceJustificationDocument.findUnique({ where: { id: documentId } });
+  if (!document || document.evaluationId !== evaluationId) {
+    const err = new Error('Document introuvable');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  await prisma.absenceJustificationDocument.delete({ where: { id: documentId } });
+
+  const filePath = path.resolve(__dirname, '../../', document.fileUrl.replace(/^\//, ''));
+  if (fs.existsSync(filePath)) {
+    try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+  }
 
   return { success: true };
 }
@@ -301,5 +358,6 @@ module.exports = {
   fetchStudentHomework,
   fetchStudentNotes,
   submitFamilyJustification,
+  deleteJustificationDocument,
   setHomeworkCompletion,
 };

@@ -394,7 +394,7 @@ async function saveAbsences({ teacherUserId, classId, date, lessonId, students }
           <li>Classe : ${classLabel}</li>
           <li>Professeur : ${teacherName}</li>
         </ul>
-        <p>Merci de vous rapprocher de l'administration pour justifier cette absence.</p>
+        <p>Merci de justifier son absence en vous connectant à votre espace famille (onglet absence) ou vous rapprocher de l'administration pour justifier cette absence.</p>
         <p>Cordialement,<br/>Administration AMC</p>
       `;
 

@@ -302,6 +302,19 @@ async function getJustifications(req, res) {
       ORDER BY l.date DESC
     `, statusFilter);
 
+    const evaluationIds = rows.map((r) => r.id);
+    const documents = evaluationIds.length > 0
+      ? await prisma.absenceJustificationDocument.findMany({
+        where: { evaluationId: { in: evaluationIds } },
+        orderBy: { createdAt: 'asc' },
+      })
+      : [];
+    const documentsByEvaluation = {};
+    documents.forEach((doc) => {
+      if (!documentsByEvaluation[doc.evaluationId]) documentsByEvaluation[doc.evaluationId] = [];
+      documentsByEvaluation[doc.evaluationId].push({ id: doc.id, fileName: doc.fileName, fileUrl: doc.fileUrl });
+    });
+
     return res.json({
       justifications: rows.map((r) => ({
         id: r.id,
@@ -314,6 +327,7 @@ async function getJustifications(req, res) {
         familyJustification: r.familyJustification,
         justificationStatus: r.justificationStatus,
         teacherJustification: r.justification,
+        justificationDocuments: documentsByEvaluation[r.id] || [],
       })),
     });
   } catch (error) {
