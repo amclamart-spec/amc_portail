@@ -32,57 +32,57 @@ enum ValidationStatus {
 }
 
 model User {
-  id                   String               @id @default(uuid())
-  email                String               @unique
-  passwordHash         String?              @map("password_hash")
-  googleId             String?              @unique @map("google_id")
-  provider             String?
-  role                 Role                 @default(FAMILLE)
-  validationStatus     ValidationStatus     @default(PENDING) @map("validation_status")
-  isActive             Boolean              @default(true) @map("is_active")
-  firstName            String               @map("first_name")
-  lastName             String               @map("last_name")
-  phone                String?
-  emailVerified        Boolean              @default(false) @map("email_verified")
-  emailVerifyToken     String?              @map("email_verify_token")
-  resetPasswordToken   String?              @map("reset_password_token")
-  resetPasswordExpires DateTime?            @map("reset_password_expires")
-  failedLoginAttempts  Int                  @default(0) @map("failed_login_attempts")
-  lockedUntil          DateTime?            @map("locked_until")
-  refreshToken         String?              @map("refresh_token")
-  lastLogin            DateTime?            @map("last_login")
-  photoUrl             String?              @map("photo_url")
-  createdAt            DateTime             @default(now()) @map("created_at")
-  updatedAt            DateTime             @updatedAt @map("updated_at")
-  family               Family?
-  teacherProfile       Teacher?
-  recordedTransactions PaymentTransaction[] @relation("RecordedByUser")
-  refundsManaged       Refund[]             @relation("RefundManagedBy")
-  refundCodesGenerated RefundSecurityCode[] @relation("RefundCodeGenerator")
-  refundCodesUsed      RefundSecurityCode[] @relation("RefundCodeUser")
-  sentMessages         ChatMessage[]        @relation("ChatMessageSender")
-  receivedMessages     ChatMessage[]        @relation("ChatMessageRecipient")
-  beneficiariesCreated SocialBeneficiary[]  @relation("BeneficiaryCreator")
-  casesCreated         SocialCase[]         @relation("CaseCreator")
-  casesProcessed       SocialCase[]         @relation("CaseProcessor")
-  caseDecisions        CaseDecision[]       @relation("DecisionMaker")
-  stockMovements       StockMovement[]      @relation("StockMover")
-  socialDistributions  Distribution[]       @relation("DistributionOperator")
-  socialCollections    SocialCollection[]   @relation("CollectionOperator")
-  purchases            Purchase[]           @relation("PurchaseOperator")
-  socialBudgets        SocialBudget[]       @relation("BudgetManager")
-  beneficiaryDocuments SocialBeneficiaryDocument[] @relation("BeneficiaryDocumentUploader")
-  volunteerEventsCreated VolunteerEvent[]   @relation("VolunteerEventCreator")
-  volunteerGroupsCreated VolunteerGroup[]   @relation("VolunteerGroupCreator")
-  volunteerGroupMemberships VolunteerGroupMember[] @relation("VolunteerGroupMembership")
+  id                           String                        @id @default(uuid())
+  email                        String                        @unique
+  passwordHash                 String?                       @map("password_hash")
+  googleId                     String?                       @unique @map("google_id")
+  provider                     String?
+  role                         Role                          @default(FAMILLE)
+  validationStatus             ValidationStatus              @default(PENDING) @map("validation_status")
+  isActive                     Boolean                       @default(true) @map("is_active")
+  firstName                    String                        @map("first_name")
+  lastName                     String                        @map("last_name")
+  phone                        String?
+  emailVerified                Boolean                       @default(false) @map("email_verified")
+  emailVerifyToken             String?                       @map("email_verify_token")
+  resetPasswordToken           String?                       @map("reset_password_token")
+  resetPasswordExpires         DateTime?                     @map("reset_password_expires")
+  failedLoginAttempts          Int                           @default(0) @map("failed_login_attempts")
+  lockedUntil                  DateTime?                     @map("locked_until")
+  refreshToken                 String?                       @map("refresh_token")
+  lastLogin                    DateTime?                     @map("last_login")
+  photoUrl                     String?                       @map("photo_url")
+  createdAt                    DateTime                      @default(now()) @map("created_at")
+  updatedAt                    DateTime                      @updatedAt @map("updated_at")
+  family                       Family?
+  teacherProfile               Teacher?
+  recordedTransactions         PaymentTransaction[]          @relation("RecordedByUser")
+  refundsManaged               Refund[]                      @relation("RefundManagedBy")
+  refundCodesGenerated         RefundSecurityCode[]          @relation("RefundCodeGenerator")
+  refundCodesUsed              RefundSecurityCode[]          @relation("RefundCodeUser")
+  sentMessages                 ChatMessage[]                 @relation("ChatMessageSender")
+  receivedMessages             ChatMessage[]                 @relation("ChatMessageRecipient")
+  beneficiariesCreated         SocialBeneficiary[]           @relation("BeneficiaryCreator")
+  casesCreated                 SocialCase[]                  @relation("CaseCreator")
+  casesProcessed               SocialCase[]                  @relation("CaseProcessor")
+  caseDecisions                CaseDecision[]                @relation("DecisionMaker")
+  stockMovements               StockMovement[]               @relation("StockMover")
+  socialDistributions          Distribution[]                @relation("DistributionOperator")
+  socialCollections            SocialCollection[]            @relation("CollectionOperator")
+  purchases                    Purchase[]                    @relation("PurchaseOperator")
+  socialBudgets                SocialBudget[]                @relation("BudgetManager")
+  beneficiaryDocuments         SocialBeneficiaryDocument[]   @relation("BeneficiaryDocumentUploader")
+  volunteerEventsCreated       VolunteerEvent[]              @relation("VolunteerEventCreator")
+  volunteerGroupsCreated       VolunteerGroup[]              @relation("VolunteerGroupCreator")
+  volunteerGroupMemberships    VolunteerGroupMember[]        @relation("VolunteerGroupMembership")
   volunteerEventParticipations VolunteerEventParticipation[] @relation("VolunteerEventParticipant")
-  volunteerHoursValidations VolunteerEventParticipation[] @relation("VolunteerHoursValidator")
-  additionalRoles UserRole[]
-  roleRequestsDecided UserRole[] @relation("UserRoleDecider")
-  employeeProfile Employee?
-  payslipsUploaded Payslip[] @relation("PayslipUploader")
-  leaveRequestsDecided LeaveRequest[] @relation("LeaveDecider")
-  mailLogsSent MailLog[] @relation("MailLogSender")
+  volunteerHoursValidations    VolunteerEventParticipation[] @relation("VolunteerHoursValidator")
+  additionalRoles              UserRole[]
+  roleRequestsDecided          UserRole[]                    @relation("UserRoleDecider")
+  employeeProfile              Employee?
+  payslipsUploaded             Payslip[]                     @relation("PayslipUploader")
+  leaveRequestsDecided         LeaveRequest[]                @relation("LeaveDecider")
+  mailLogsSent                 MailLog[]                     @relation("MailLogSender")
 
   @@map("users")
 }
@@ -318,17 +318,17 @@ model Student {
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
-  family               Family                @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  enrollments          Enrollment[]
-  healthForms          StudentHealthForm[]
-  enrollmentConsents   EnrollmentConsent[]
-  evaluations          Evaluation[]
-  coranSeances         CoranSeance[]
-  coranRevisions       CoranRevision[]
-  coranRepetitions     CoranRepetition[]
-  coranLectures        CoranLecture[]
-  coranBulletinUploads CoranBulletinUpload[]
-  homeworkCompletions  HomeworkCompletion[]
+  family                  Family                            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  enrollments             Enrollment[]
+  healthForms             StudentHealthForm[]
+  enrollmentConsents      EnrollmentConsent[]
+  evaluations             Evaluation[]
+  coranSeances            CoranSeance[]
+  coranRevisions          CoranRevision[]
+  coranRepetitions        CoranRepetition[]
+  coranLectures           CoranLecture[]
+  coranBulletinUploads    CoranBulletinUpload[]
+  homeworkCompletions     HomeworkCompletion[]
   appreciationsRegulieres AppreciationReguliere[]
   notesScolaires          NoteScolaire[]
   bulletinScolaireUploads BulletinScolaireUpload[]
@@ -436,11 +436,11 @@ model Teacher {
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  pole             Pole?             @relation(fields: [poleId], references: [id], onDelete: SetNull)
-  classes          Class[]
-  classTeachers    ClassTeacher[]
-  homeworkMessages HomeworkMessage[]
+  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pole                    Pole?                   @relation(fields: [poleId], references: [id], onDelete: SetNull)
+  classes                 Class[]
+  classTeachers           ClassTeacher[]
+  homeworkMessages        HomeworkMessage[]
   appreciationsRegulieres AppreciationReguliere[]
 
   @@map("teachers")
@@ -473,10 +473,10 @@ model Pole {
   blockNewEnrollments Boolean          @default(false) @map("block_new_enrollments")
   createdAt           DateTime         @default(now()) @map("created_at")
 
-  levels    Level[]
-  classes   Class[]
-  timeSlots TimeSlot[]
-  teachers  Teacher[]
+  levels       Level[]
+  classes      Class[]
+  timeSlots    TimeSlot[]
+  teachers     Teacher[]
   roleRequests UserRole[]
 
   @@map("poles")
@@ -533,19 +533,19 @@ model Class {
   createdAt          DateTime    @default(now()) @map("created_at")
   updatedAt          DateTime    @updatedAt @map("updated_at")
 
-  schoolYear           SchoolYear            @relation(fields: [schoolYearId], references: [id])
-  pole                 Pole?                 @relation(fields: [poleId], references: [id])
-  level                Level                 @relation(fields: [levelId], references: [id])
-  timeSlot             TimeSlot?             @relation(fields: [timeSlotId], references: [id])
-  roomRef              Room?                 @relation(fields: [roomId], references: [id])
-  teacher              Teacher?              @relation(fields: [teacherId], references: [id])
-  enrollments          Enrollment[]
-  lessons              Lesson[]
-  homeworkMessages     HomeworkMessage[]
-  classTimeSlots       ClassTimeSlot[]
-  classTeachers        ClassTeacher[]
-  coranSeances         CoranSeance[]
-  coranBulletinUploads CoranBulletinUpload[]
+  schoolYear              SchoolYear               @relation(fields: [schoolYearId], references: [id])
+  pole                    Pole?                    @relation(fields: [poleId], references: [id])
+  level                   Level                    @relation(fields: [levelId], references: [id])
+  timeSlot                TimeSlot?                @relation(fields: [timeSlotId], references: [id])
+  roomRef                 Room?                    @relation(fields: [roomId], references: [id])
+  teacher                 Teacher?                 @relation(fields: [teacherId], references: [id])
+  enrollments             Enrollment[]
+  lessons                 Lesson[]
+  homeworkMessages        HomeworkMessage[]
+  classTimeSlots          ClassTimeSlot[]
+  classTeachers           ClassTeacher[]
+  coranSeances            CoranSeance[]
+  coranBulletinUploads    CoranBulletinUpload[]
   appreciationsRegulieres AppreciationReguliere[]
   notesScolaires          NoteScolaire[]
   bulletinScolaireUploads BulletinScolaireUpload[]
@@ -607,11 +607,12 @@ model Evaluation {
   justification       String?
   familyJustification String?          @map("family_justification")
   justificationStatus String           @default("NONE") @map("justification_status")
+  absenceReason       String?          @map("absence_reason")
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  lesson  Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  student                Student                        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson                 Lesson                         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   justificationDocuments AbsenceJustificationDocument[]
 
   @@unique([studentId, lessonId])
@@ -1109,7 +1110,7 @@ model SocialBeneficiary {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  creator       User                       @relation("BeneficiaryCreator", fields: [createdBy], references: [id])
+  creator       User                        @relation("BeneficiaryCreator", fields: [createdBy], references: [id])
   cases         SocialCase[]
   distributions Distribution[]
   documents     SocialBeneficiaryDocument[]
@@ -1567,7 +1568,7 @@ model VolunteerEvent {
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
-  creator            User                               @relation("VolunteerEventCreator", fields: [createdBy], references: [id])
+  creator            User                              @relation("VolunteerEventCreator", fields: [createdBy], references: [id])
   groups             VolunteerEventGroup[]
   participations     VolunteerEventParticipation[]
   childRegistrations VolunteerEventChildRegistration[]
@@ -1643,19 +1644,19 @@ enum VolunteerAttendanceStatus {
 // saisie qu'une fois la présence confirmée par le bénévole. hoursSpent est calculé à partir de startTime/endTime.
 // Le responsable consulte, peut corriger les heures puis valide (traçabilité via validatedBy/validatedAt).
 model VolunteerEventParticipation {
-  id               String                     @id @default(uuid())
-  eventId          String                     @map("event_id")
-  volunteerId      String                     @map("volunteer_id")
-  attendanceStatus VolunteerAttendanceStatus  @default(PENDING) @map("attendance_status")
-  startTime        DateTime?                  @map("start_time")
-  endTime          DateTime?                  @map("end_time")
-  hoursSpent       Decimal?                   @map("hours_spent") @db.Decimal(5, 2)
-  hoursNote        String?                    @map("hours_note")
-  hoursValidated   Boolean                    @default(false) @map("hours_validated")
-  validatedBy      String?                    @map("validated_by")
-  validatedAt      DateTime?                  @map("validated_at")
-  createdAt        DateTime                   @default(now()) @map("created_at")
-  updatedAt        DateTime                   @updatedAt @map("updated_at")
+  id               String                    @id @default(uuid())
+  eventId          String                    @map("event_id")
+  volunteerId      String                    @map("volunteer_id")
+  attendanceStatus VolunteerAttendanceStatus @default(PENDING) @map("attendance_status")
+  startTime        DateTime?                 @map("start_time")
+  endTime          DateTime?                 @map("end_time")
+  hoursSpent       Decimal?                  @map("hours_spent") @db.Decimal(5, 2)
+  hoursNote        String?                   @map("hours_note")
+  hoursValidated   Boolean                   @default(false) @map("hours_validated")
+  validatedBy      String?                   @map("validated_by")
+  validatedAt      DateTime?                 @map("validated_at")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
 
   event     VolunteerEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
   volunteer User           @relation("VolunteerEventParticipant", fields: [volunteerId], references: [id], onDelete: Cascade)
@@ -1680,20 +1681,20 @@ enum EmployeeContractType {
 
 // Fiche RH d'un salarié, liée à son compte utilisateur (rôle SALARIE, principal ou additionnel).
 model Employee {
-  id           String                @id @default(uuid())
-  userId       String                @unique @map("user_id")
-  position     String?
-  hireDate     DateTime?             @map("hire_date")
-  contractType EmployeeContractType? @map("contract_type")
-  contractFileUrl  String?           @map("contract_file_url")
-  contractFileName String?           @map("contract_file_name")
-  leaveBalanceDays Float?            @map("leave_balance_days")
-  observations String?
-  createdAt    DateTime              @default(now()) @map("created_at")
-  updatedAt    DateTime              @updatedAt @map("updated_at")
+  id               String                @id @default(uuid())
+  userId           String                @unique @map("user_id")
+  position         String?
+  hireDate         DateTime?             @map("hire_date")
+  contractType     EmployeeContractType? @map("contract_type")
+  contractFileUrl  String?               @map("contract_file_url")
+  contractFileName String?               @map("contract_file_name")
+  leaveBalanceDays Float?                @map("leave_balance_days")
+  observations     String?
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
 
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payslips Payslip[]
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payslips      Payslip[]
   leaveRequests LeaveRequest[]
 
   @@map("employees")
@@ -1757,9 +1758,9 @@ model MailLog {
   id                 String   @id @default(uuid())
   subject            String
   content            String   @db.Text
-  mode               String   // 'CRITERIA' (ciblage par critères, BCC) | 'CLASSIC' (ciblage par type)
+  mode               String // 'CRITERIA' (ciblage par critères, BCC) | 'CLASSIC' (ciblage par type)
   recipientLabel     String?  @map("recipient_label") // ex: "Familles", "Classe : Arabe - Niveau 1", "Toutes les familles inscrites"
-  recipients         Json     // snapshot [{ email, firstName?, lastName?, name? }] pour la vue détail
+  recipients         Json // snapshot [{ email, firstName?, lastName?, name? }] pour la vue détail
   recipientEmails    String[] @map("recipient_emails") // dénormalisé pour filtrer/rechercher par destinataire
   recipientCount     Int      @map("recipient_count")
   successCount       Int      @default(0) @map("success_count")

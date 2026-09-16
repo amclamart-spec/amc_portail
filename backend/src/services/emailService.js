@@ -24,6 +24,18 @@ function normalizeEmail(raw) {
   return emailRegex.test(cleaned) ? cleaned : null;
 }
 
+/**
+ * Découpe un champ "to" (chaîne unique, chaîne multi-destinataires séparés
+ * par virgule/point-virgule, ou tableau) en liste d'adresses valides et
+ * dédupliquées. Utilisé par les providers pour supporter plusieurs
+ * destinataires sans faire échouer normalizeEmail sur la chaîne jointe.
+ */
+function parseRecipients(to) {
+  const rawList = Array.isArray(to) ? to : String(to || '').split(/[,;]/);
+  const emails = rawList.map((entry) => normalizeEmail(entry)).filter(Boolean);
+  return [...new Set(emails)];
+}
+
 // ---------------------------------------------------------------------------
 // Transporteurs SMTP
 // ---------------------------------------------------------------------------
@@ -65,9 +77,9 @@ async function sendWithBrevo({ to, subject, html, text, attachments, bcc }) {
     throw new Error('BREVO_API_KEY manquante pour envoi email Brevo');
   }
 
-  // Normaliser l'email destinataire
-  const recipientEmail = normalizeEmail(to);
-  if (!recipientEmail) {
+  // Normaliser le(s) email(s) destinataire(s) — supporte une liste séparée par virgule/point-virgule
+  const recipientEmails = parseRecipients(to);
+  if (recipientEmails.length === 0) {
     throw new Error(`Adresse email destinataire invalide : "${to}"`);
   }
 
@@ -78,7 +90,7 @@ async function sendWithBrevo({ to, subject, html, text, attachments, bcc }) {
       name: config.email.fromName,
       email: config.email.fromEmail,
     },
-    to: [{ email: recipientEmail }],
+    to: recipientEmails.map((email) => ({ email })),
     subject,
   };
 
@@ -115,7 +127,7 @@ async function sendWithBrevo({ to, subject, html, text, attachments, bcc }) {
       .filter(Boolean);
   }
 
-  console.log(`[EMAIL][BREVO] Envoi a ${recipientEmail} - sujet: ${subject}`);
+  console.log(`[EMAIL][BREVO] Envoi a ${recipientEmails.join(', ')} - sujet: ${subject}`);
 
   const client = new BrevoClient({ apiKey });
   const result = await client.transactionalEmails.sendTransacEmail(brevoBody);
@@ -139,31 +151,37 @@ async function sendWithAbacus({ to, subject, html, text, attachments }) {
     throw new Error('ABACUS_API_KEY manquante pour envoi email Abacus');
   }
 
-  const recipientEmail = normalizeEmail(to);
-  if (!recipientEmail) {
+  const recipientEmails = parseRecipients(to);
+  if (recipientEmails.length === 0) {
     throw new Error(`Adresse email destinataire invalide : "${to}"`);
   }
 
-  const response = await fetch(`${apiBaseUrl}${endpoint}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json; charset=UTF-8',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      email: recipientEmail,
-      subject,
-      body: html || text || '',
-      is_html: Boolean(html),
-    }),
-  });
+  // L'API Abacus n'accepte qu'un seul destinataire par appel : on envoie un appel par adresse.
+  const results = [];
+  for (const recipientEmail of recipientEmails) {
+    const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        email: recipientEmail,
+        subject,
+        body: html || text || '',
+        is_html: Boolean(html),
+      }),
+    });
 
-  if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Abacus email API error ${response.status}: ${details}`);
+    if (!response.ok) {
+      const details = await response.text();
+      throw new Error(`Abacus email API error ${response.status}: ${details}`);
+    }
+
+    results.push(await response.json());
   }
 
-  return response.json();
+  return results.length === 1 ? results[0] : results;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,21 +189,17 @@ async function sendWithAbacus({ to, subject, html, text, attachments }) {
 // ---------------------------------------------------------------------------
 
 async function sendWithSmtp({ to, subject, html, text, attachments, bcc }) {
-  const recipientEmail = normalizeEmail(to);
-  if (!recipientEmail) {
+  const recipientEmails = parseRecipients(to);
+  if (recipientEmails.length === 0) {
     throw new Error(`Adresse email destinataire invalide : "${to}"`);
   }
 
   const mailOptions = {
     from: `"${config.email.fromName}" <${config.email.fromEmail}>`,
-    to: recipientEmail,
+    to: recipientEmails.join(', '),
     subject,
     html,
     text,
-    encoding: 'utf-8',
-    headers: {
-      'Content-Type': 'text/html; charset=UTF-8',
-    },
   };
 
   if (bcc && bcc.length > 0) {
@@ -219,8 +233,18 @@ function isBrevoConfigured() {
  * l'email était en réalité parti côté fournisseur, ex. timeout réseau en lisant
  * la réponse), le retenter en "fallback" envoie le même email une deuxième fois
  * au même destinataire — c'était la cause des envois en double du mailing.
+ *
+ * Basculer vers un AUTRE provider n'élimine pas ce risque (le provider principal
+ * peut très bien avoir délivré le mail malgré l'erreur locale). Les appelants
+ * pour qui un doublon serait plus grave qu'un échec silencieux (ex. mailing en
+ * masse) doivent donc passer `allowFallback: false` dans le payload : on ne
+ * retente alors aucun autre provider, on remonte simplement l'erreur d'origine.
  */
 async function sendWithFallback(payload, originalError, excludeProvider = null) {
+  if (payload.allowFallback === false) {
+    throw originalError;
+  }
+
   // Essayer Brevo API en fallback si configure (sauf si c'était déjà le provider principal)
   if (excludeProvider !== 'BREVO' && isBrevoConfigured()) {
     try {
