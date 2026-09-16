@@ -267,6 +267,20 @@ async function sendMailingBcc(req, res) {
       return res.status(400).json({ error: 'Au moins un destinataire BCC requis' });
     }
 
+    // Dédupliquer (insensible à la casse/espaces) avant envoi ET avant calcul du
+    // compteur/historique, pour qu'un même destinataire ne reçoive le mail qu'une
+    // seule fois et que le suivi reflète exactement ce qui a été envoyé.
+    const seenEmails = new Set();
+    bccEmails = bccEmails.filter((email) => {
+      const normalized = (email || '').trim().toLowerCase();
+      if (!normalized || seenEmails.has(normalized)) return false;
+      seenEmails.add(normalized);
+      return true;
+    });
+    if (bccEmails.length === 0) {
+      return res.status(400).json({ error: 'Au moins un destinataire BCC requis' });
+    }
+
     let attachmentInfo = null;
     if (attachmentFile) {
       attachmentInfo = { filename: attachmentFile.originalname, path: attachmentFile.path, mimetype: attachmentFile.mimetype };

@@ -86,9 +86,9 @@ async function putHomeworkCompletion(req, res) {
 async function postPedagogyJustification(req, res) {
   try {
     const { evaluationId } = req.params;
-    const { comment, documents } = req.body;
-    await submitFamilyJustification({ familyUserId: req.user.id, evaluationId, comment, documents });
-    return res.json({ success: true });
+    const { comment, documents, reason } = req.body;
+    const result = await submitFamilyJustification({ familyUserId: req.user.id, evaluationId, comment, documents, reason });
+    return res.json({ success: true, ...result });
   } catch (error) {
     console.error('Erreur postPedagogyJustification:', error);
     const status = error.statusCode || (error.message.includes('introuvable') ? 404 : 500);

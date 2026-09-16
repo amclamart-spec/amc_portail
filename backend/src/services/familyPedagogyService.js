@@ -109,7 +109,7 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
   if (ids.length > 0) {
     const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
     const rawRows = await prisma.$queryRawUnsafe(
-      `SELECT id, family_justification as "familyJustification", justification_status as "justificationStatus" FROM evaluations WHERE id IN (${placeholders})`,
+      `SELECT id, family_justification as "familyJustification", justification_status as "justificationStatus", absence_reason as "absenceReason" FROM evaluations WHERE id IN (${placeholders})`,
       ...ids,
     );
     rawFieldsMap = Object.fromEntries(rawRows.map((r) => [r.id, r]));
@@ -122,6 +122,7 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
     justification: evaluation.justification,
     familyJustification: rawFieldsMap[evaluation.id]?.familyJustification || null,
     justificationStatus: rawFieldsMap[evaluation.id]?.justificationStatus || 'NONE',
+    absenceReason: rawFieldsMap[evaluation.id]?.absenceReason || null,
     justificationDocuments: (evaluation.justificationDocuments || []).map((doc) => ({
       id: doc.id,
       fileName: doc.fileName,
@@ -130,13 +131,25 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
     date: evaluation.lesson?.date || null,
     lessonTitle: evaluation.lesson?.title || null,
     classLabel: formatClassLabel(evaluation.lesson?.class),
+    poleName: evaluation.lesson?.class?.level?.pole?.name || null,
     status: evaluation.status,
   }));
 }
 
-async function submitFamilyJustification({ familyUserId, evaluationId, comment, documents }) {
+const ABSENCE_REASONS = ['MALADE', 'VOYAGE', 'AUTRE'];
+// Pôle où un document est exigé pour les motifs Malade/Voyage, avec justification
+// automatique dès qu'un document est fourni.
+const AUTO_VALIDATE_POLE = 'coran';
+const AUTO_VALIDATE_REASONS = ['MALADE', 'VOYAGE'];
+
+async function submitFamilyJustification({ familyUserId, evaluationId, comment, documents, reason }) {
   if (!comment || !comment.trim()) {
     const err = new Error('Le commentaire est requis');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!ABSENCE_REASONS.includes(reason)) {
+    const err = new Error('Le motif d\'absence est requis (Malade, Voyage ou Autre)');
     err.statusCode = 400;
     throw err;
   }
@@ -147,6 +160,7 @@ async function submitFamilyJustification({ familyUserId, evaluationId, comment, 
     include: {
       student: { include: { family: true } },
       justificationDocuments: true,
+      lesson: { include: { class: { include: { level: { include: { pole: true } } } } } },
     },
   });
   if (!evaluation || evaluation.student?.family?.userId !== familyUserId) {
@@ -167,9 +181,25 @@ async function submitFamilyJustification({ familyUserId, evaluationId, comment, 
     throw err;
   }
 
+  const poleName = (evaluation.lesson?.class?.level?.pole?.name || '').trim().toLowerCase();
+  const totalDocuments = evaluation.justificationDocuments.length + newDocuments.length;
+  const requiresDocument = poleName === AUTO_VALIDATE_POLE && AUTO_VALIDATE_REASONS.includes(reason);
+
+  if (requiresDocument && totalDocuments === 0) {
+    const err = new Error('Un document justificatif est requis pour ce motif d\'absence');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Coran + Malade/Voyage + document fourni → justification automatique.
+  // Tous les autres cas restent en attente de validation par le responsable de pôle / l'administration.
+  const justificationStatus = requiresDocument && totalDocuments > 0 ? 'VALIDATED' : 'PENDING';
+
   await prisma.$queryRawUnsafe(
-    `UPDATE evaluations SET family_justification = $1, justification_status = 'PENDING' WHERE id = $2`,
+    `UPDATE evaluations SET family_justification = $1, justification_status = $2, absence_reason = $3 WHERE id = $4`,
     comment.trim(),
+    justificationStatus,
+    reason,
     evaluationId,
   );
 
@@ -184,7 +214,7 @@ async function submitFamilyJustification({ familyUserId, evaluationId, comment, 
     });
   }
 
-  return { success: true };
+  return { justificationStatus };
 }
 
 async function deleteJustificationDocument({ familyUserId, evaluationId, documentId }) {
