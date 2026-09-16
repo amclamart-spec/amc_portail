@@ -951,7 +951,10 @@ async function findEnrollmentAndPayment(enrollmentId) {
   });
 
   const payment = payments.find((p) => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(cleanedEnrollmentId))
-    || payments[0] || null;
+    // Repli uniquement sur un paiement "legacy" non rattaché à une inscription précise (sans metadata.enrollmentIds),
+    // jamais sur un paiement explicitement rattaché à une AUTRE inscription de la famille.
+    || payments.find((p) => !Array.isArray(p.metadata?.enrollmentIds) || p.metadata.enrollmentIds.length === 0)
+    || null;
 
   const attachedPayments = payments.filter((p) => Array.isArray(p.metadata?.enrollmentIds) && p.metadata.enrollmentIds.includes(cleanedEnrollmentId));
 

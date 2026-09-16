@@ -284,8 +284,15 @@ async function sendBulkMail({
   try {
     console.log(`[MAIL] Début envoi: type=${recipientType}, subject="${subject}"`);
 
-    // Récupérer les destinataires
-    const recipients = await getRecipients(recipientType, poleId, levelId, classId);
+    // Récupérer les destinataires (dédupliqué par email, au cas où — garantit un seul envoi par adresse)
+    const rawRecipients = await getRecipients(recipientType, poleId, levelId, classId);
+    const seenEmails = new Set();
+    const recipients = rawRecipients.filter((r) => {
+      const email = (r.email || '').trim().toLowerCase();
+      if (!email || seenEmails.has(email)) return false;
+      seenEmails.add(email);
+      return true;
+    });
     console.log(`[MAIL] ${recipients.length} destinataires trouvés`);
 
     if (recipients.length === 0) {
@@ -313,6 +320,10 @@ async function sendBulkMail({
           to: recipient.email,
           subject,
           html: htmlContent,
+          // Un envoi en masse ne doit jamais retenter un autre provider en cas
+          // d'erreur ambiguë : un doublon reçu par un destinataire est pire
+          // qu'un échec marqué "à réessayer" (voir sendWithFallback).
+          allowFallback: false,
         };
 
         // Ajouter la pièce jointe si présente
@@ -508,18 +519,29 @@ async function getRecipientsByCriteria({ population, objet, statut, classIds }) 
 async function sendMailBcc({ bccEmails, subject, content, attachmentInfo }) {
   if (!bccEmails || bccEmails.length === 0) throw new Error('Aucun destinataire');
 
+  // Dédupliquer (insensible à la casse/espaces) : la liste peut venir d'une saisie libre
+  // (textarea) où le même destinataire peut apparaître plusieurs fois.
+  const seenEmails = new Set();
+  const uniqueEmails = bccEmails.filter((email) => {
+    const normalized = (email || '').trim().toLowerCase();
+    if (!normalized || seenEmails.has(normalized)) return false;
+    seenEmails.add(normalized);
+    return true;
+  });
+
   const htmlContent = renderMailHtml({ subject, content, attachmentInfo });
 
   let successCount = 0;
   let failedCount = 0;
   const errors = [];
 
-  for (const email of bccEmails) {
+  for (const email of uniqueEmails) {
     try {
       const mailPayload = {
         to: email,
         subject,
         html: htmlContent,
+        allowFallback: false,
       };
       if (attachmentInfo) {
         mailPayload.attachments = [{ filename: attachmentInfo.filename, path: attachmentInfo.path }];

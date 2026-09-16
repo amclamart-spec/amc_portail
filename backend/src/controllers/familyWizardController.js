@@ -1127,6 +1127,8 @@ async function completeExistingFamilyRegistration(req, res) {
 
               poleName: cls.level.pole.name,
 
+              levelId: cls.level?.id || '',
+
               levelCode: cls.level.code,
 
               applyEnrollmentFee: cls.applyEnrollmentFee !== false,
@@ -1148,6 +1150,8 @@ async function completeExistingFamilyRegistration(req, res) {
               poleId: level.pole?.id || '',
 
               poleName: level.pole?.name || '',
+
+              levelId: level.id,
 
               levelCode: level.code,
 
@@ -1172,6 +1176,8 @@ async function completeExistingFamilyRegistration(req, res) {
               poleId: pole.id,
 
               poleName: pole.name,
+
+              levelId: firstLevel?.id || '',
 
               levelCode: firstLevel?.code || '',
 

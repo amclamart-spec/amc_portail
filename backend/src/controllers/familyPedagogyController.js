@@ -4,6 +4,7 @@ const {
   fetchStudentHomework,
   fetchStudentNotes,
   submitFamilyJustification,
+  deleteJustificationDocument,
   setHomeworkCompletion,
 } = require('../services/familyPedagogyService');
 
@@ -85,11 +86,23 @@ async function putHomeworkCompletion(req, res) {
 async function postPedagogyJustification(req, res) {
   try {
     const { evaluationId } = req.params;
-    const { comment } = req.body;
-    await submitFamilyJustification({ familyUserId: req.user.id, evaluationId, comment });
-    return res.json({ success: true });
+    const { comment, documents, reason } = req.body;
+    const result = await submitFamilyJustification({ familyUserId: req.user.id, evaluationId, comment, documents, reason });
+    return res.json({ success: true, ...result });
   } catch (error) {
     console.error('Erreur postPedagogyJustification:', error);
+    const status = error.statusCode || (error.message.includes('introuvable') ? 404 : 500);
+    return res.status(status).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function deletePedagogyJustificationDocument(req, res) {
+  try {
+    const { evaluationId, documentId } = req.params;
+    await deleteJustificationDocument({ familyUserId: req.user.id, evaluationId, documentId });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Erreur deletePedagogyJustificationDocument:', error);
     const status = error.statusCode || (error.message.includes('introuvable') ? 404 : 500);
     return res.status(status).json({ error: error.message || 'Erreur serveur' });
   }
@@ -101,5 +114,6 @@ module.exports = {
   getPedagogyHomework,
   getPedagogyNotes,
   postPedagogyJustification,
+  deletePedagogyJustificationDocument,
   putHomeworkCompletion,
 };

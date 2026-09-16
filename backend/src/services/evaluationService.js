@@ -351,7 +351,6 @@ async function saveAbsences({ teacherUserId, classId, date, lessonId, students }
         family: {
           include: {
             user: true,
-            parents: true,
           },
         },
       },
@@ -366,17 +365,14 @@ async function saveAbsences({ teacherUserId, classId, date, lessonId, students }
     });
 
     const lessonDate = new Date(lesson.date).toLocaleDateString('fr-FR');
-    const classLabel = `${classRecord.pole?.name || ''}${classRecord.pole ? ' - ' : ''}${classRecord.level?.name || ''}`;
+    const classLabel = `${classRecord.level?.pole?.name || ''}${classRecord.level?.pole ? ' - ' : ''}${classRecord.level?.name || ''}`;
     const teacherName = `${teacherProfile.firstName || ''} ${teacherProfile.lastName || ''}`.trim();
 
     await Promise.all(Array.from(absencesByFamily.values()).map(async ({ family, students: familyStudents }) => {
-      const recipientEmails = new Set();
-      if (family.user?.email) recipientEmails.add(family.user.email);
-      family.parents?.forEach((parent) => {
-        if (parent.email) recipientEmails.add(parent.email);
-      });
+      // N'envoyer qu'à l'email principal du compte famille, pas à chaque parent renseigné.
+      const primaryEmail = family.user?.email;
 
-      if (recipientEmails.size === 0) return;
+      if (!primaryEmail) return;
 
       const studentListHtml = familyStudents
         .map((student) => `<li><strong>${student.firstName} ${student.lastName}</strong> — Classe : ${classLabel}</li>`)
@@ -394,12 +390,12 @@ async function saveAbsences({ teacherUserId, classId, date, lessonId, students }
           <li>Classe : ${classLabel}</li>
           <li>Professeur : ${teacherName}</li>
         </ul>
-        <p>Merci de vous rapprocher de l'administration pour justifier cette absence.</p>
+        <p>Merci de justifier son absence en vous connectant à votre espace famille (onglet absence) ou vous rapprocher de l'administration pour justifier cette absence.</p>
         <p>Cordialement,<br/>Administration AMC</p>
       `;
 
       await sendMail({
-        to: Array.from(recipientEmails).join(', '),
+        to: primaryEmail,
         subject,
         html: contentHtml,
       });
