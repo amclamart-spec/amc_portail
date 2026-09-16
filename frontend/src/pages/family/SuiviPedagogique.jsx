@@ -169,15 +169,30 @@ function fileToBase64(file) {
 }
 
 /* ─── AbsenceCard ───────────────────────────────────────────────────────────── */
+const REASON_OPTIONS = [
+  { value: 'MALADE', label: 'Malade' },
+  { value: 'VOYAGE',  label: 'Voyage' },
+  { value: 'AUTRE',   label: 'Autre' },
+];
+// Pôle où un document devient obligatoire pour les motifs Malade/Voyage, avec
+// justification automatique dès qu'un document est joint (voir aussi le backend,
+// familyPedagogyService.js, qui applique la même règle côté serveur).
+const AUTO_VALIDATE_POLE = 'coran';
+const AUTO_VALIDATE_REASONS = ['MALADE', 'VOYAGE'];
+
 function AbsenceCard({ absence, onJustified }) {
   const [open, setOpen]       = useState(false);
   const [comment, setComment] = useState('');
+  const [reason, setReason]   = useState('');
   const [saving, setSaving]   = useState(false);
   const [pendingFiles, setPendingFiles] = useState([]); // [{ fileName, base64 }]
   const [deletingDocId, setDeletingDocId] = useState(null);
 
   const documents = absence.justificationDocuments || [];
   const canJustify = absence.justificationStatus === 'NONE' || absence.justificationStatus === 'REJECTED';
+  const isCoran = (absence.poleName || '').trim().toLowerCase() === AUTO_VALIDATE_POLE;
+  const documentRequired = isCoran && AUTO_VALIDATE_REASONS.includes(reason);
+  const hasDocument = documents.length + pendingFiles.length > 0;
   const borderColor = absence.justificationStatus === 'VALIDATED'
     ? '#16A34A'
     : absence.justificationStatus === 'PENDING'
@@ -222,12 +237,17 @@ function AbsenceCard({ absence, onJustified }) {
 
   const handleSubmit = async () => {
     if (!comment.trim()) { toast.error('Veuillez saisir un commentaire'); return; }
+    if (!reason) { toast.error('Veuillez sélectionner un motif d\'absence'); return; }
+    if (documentRequired && !hasDocument) { toast.error('Un document justificatif est requis pour ce motif'); return; }
     setSaving(true);
     try {
-      await api.post(`/family/pedagogy/absences/${absence.id}/justify`, { comment, documents: pendingFiles });
-      toast.success('Justificatif envoyé — en attente de validation');
+      const { data } = await api.post(`/family/pedagogy/absences/${absence.id}/justify`, { comment, reason, documents: pendingFiles });
+      toast.success(data?.justificationStatus === 'VALIDATED'
+        ? 'Absence justifiée automatiquement ✓'
+        : 'Justificatif envoyé — en attente de validation');
       setOpen(false);
       setComment('');
+      setReason('');
       setPendingFiles([]);
       if (typeof onJustified === 'function') onJustified();
     } catch (e) {
@@ -263,7 +283,12 @@ function AbsenceCard({ absence, onJustified }) {
       {/* Justificatif famille déjà soumis */}
       {absence.familyJustification && (
         <div className="sp-ab-justif">
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#6B7280', marginBottom: 4 }}>Votre justificatif</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#6B7280', marginBottom: 4 }}>
+            Votre justificatif
+            {absence.absenceReason && (
+              <span style={{ fontWeight: 400 }}> — {REASON_OPTIONS.find((o) => o.value === absence.absenceReason)?.label || absence.absenceReason}</span>
+            )}
+          </div>
           <div style={{ fontSize: 13, color: 'var(--amc-text)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
             {absence.familyJustification}
           </div>
@@ -309,6 +334,21 @@ function AbsenceCard({ absence, onJustified }) {
           <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>
             Motif d'absence
           </label>
+          <select
+            className="form-control"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            style={{ marginBottom: 8, fontSize: 13 }}
+          >
+            <option value="">Sélectionner un motif…</option>
+            {REASON_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+
+          <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>
+            Commentaire
+          </label>
           <textarea
             className="form-control"
             rows={3}
@@ -319,7 +359,7 @@ function AbsenceCard({ absence, onJustified }) {
           />
 
           <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>
-            Documents (optionnel)
+            Documents {documentRequired ? '(obligatoire pour ce motif)' : '(optionnel)'}
           </label>
           <input
             type="file"
@@ -328,6 +368,11 @@ function AbsenceCard({ absence, onJustified }) {
             onChange={handleFilesSelected}
             style={{ marginBottom: 8, fontSize: 13 }}
           />
+          {documentRequired && !hasDocument && (
+            <div style={{ marginBottom: 8, fontSize: 12, color: '#DC2626' }}>
+              Un document justificatif est requis pour ce motif — l'absence sera automatiquement justifiée dès son ajout.
+            </div>
+          )}
           {pendingFiles.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
               {pendingFiles.map((file, index) => (
@@ -350,7 +395,7 @@ function AbsenceCard({ absence, onJustified }) {
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button type="button" className="btn btn-outline btn-sm" onClick={() => setOpen(false)}>Annuler</button>
-            <button type="button" className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={saving}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={saving || !comment.trim() || !reason || (documentRequired && !hasDocument)}>
               {saving ? 'Envoi…' : 'Envoyer'}
             </button>
           </div>

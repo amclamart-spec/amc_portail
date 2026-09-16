@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
-import { FiCheck, FiX } from 'react-icons/fi';
+import { FiCheck, FiX, FiSearch } from 'react-icons/fi';
 
 const STATUS_OPTIONS = [
   { value: 'PENDING',   label: 'En attente',  badge: 'badge-warning' },
   { value: 'VALIDATED', label: 'Validé',       badge: 'badge-success' },
   { value: 'REJECTED',  label: 'Refusé',       badge: 'badge-danger' },
 ];
+
+const REASON_LABELS = { MALADE: 'Malade', VOYAGE: 'Voyage', AUTRE: 'Autre' };
 
 function fmtDate(d) {
   if (!d) return '-';
@@ -21,13 +23,14 @@ function StatusBadge({ status }) {
 
 export default function AdminJustificatifs() {
   const [filter, setFilter]                 = useState('PENDING');
+  const [studentName, setStudentName]       = useState('');
   const [justifications, setJustifications] = useState([]);
   const [loading, setLoading]               = useState(false);
 
-  const load = async (s = filter) => {
+  const load = async (s = filter, name = studentName) => {
     setLoading(true);
     try {
-      const { data } = await api.get('/admin/absences/justifications', { params: { status: s } });
+      const { data } = await api.get('/admin/absences/justifications', { params: { status: s, studentName: name || undefined } });
       setJustifications(data.justifications || []);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Impossible de charger les justificatifs');
@@ -36,13 +39,20 @@ export default function AdminJustificatifs() {
     }
   };
 
-  useEffect(() => { load(filter); }, [filter]);
+  useEffect(() => { load(filter, studentName); }, [filter]);
+
+  // Recherche par nom avec un léger debounce pour éviter une requête à chaque frappe
+  useEffect(() => {
+    const timeout = setTimeout(() => load(filter, studentName), 300);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentName]);
 
   const handleDecision = async (evaluationId, status) => {
     try {
       await api.patch(`/admin/absences/${evaluationId}/justify`, { status });
       toast.success(status === 'VALIDATED' ? 'Justificatif validé' : 'Justificatif refusé');
-      load(filter);
+      load(filter, studentName);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Erreur lors de la mise à jour');
     }
@@ -53,17 +63,30 @@ export default function AdminJustificatifs() {
       <h2 style={{ color: 'var(--amc-primary)' }}>Justificatifs d'absences</h2>
 
       <div className="card" style={{ marginBottom: 16, padding: 12 }}>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {STATUS_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className={`btn btn-sm ${filter === opt.value ? 'btn-primary' : 'btn-outline'}`}
-              onClick={() => setFilter(opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {STATUS_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`btn btn-sm ${filter === opt.value ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setFilter(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ position: 'relative', minWidth: 220 }}>
+            <FiSearch style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#6B7280' }} />
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Rechercher un élève…"
+              value={studentName}
+              onChange={(e) => setStudentName(e.target.value)}
+              style={{ paddingLeft: 32 }}
+            />
+          </div>
         </div>
       </div>
 
@@ -83,6 +106,7 @@ export default function AdminJustificatifs() {
                   <th>Élève</th>
                   <th>Famille</th>
                   <th>Cours</th>
+                  <th>Motif</th>
                   <th>Justificatif famille</th>
                   <th>Documents</th>
                   <th>Note professeur</th>
@@ -97,6 +121,7 @@ export default function AdminJustificatifs() {
                     <td style={{ fontWeight: 600 }}>{j.studentName}</td>
                     <td>{j.familyName}</td>
                     <td>{j.classLabel}</td>
+                    <td>{REASON_LABELS[j.absenceReason] || '-'}</td>
                     <td style={{ maxWidth: 280 }}>
                       <div style={{ fontSize: 13, color: 'var(--amc-text)', whiteSpace: 'pre-wrap' }}>
                         {j.familyJustification || '-'}
