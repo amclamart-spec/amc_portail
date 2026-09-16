@@ -211,6 +211,7 @@ function buildResponsablePoleNav(poleLabel) {
       title: 'Pédagogie',
       items: [
         { path: '/responsable/suivi-pedagogique', icon: FiBookOpen, label: 'Suivi pédagogique' },
+        { path: '/admin/justificatifs', icon: FiClipboard, label: 'Suivi des absences' },
         { path: '/admin/classes',    icon: FiBookOpen,  label: 'Classes' },
         { path: '/admin/niveaux',    icon: FiSettings,  label: 'Niveaux' },
         { path: '/admin/professeurs',icon: FiUser,      label: 'Professeurs' },

@@ -427,9 +427,6 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
   const handleStatusToggle = (studentId, status) => {
     setRows((prev) => prev.map((r) => r.studentId === studentId ? { ...r, status } : r));
   };
-  const handleJustificationChange = (studentId, justification) => {
-    setRows((prev) => prev.map((r) => r.studentId === studentId ? { ...r, justification } : r));
-  };
   const handleGradeChange = (studentId, grade) => {
     setRows((prev) => prev.map((r) => r.studentId === studentId ? { ...r, grade: Math.min(10, Math.max(0, Number(grade))) } : r));
   };
@@ -739,15 +736,6 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                           <button className={`ep-toggle-btn${st === 'missing' ? ' absent' : ''}`} onClick={() => handleStatusToggle(r.studentId, 'missing')}>✗ A</button>
                           <button className={`ep-toggle-btn${st === 'late' ? ' retard' : ''}`} onClick={() => handleStatusToggle(r.studentId, 'late')}>⏱ R</button>
                         </div>
-                        {st === 'missing' && (
-                          <input
-                            className="form-control"
-                            style={{ maxWidth: 180, fontSize: 12, padding: '4px 8px' }}
-                            placeholder="Justification"
-                            value={r.justification || ''}
-                            onChange={(e) => handleJustificationChange(r.studentId, e.target.value)}
-                          />
-                        )}
                       </div>
                     );
                   })}
