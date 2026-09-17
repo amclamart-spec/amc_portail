@@ -30,13 +30,34 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * Pour une requête `responseType: 'blob'` (téléchargement de fichier), une réponse
+ * d'erreur JSON du serveur arrive quand même sous forme de Blob (axios respecte le
+ * responseType demandé même en cas d'échec) — `error.response.data.code` est alors
+ * `undefined` et le refresh de token ci-dessous ne se déclenche jamais. On relit le
+ * Blob en JSON pour retrouver le code d'erreur dans ce cas.
+ */
+async function extractErrorCode(error) {
+  const data = error.response?.data;
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      return JSON.parse(text)?.code;
+    } catch {
+      return undefined;
+    }
+  }
+  return data?.code;
+}
+
 // Intercepteur réponse : refresh token si 401
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    const errorCode = error.response?.status === 401 ? await extractErrorCode(error) : undefined;
 
-    if (error.response?.status === 401 && error.response?.data?.code === 'TOKEN_EXPIRED' && !originalRequest._retry) {
+    if (error.response?.status === 401 && errorCode === 'TOKEN_EXPIRED' && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
         const refreshToken = localStorage.getItem('amc_refresh_token');

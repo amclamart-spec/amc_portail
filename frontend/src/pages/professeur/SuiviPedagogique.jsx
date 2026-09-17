@@ -500,8 +500,16 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
     try {
       const response = await api.get(`/absences/history/${lessonId}/export`, { responseType: 'blob' });
       const href = URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-      const a = Object.assign(document.createElement('a'), { href, download: `presence-${lessonTitle || lessonId}.pdf` });
-      a.click(); URL.revokeObjectURL(href);
+      // Le titre d'une leçon peut contenir des "/" (ex. "Absences 10/09/2026" pour
+      // une saisie hors cours) — invalide dans un nom de fichier téléchargé.
+      const safeName = (lessonTitle || lessonId).replace(/[\\/:*?"<>|]+/g, '-').trim() || lessonId;
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `presence-${safeName}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
     } catch { toast.error('Impossible de télécharger le PDF'); }
   };
 
