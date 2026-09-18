@@ -52,6 +52,7 @@ const navSectionsByRole = {
       items: [
         { path: '/admin/niveaux', icon: FiSettings, label: 'Pôles et Niveaux' },
         { path: '/admin/classes', icon: FiBookOpen, label: 'Classes' },
+        { path: '/admin/suivi-pedagogique', icon: FiBookOpen, label: 'Suivi pédagogique' },
         { path: '/admin/professeurs', icon: FiUser, label: 'Professeurs' },
         { path: '/admin/salles', icon: FiHome, label: 'Salles' },
         { path: '/admin/creneaux', icon: FiCalendar, label: 'Créneaux' },

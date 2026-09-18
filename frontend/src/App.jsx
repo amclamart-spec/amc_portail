@@ -22,6 +22,7 @@ import AdminRooms from './pages/admin/Rooms';
 import AdminTimeslots from './pages/admin/Timeslots';
 import AdminLevels from './pages/admin/Levels';
 import AdminClasses from './pages/admin/Classes';
+import AdminSuiviPedagogique from './pages/admin/SuiviPedagogique';
 import AdminClassDetails from './pages/admin/ClassDetails';
 import AdminTeachers from './pages/admin/Teachers';
 import AdminExports from './pages/admin/Exports';
@@ -123,6 +124,7 @@ function App() {
       <Route path="/admin/niveaux" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminLevels /></Layout></PrivateRoute>} />
       <Route path="/admin/classes" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminClasses /></Layout></PrivateRoute>} />
       <Route path="/admin/classes/:id" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminClassDetails /></Layout></PrivateRoute>} />
+      <Route path="/admin/suivi-pedagogique" element={<PrivateRoute roles={['ADMIN']}><Layout><AdminSuiviPedagogique /></Layout></PrivateRoute>} />
       <Route path="/admin/professeurs" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminTeachers /></Layout></PrivateRoute>} />
       <Route path="/admin/exports" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminExports /></Layout></PrivateRoute>} />
       <Route path="/admin/planning" element={<PrivateRoute roles={ADMIN_ROLES}><Layout><AdminPlanning /></Layout></PrivateRoute>} />

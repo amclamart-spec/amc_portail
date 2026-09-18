@@ -12,7 +12,7 @@ const {
 } = require('../controllers/evaluationController');
 
 const router = Router();
-router.use(authenticate, authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher);
+router.use(authenticate, authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher);
 
 router.get('/', getEvaluations);
 router.get('/stats', getEvaluationStats);

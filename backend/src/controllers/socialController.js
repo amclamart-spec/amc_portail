@@ -277,7 +277,7 @@ async function createOperator(req, res) {
     const { firstName, lastName, email, phone } = req.body;
     if (!firstName || !lastName || !email) return res.status(400).json({ error: 'Prénom, nom et email sont requis' });
 
-    const existing = await prisma.user.findUnique({ where: { email }, include: { additionalRoles: { select: { role: true, status: true } } } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, include: { additionalRoles: { select: { role: true, status: true } } } });
 
     if (existing) {
       const alreadyOperator = existing.role === 'OPERATEUR_SOCIAL'
@@ -341,8 +341,8 @@ async function updateOperatorDetails(req, res) {
     const user = await prisma.user.findFirst({ where: { id, ...isOperatorWhere } });
     if (!user) return res.status(404).json({ error: 'Opérateur introuvable' });
 
-    if (email && email !== user.email) {
-      const existing = await prisma.user.findUnique({ where: { email } });
+    if (email && email.toLowerCase() !== user.email.toLowerCase()) {
+      const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
       if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
     }
 

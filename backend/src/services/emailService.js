@@ -5,8 +5,6 @@ const { BrevoClient } = require('@getbrevo/brevo');
 const config = require('../config');
 
 let transporter;
-let cachedLogoDataUri = null;
-let cachedPartnerLogoDataUri = null;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -338,38 +336,17 @@ async function sendMail(payload) {
 // Templates HTML
 // ---------------------------------------------------------------------------
 
-function getEmbeddedLogoDataUri(fileName, fallbackColor = '#213B88', fallbackText = 'AMC') {
-  const cache = fileName === 'amc_logo.png' ? cachedLogoDataUri : cachedPartnerLogoDataUri;
-  if (cache) return cache;
-
-  const possiblePaths = [
-    path.join(__dirname, '..', '..', '..', 'frontend', 'public', fileName),
-    path.join(process.cwd(), 'frontend', 'public', fileName),
-    path.join(process.cwd(), '..', 'frontend', 'public', fileName),
-    path.join(__dirname, '..', '..', 'uploads', fileName),
-  ];
-
-  for (const filePath of possiblePaths) {
-    if (fs.existsSync(filePath)) {
-      const buffer = fs.readFileSync(filePath);
-      const dataUri = `data:image/${path.extname(fileName).slice(1)};base64,${buffer.toString('base64')}`;
-      if (fileName === 'amc_logo.png') cachedLogoDataUri = dataUri;
-      else cachedPartnerLogoDataUri = dataUri;
-      return dataUri;
-    }
-  }
-
-  const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><rect width="100%" height="100%" fill="${fallbackColor}"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#FFF" font-family="Arial, sans-serif" font-size="24">${fallbackText}</text></svg>`;
-  const dataUri = `data:image/svg+xml;base64,${Buffer.from(placeholderSvg).toString('base64')}`;
-  if (fileName === 'amc_logo.png') cachedLogoDataUri = dataUri;
-  else cachedPartnerLogoDataUri = dataUri;
-  return dataUri;
-}
-
+// Les logos sont référencés par URL publique (servis en statique par le frontend,
+// cf. frontend/public/) et non plus embarqués en base64 dans le HTML : les images
+// data: URI gonflent le message au point de dépasser le seuil de troncature de
+// Gmail (~102 Ko, "Voir la totalité du message") et sont mal supportées par de
+// nombreux clients mail (Outlook en particulier).
 function getEmailLogoUrls() {
-  const logoUrl = getEmbeddedLogoDataUri('amc_logo.png');
-  const partnerLogoUrl = getEmbeddedLogoDataUri('amc_logo_partner.png', '#64748b', 'PARTAGE');
-  return { logoUrl, partnerLogoUrl };
+  const base = (config.frontendUrl || '').replace(/\/$/, '');
+  return {
+    logoUrl: `${base}/amc_logo.png`,
+    partnerLogoUrl: `${base}/amc_logo_partner.png`,
+  };
 }
 
 function renderEmailHtml({ title, subtitle, contentHtml }) {

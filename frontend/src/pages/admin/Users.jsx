@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { FiCheck, FiX, FiFilter, FiKey, FiCopy, FiCheckCircle, FiXCircle, FiUnlock, FiPlus, FiEdit2, FiUserX, FiUserCheck } from 'react-icons/fi';
-
-const ROLE_LABEL = { FAMILLE: 'Famille', PROFESSEUR: 'Professeur', TRESORIER: 'Trésorier' };
+import { ROLE_LABEL } from '../../utils/roles';
 
 function GeneratedPasswordModal({ user, endpoint, onClose }) {
   const [generatedPassword, setGeneratedPassword] = useState(null);
@@ -284,7 +283,7 @@ export default function AdminUsers() {
                 <tr>
                   <th>Nom</th>
                   <th>Email</th>
-                  <th>Rôle</th>
+                  <th>Rôles</th>
                   <th>Statut</th>
                   <th>Compte</th>
                   <th>Email vérifié</th>
@@ -302,7 +301,20 @@ export default function AdminUsers() {
                   <tr key={u.id} style={isLocked ? { background: '#FFF7ED' } : {}}>
                     <td style={{ fontWeight: 700 }}>{u.lastName} {u.firstName}</td>
                     <td>{u.email}</td>
-                    <td><span className="badge badge-info">{ROLE_LABEL[u.role] || u.role}</span></td>
+                    <td>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        <span className="badge badge-info">{ROLE_LABEL[u.role] || u.role}</span>
+                        {(u.additionalRoles || []).map((r) => (
+                          <span
+                            key={r.role}
+                            className={`badge ${r.status === 'PENDING' ? 'badge-warning' : 'badge-success'}`}
+                            title={r.status === 'PENDING' ? 'Rôle additionnel en attente de validation' : 'Rôle additionnel actif'}
+                          >
+                            {ROLE_LABEL[r.role] || r.role}{r.status === 'PENDING' ? ' (en attente)' : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
                     <td>{statusBadge(u.validationStatus)}</td>
                     <td><span className={`badge ${u.isActive === false ? 'badge-danger' : 'badge-success'}`}>{u.isActive === false ? 'Désactivé' : 'Actif'}</span></td>
                     <td style={{ textAlign: 'center' }}>

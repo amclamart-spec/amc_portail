@@ -87,7 +87,7 @@ const {
   exportAccountingAnnualSummary,
 } = require('../controllers/adminAdvancedController');
 const { getPricingConfig, updatePricingConfig } = require('../controllers/pricingController');
-const { getJustifications, patchJustification } = require('../controllers/absenceController');
+const { getJustifications, patchJustification, exportJustificationsExcel, exportJustificationsPdf } = require('../controllers/absenceController');
 const {
   getMailingStructure,
   sendMailing,
@@ -247,6 +247,8 @@ router.post('/families/enroll-new', authorizePermission(PERMISSIONS.CLASSES_MANA
 router.post('/families/:id/enroll', authorizePermission(PERMISSIONS.CLASSES_MANAGE), adminEnrollForFamily);
 
 router.get('/absences/justifications', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getJustifications);
+router.get('/absences/justifications/export/excel', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), exportJustificationsExcel);
+router.get('/absences/justifications/export/pdf', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), exportJustificationsPdf);
 router.patch('/absences/:evaluationId/justify', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), patchJustification);
 
 module.exports = router;

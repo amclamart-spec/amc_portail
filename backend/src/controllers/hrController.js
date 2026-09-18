@@ -165,7 +165,7 @@ async function createEmployee(req, res) {
     const { firstName, lastName, email, phone } = req.body;
     if (!firstName || !lastName || !email) return res.status(400).json({ error: 'Prénom, nom et email sont requis' });
 
-    const existing = await prisma.user.findUnique({ where: { email }, include: { additionalRoles: { select: { role: true } } } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, include: { additionalRoles: { select: { role: true } } } });
 
     if (existing) {
       const alreadyEmployee = existing.role === 'SALARIE' || existing.additionalRoles.some((r) => r.role === 'SALARIE');
@@ -226,8 +226,8 @@ async function updateEmployeeDetails(req, res) {
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user || user.role !== 'SALARIE') return res.status(404).json({ error: 'Salarié introuvable' });
 
-    if (email && email !== user.email) {
-      const existing = await prisma.user.findUnique({ where: { email } });
+    if (email && email.toLowerCase() !== user.email.toLowerCase()) {
+      const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
       if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
     }
 
