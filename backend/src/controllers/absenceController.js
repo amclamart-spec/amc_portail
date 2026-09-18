@@ -12,6 +12,9 @@ function poleNameForUser(user) {
   return POLE_MANAGER_ROLES.includes(user.role) ? POLE_ROLE_TO_NAME[user.role] : undefined;
 }
 
+const REASON_LABELS = { MALADE: 'Malade', VOYAGE: 'Voyage', AUTRE: 'Autre' };
+const STATUS_LABELS = { PENDING: 'En attente', VALIDATED: 'Validé', REJECTED: 'Refusé' };
+
 const prisma = new PrismaClient();
 
 function findLogo(names) {
@@ -278,18 +281,38 @@ async function postAbsences(req, res) {
 
 // Récupère la liste des justificatifs d'absence, avec filtre optionnel par pôle
 // (utilisé par l'espace responsable de pôle) et par nom d'élève.
-async function fetchJustificationsList({ status, poleName, studentName } = {}) {
+async function fetchJustificationsList({ status, poleName, poleId, levelId, studentName, dateFrom, dateTo } = {}) {
   const statusFilter = status || 'PENDING';
   const params = [statusFilter];
   const conditions = ['e.justification_status = $1', "e.status = 'missing'"];
 
+  // poleName : scoping automatique d'un responsable de pôle (voir poleNameForUser).
+  // poleId : filtre manuel choisi par un admin dans l'écran de recherche.
   if (poleName) {
     params.push(poleName);
     conditions.push(`p.name ILIKE $${params.length}`);
   }
+  if (poleId) {
+    params.push(poleId);
+    conditions.push(`p.id = $${params.length}`);
+  }
+  if (levelId) {
+    params.push(levelId);
+    conditions.push(`lv.id = $${params.length}`);
+  }
   if (studentName && studentName.trim()) {
     params.push(`%${studentName.trim()}%`);
     conditions.push(`(s.first_name || ' ' || s.last_name) ILIKE $${params.length}`);
+  }
+  if (dateFrom) {
+    params.push(new Date(dateFrom));
+    conditions.push(`l.date >= $${params.length}`);
+  }
+  if (dateTo) {
+    const end = new Date(dateTo);
+    end.setHours(23, 59, 59, 999);
+    params.push(end);
+    conditions.push(`l.date <= $${params.length}`);
   }
 
   const rows = await prisma.$queryRawUnsafe(`
@@ -390,13 +413,172 @@ async function updateJustificationStatus({ evaluationId, status, poleName }) {
 
 async function getJustifications(req, res) {
   try {
-    const { status, studentName } = req.query;
+    const { status, studentName, poleId, levelId, dateFrom, dateTo } = req.query;
     const poleName = poleNameForUser(req.user);
-    const justifications = await fetchJustificationsList({ status, poleName, studentName });
+    const justifications = await fetchJustificationsList({ status, poleName, poleId, levelId, studentName, dateFrom, dateTo });
     return res.json({ justifications });
   } catch (error) {
     console.error('Erreur getJustifications:', error);
     return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// Ligne de filtres lisible affichée en tête d'export (PDF) — reflète les mêmes
+// critères que la liste JSON, pour que l'export corresponde exactement à ce que
+// l'utilisateur voit à l'écran.
+async function buildJustificationsFilterSummary({ status, poleName, poleId, dateFrom, dateTo }) {
+  const parts = [];
+  parts.push(`Statut : ${STATUS_LABELS[status || 'PENDING'] || status}`);
+  if (poleName) {
+    parts.push(`Pôle : ${poleName}`);
+  } else if (poleId) {
+    const pole = await prisma.pole.findUnique({ where: { id: poleId }, select: { name: true } });
+    if (pole) parts.push(`Pôle : ${pole.name}`);
+  }
+  if (dateFrom) parts.push(`Du ${new Date(dateFrom).toLocaleDateString('fr-FR')}`);
+  if (dateTo) parts.push(`Au ${new Date(dateTo).toLocaleDateString('fr-FR')}`);
+  return parts.join('  ·  ');
+}
+
+async function exportJustificationsExcel(req, res) {
+  try {
+    const { status, studentName, poleId, levelId, dateFrom, dateTo } = req.query;
+    const poleName = poleNameForUser(req.user);
+    const justifications = await fetchJustificationsList({ status, poleName, poleId, levelId, studentName, dateFrom, dateTo });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Suivi des absences');
+    worksheet.columns = [
+      { header: 'Date absence', key: 'date', width: 16 },
+      { header: 'Élève', key: 'studentName', width: 26 },
+      { header: 'Famille', key: 'familyName', width: 24 },
+      { header: 'Cours', key: 'classLabel', width: 28 },
+      { header: 'Motif', key: 'reason', width: 14 },
+      { header: 'Statut', key: 'status', width: 14 },
+      { header: 'Justificatif famille', key: 'familyJustification', width: 45 },
+      { header: 'Note professeur', key: 'teacherJustification', width: 35 },
+    ];
+    worksheet.addRows(justifications.map((j) => ({
+      date: j.lessonDate ? new Date(j.lessonDate).toLocaleDateString('fr-FR') : '-',
+      studentName: j.studentName,
+      familyName: j.familyName,
+      classLabel: j.classLabel,
+      reason: REASON_LABELS[j.absenceReason] || '-',
+      status: STATUS_LABELS[j.justificationStatus] || j.justificationStatus,
+      familyJustification: j.familyJustification || '-',
+      teacherJustification: j.teacherJustification || '-',
+    })));
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF213B88' } };
+    headerRow.alignment = { vertical: 'middle' };
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+    worksheet.autoFilter = { from: 'A1', to: 'H1' };
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="suivi-absences-${Date.now()}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Erreur exportJustificationsExcel:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function exportJustificationsPdf(req, res) {
+  try {
+    const { status, studentName, poleId, levelId, dateFrom, dateTo } = req.query;
+    const poleName = poleNameForUser(req.user);
+    const justifications = await fetchJustificationsList({ status, poleName, poleId, levelId, studentName, dateFrom, dateTo });
+    const filterSummary = await buildJustificationsFilterSummary({ status, poleName, poleId, dateFrom, dateTo });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="suivi-absences-${Date.now()}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
+    doc.pipe(res);
+
+    /* ── logos + en-tête association (mêmes conventions que la feuille de présence) ── */
+    const amcLogoPath = findLogo(['amc_logo.png']);
+    const partnerLogoPath = findLogo(['amc_logo_partner.png']);
+    const headerY = 30;
+    const logoH = 40;
+    const logoW = 100;
+    try {
+      if (amcLogoPath) doc.image(amcLogoPath, doc.page.margins.left, headerY, { fit: [logoW, logoH], align: 'left' });
+      if (partnerLogoPath) doc.image(partnerLogoPath, doc.page.width - doc.page.margins.right - logoW, headerY, { fit: [logoW, logoH], align: 'right' });
+    } catch (e) {
+      console.warn('Suivi absences PDF: erreur logo', e?.message);
+    }
+
+    doc.y = headerY + logoH + 10;
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#6B7280').text('ASSOCIATION PARTAGE ET DES MUSULMANS DE CLAMART', { align: 'center' });
+    doc.fontSize(9).font('Helvetica').text('Portail interne', { align: 'center' });
+    doc.moveDown(0.6);
+    doc.fontSize(16).font('Helvetica-Bold').fillColor('#000000').text('Suivi des absences', { align: 'center' });
+    doc.moveDown(0.4);
+    if (filterSummary) {
+      doc.fontSize(9).font('Helvetica').fillColor('#374151').text(filterSummary, { align: 'center' });
+    }
+    doc.moveDown(0.8);
+    doc.fillColor('#000000');
+
+    const startX = doc.x;
+    let y = doc.y;
+    const rowHeight = 26;
+    const availableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const cols = [
+      { key: 'date', label: 'Date', width: 65 },
+      { key: 'studentName', label: 'Élève', width: 120 },
+      { key: 'familyName', label: 'Famille', width: 110 },
+      { key: 'classLabel', label: 'Cours', width: 140 },
+      { key: 'reason', label: 'Motif', width: 65 },
+      { key: 'status', label: 'Statut', width: 75 },
+    ];
+    const fixedWidth = cols.reduce((sum, c) => sum + c.width, 0);
+    cols.push({ key: 'familyJustification', label: 'Justificatif famille', width: Math.max(140, availableWidth - fixedWidth) });
+
+    const drawRow = (values, isHeader = false) => {
+      let x = startX;
+      cols.forEach((col) => {
+        doc.rect(x, y, col.width, rowHeight).stroke();
+        doc.fontSize(isHeader ? 8 : 7.5).font(isHeader ? 'Helvetica-Bold' : 'Helvetica')
+          .text(String(values[col.key] ?? ''), x + 4, y + rowHeight / 2 - 4, { width: col.width - 8, height: rowHeight - 6, ellipsis: true });
+        x += col.width;
+      });
+      y += rowHeight;
+    };
+
+    const headerValues = Object.fromEntries(cols.map((c) => [c.key, c.label]));
+    drawRow(headerValues, true);
+
+    justifications.forEach((j) => {
+      if (y > doc.page.height - doc.page.margins.bottom - rowHeight) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawRow(headerValues, true);
+      }
+      drawRow({
+        date: j.lessonDate ? new Date(j.lessonDate).toLocaleDateString('fr-FR') : '-',
+        studentName: j.studentName,
+        familyName: j.familyName,
+        classLabel: j.classLabel,
+        reason: REASON_LABELS[j.absenceReason] || '-',
+        status: STATUS_LABELS[j.justificationStatus] || j.justificationStatus,
+        familyJustification: j.familyJustification || '-',
+      });
+    });
+
+    if (justifications.length === 0) {
+      doc.moveDown(1);
+      doc.fontSize(10).font('Helvetica').fillColor('#6B7280').text('Aucun résultat pour ces critères.', { align: 'center' });
+    }
+
+    doc.end();
+  } catch (error) {
+    console.error('Erreur exportJustificationsPdf:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 }
 
@@ -423,6 +605,8 @@ module.exports = {
   postAbsences,
   getJustifications,
   patchJustification,
+  exportJustificationsExcel,
+  exportJustificationsPdf,
   fetchJustificationsList,
   updateJustificationStatus,
 };

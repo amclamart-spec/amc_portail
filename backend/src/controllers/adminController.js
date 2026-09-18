@@ -332,6 +332,10 @@ async function getAllUsers(req, res) {
           lastLogin: true,
           lockedUntil: true,
           failedLoginAttempts: true,
+          additionalRoles: {
+            where: { status: { in: ['APPROVED', 'PENDING'] } },
+            select: { role: true, status: true },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: (parseInt(page, 10) - 1) * parseInt(limit, 10),
@@ -3756,17 +3760,56 @@ async function createTeacher(req, res) {
       return res.status(400).json({ error: 'lastName, firstName et email sont requis' });
     }
 
-    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
-    if (existing) {
-      return res.status(409).json({ error: 'Un compte utilisateur existe déjà avec cet email' });
+    // If no pole explicitly chosen, try to detect from specialties
+    const resolvedPoleId = poleId || await getAutoDetectedPoleId(Array.isArray(specialties) ? specialties : []);
+
+    // Un compte existe déjà avec cet email (ex. famille) : on lui ajoute le rôle
+    // Professeur + un profil Teacher, on ne crée JAMAIS un second User pour le
+    // même email (cause historique des comptes en double — voir mergeDuplicateAccounts).
+    const existingUser = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
+    if (existingUser) {
+      const existingTeacher = await prisma.teacher.findUnique({ where: { userId: existingUser.id } });
+      if (existingTeacher) {
+        return res.status(409).json({ error: 'Ce compte a déjà un profil professeur' });
+      }
+
+      const teacher = await prisma.$transaction(async (tx) => {
+        if (existingUser.role !== 'PROFESSEUR') {
+          await tx.userRole.upsert({
+            where: { userId_role: { userId: existingUser.id, role: 'PROFESSEUR' } },
+            update: { status: 'APPROVED' },
+            create: { userId: existingUser.id, role: 'PROFESSEUR' },
+          });
+        }
+
+        return tx.teacher.create({
+          data: {
+            userId: existingUser.id,
+            civility,
+            firstName: existingUser.firstName,
+            lastName: existingUser.lastName,
+            email: existingUser.email,
+            phone: existingUser.phone || phone || null,
+            specialties: Array.isArray(specialties) ? specialties : [],
+            poleId: resolvedPoleId || null,
+            status,
+          },
+          include: { user: true, pole: { select: { id: true, name: true } } },
+        });
+      });
+
+      try {
+        await sendRoleRequestApprovedEmail(existingUser, 'Professeur');
+      } catch (emailError) {
+        console.error('Erreur envoi email ajout rôle professeur:', emailError);
+      }
+
+      return res.status(200).json({ teacher, addedToExistingAccount: true });
     }
 
     const temporaryPassword = `AMC-${uuidv4().slice(0, 10)}`;
     const passwordHash = await bcrypt.hash(temporaryPassword, 12);
     const emailVerifyToken = uuidv4();
-
-    // If no pole explicitly chosen, try to detect from specialties
-    const resolvedPoleId = poleId || await getAutoDetectedPoleId(Array.isArray(specialties) ? specialties : []);
 
     const teacher = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
