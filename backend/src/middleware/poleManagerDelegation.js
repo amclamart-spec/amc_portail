@@ -22,9 +22,12 @@ const CLASS_INCLUDE = { level: { include: { pole: true } }, teacher: { include: 
 // (paramétré par teacherUserId/req.user.id) fonctionne alors sans modification.
 async function actAsClassTeacher(req, res, next) {
   try {
-    if (!POLE_MANAGER_ROLES.includes(req.user.role)) return next();
+    const isAdmin = req.user.role === 'ADMIN';
+    if (!isAdmin && !POLE_MANAGER_ROLES.includes(req.user.role)) return next();
 
-    const poleName = POLE_ROLE_TO_NAME[req.user.role];
+    // L'admin n'est rattaché à aucun pôle : pas de vérification d'appartenance
+    // de la classe à un pôle particulier pour ce rôle (voir plus bas).
+    const poleName = isAdmin ? null : POLE_ROLE_TO_NAME[req.user.role];
     const classId = req.query.classId || req.body?.classId;
     const studentId = req.params.studentId || req.query.studentId || req.body?.studentId;
     const lessonId = req.params.lessonId;
@@ -37,7 +40,7 @@ async function actAsClassTeacher(req, res, next) {
         where: {
           studentId,
           status: { in: TEACHER_VISIBLE_ENROLLMENT_STATUSES },
-          class: { level: { pole: { name: { equals: poleName, mode: 'insensitive' } } } },
+          ...(poleName ? { class: { level: { pole: { name: { equals: poleName, mode: 'insensitive' } } } } } : {}),
         },
         include: { class: { include: CLASS_INCLUDE } },
       });
@@ -50,7 +53,7 @@ async function actAsClassTeacher(req, res, next) {
     if (!classRecord) {
       return res.status(400).json({ error: 'Classe introuvable ou non déterminable pour cette action' });
     }
-    if ((classRecord.level?.pole?.name || '').toLowerCase() !== poleName.toLowerCase()) {
+    if (poleName && (classRecord.level?.pole?.name || '').toLowerCase() !== poleName.toLowerCase()) {
       return res.status(403).json({ error: 'Cette classe n\'appartient pas à votre pôle' });
     }
     if (!classRecord.teacher?.user) {

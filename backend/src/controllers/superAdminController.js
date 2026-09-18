@@ -98,7 +98,7 @@ async function createUser(req, res) {
     }
     if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
     if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
 
     const token = crypto.randomBytes(24).toString('hex');

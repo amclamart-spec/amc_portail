@@ -12,9 +12,9 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get('/:studentId', authorize('PROFESSEUR', 'FAMILLE', ...POLE_MANAGER_ROLES), actAsClassTeacher, getAppreciations);
-router.post('/', authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher, postAppreciation);
-router.delete('/:id', authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), deleteAppreciation);
+router.get('/:studentId', authorize('PROFESSEUR', 'FAMILLE', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, getAppreciations);
+router.post('/', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, postAppreciation);
+router.delete('/:id', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), deleteAppreciation);
 router.put('/:id/vu', authorize('FAMILLE'), putAppreciationSeen);
 
 module.exports = router;

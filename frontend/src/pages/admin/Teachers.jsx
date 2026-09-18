@@ -136,8 +136,10 @@ export default function AdminTeachers() {
         await api.put(`/admin/professeurs/${editingTeacher.id}`, form);
         toast.success('Professeur mis à jour');
       } else {
-        await api.post('/admin/professeurs', form);
-        toast.success('Professeur créé (compte et mot de passe temporaire envoyés par email)');
+        const { data } = await api.post('/admin/professeurs', form);
+        toast.success(data?.addedToExistingAccount
+          ? 'Rôle Professeur ajouté à ce compte existant'
+          : 'Professeur créé (compte et mot de passe temporaire envoyés par email)');
       }
       setModalOpen(false);
       fetchTeachers();

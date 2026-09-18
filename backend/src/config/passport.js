@@ -63,8 +63,9 @@ function configurePassport() {
             return done(null, updatedUser);
           }
 
-          // 2) Liaison automatique si même email
-          const existingEmailUser = await prisma.user.findUnique({ where: { email } });
+          // 2) Liaison automatique si même email (comparaison insensible à la casse :
+          // certains comptes existants ont pu être créés avec un email non normalisé)
+          const existingEmailUser = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
           if (existingEmailUser) {
             const linkedUser = await prisma.user.update({
               where: { id: existingEmailUser.id },

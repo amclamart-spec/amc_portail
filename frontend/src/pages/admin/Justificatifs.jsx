@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
-import { FiCheck, FiX, FiSearch } from 'react-icons/fi';
+import { FiCheck, FiX, FiSearch, FiDownload, FiFileText } from 'react-icons/fi';
+import { useAuth } from '../../context/AuthContext';
+import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
 
 const STATUS_OPTIONS = [
   { value: 'PENDING',   label: 'En attente',  badge: 'badge-warning' },
@@ -21,16 +23,59 @@ function StatusBadge({ status }) {
   return <span className={`badge ${opt.badge}`}>{opt.label}</span>;
 }
 
+function downloadBlob(blob, filename) {
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(href);
+}
+
 export default function AdminJustificatifs() {
+  const { user } = useAuth();
+  const isAdmin = !RESPONSABLE_POLE_ROLES.includes(user?.role);
+
   const [filter, setFilter]                 = useState('PENDING');
   const [studentName, setStudentName]       = useState('');
+  const [poleId, setPoleId]                 = useState('');
+  const [levelId, setLevelId]               = useState('');
+  const [dateFrom, setDateFrom]             = useState('');
+  const [dateTo, setDateTo]                 = useState('');
+  const [poles, setPoles]                   = useState([]);
   const [justifications, setJustifications] = useState([]);
   const [loading, setLoading]               = useState(false);
+  const [exporting, setExporting]           = useState('');
 
-  const load = async (s = filter, name = studentName) => {
+  // Pôles + niveaux imbriqués, pour le filtre en cascade — utile uniquement pour
+  // l'admin (un responsable de pôle est déjà cantonné à son seul pôle côté serveur).
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get('/admin/poles')
+      .then(({ data }) => setPoles(data.poles || []))
+      .catch(() => {});
+  }, [isAdmin]);
+
+  const levelOptions = useMemo(() => {
+    const pole = poles.find((p) => p.id === poleId);
+    return pole?.levels || [];
+  }, [poles, poleId]);
+
+  const buildParams = (s = filter) => ({
+    status: s,
+    studentName: studentName.trim() || undefined,
+    poleId: poleId || undefined,
+    levelId: levelId || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+  });
+
+  const load = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/admin/absences/justifications', { params: { status: s, studentName: name || undefined } });
+      const { data } = await api.get('/admin/absences/justifications', { params: buildParams() });
       setJustifications(data.justifications || []);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Impossible de charger les justificatifs');
@@ -39,11 +84,11 @@ export default function AdminJustificatifs() {
     }
   };
 
-  useEffect(() => { load(filter, studentName); }, [filter]);
+  useEffect(() => { load(); }, [filter, poleId, levelId, dateFrom, dateTo]);
 
   // Recherche par nom avec un léger debounce pour éviter une requête à chaque frappe
   useEffect(() => {
-    const timeout = setTimeout(() => load(filter, studentName), 300);
+    const timeout = setTimeout(() => load(), 300);
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studentName]);
@@ -52,9 +97,25 @@ export default function AdminJustificatifs() {
     try {
       await api.patch(`/admin/absences/${evaluationId}/justify`, { status });
       toast.success(status === 'VALIDATED' ? 'Justificatif validé' : 'Justificatif refusé');
-      load(filter, studentName);
+      load();
     } catch (e) {
       toast.error(e.response?.data?.error || 'Erreur lors de la mise à jour');
+    }
+  };
+
+  const handleExport = async (format) => {
+    setExporting(format);
+    try {
+      const response = await api.get(`/admin/absences/justifications/export/${format}`, {
+        params: buildParams(),
+        responseType: 'blob',
+      });
+      const ext = format === 'excel' ? 'xlsx' : 'pdf';
+      downloadBlob(response.data, `suivi-absences-${new Date().toISOString().slice(0, 10)}.${ext}`);
+    } catch (e) {
+      toast.error('Impossible de générer l\'export');
+    } finally {
+      setExporting('');
     }
   };
 
@@ -63,19 +124,59 @@ export default function AdminJustificatifs() {
       <h2 style={{ color: 'var(--amc-primary)' }}>Justificatifs d'absences</h2>
 
       <div className="card" style={{ marginBottom: 16, padding: 12 }}>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {STATUS_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                className={`btn btn-sm ${filter === opt.value ? 'btn-primary' : 'btn-outline'}`}
-                onClick={() => setFilter(opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          {STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`btn btn-sm ${filter === opt.value ? 'btn-primary' : 'btn-outline'}`}
+              onClick={() => setFilter(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          {isAdmin && (
+            <select
+              className="form-control"
+              style={{ width: 180 }}
+              value={poleId}
+              onChange={(e) => { setPoleId(e.target.value); setLevelId(''); }}
+            >
+              <option value="">Tous les pôles</option>
+              {poles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          )}
+          {isAdmin && (
+            <select
+              className="form-control"
+              style={{ width: 180 }}
+              value={levelId}
+              onChange={(e) => setLevelId(e.target.value)}
+              disabled={!poleId}
+            >
+              <option value="">{poleId ? 'Tous les niveaux' : 'Choisir un pôle d\'abord'}</option>
+              {levelOptions.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          )}
+          <input
+            type="date"
+            className="form-control"
+            style={{ width: 150 }}
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            title="Du"
+          />
+          <input
+            type="date"
+            className="form-control"
+            style={{ width: 150 }}
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            title="Au"
+          />
           <div style={{ position: 'relative', minWidth: 220 }}>
             <FiSearch style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#6B7280' }} />
             <input
@@ -86,6 +187,15 @@ export default function AdminJustificatifs() {
               onChange={(e) => setStudentName(e.target.value)}
               style={{ paddingLeft: 32 }}
             />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => handleExport('excel')} disabled={!!exporting}>
+              <FiDownload size={14} /> {exporting === 'excel' ? '…' : 'Excel'}
+            </button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => handleExport('pdf')} disabled={!!exporting}>
+              <FiFileText size={14} /> {exporting === 'pdf' ? '…' : 'PDF'}
+            </button>
           </div>
         </div>
       </div>

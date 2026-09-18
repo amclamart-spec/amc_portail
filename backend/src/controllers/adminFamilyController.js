@@ -421,7 +421,7 @@ async function adminEnrollNewFamily(req, res) {
   }
 
   try {
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
     if (existing) {
       return res.status(409).json({ error: 'Un compte avec cet email existe déjà' });
     }
