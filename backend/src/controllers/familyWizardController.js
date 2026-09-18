@@ -2451,7 +2451,7 @@ async function checkEmailAvailability(req, res) {
 
 
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
 
     if (existing) {
 

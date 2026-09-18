@@ -3756,7 +3756,7 @@ async function createTeacher(req, res) {
       return res.status(400).json({ error: 'lastName, firstName et email sont requis' });
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
     if (existing) {
       return res.status(409).json({ error: 'Un compte utilisateur existe déjà avec cet email' });
     }
@@ -3976,8 +3976,8 @@ async function updateUserDetails(req, res) {
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
     if (!(await assertUserInCallerScope(req, res, id))) return;
 
-    if (email && email !== user.email) {
-      const existing = await prisma.user.findUnique({ where: { email } });
+    if (email && email.toLowerCase() !== user.email.toLowerCase()) {
+      const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
       if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
     }
 
@@ -4058,7 +4058,7 @@ async function createUser(req, res) {
     const allowedRoles = poleId ? ['FAMILLE', 'PROFESSEUR'] : ADMIN_VISIBLE_ROLES;
     if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
     if (existing) return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
 
     const token = crypto.randomBytes(24).toString('hex');

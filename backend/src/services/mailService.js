@@ -1,76 +1,21 @@
 const { PrismaClient } = require('@prisma/client');
-const fs = require('fs');
-const path = require('path');
 const config = require('../config');
 const { sendMail } = require('./emailService');
 
 const prisma = new PrismaClient();
 
-// Charger les logos en base64 une seule fois
-let logoBase64 = null;
-let partnerLogoBase64 = null;
-
+// Les logos sont référencés par URL publique (servis en statique par le frontend,
+// cf. frontend/public/) plutôt qu'embarqués en base64 dans le HTML : des images
+// data: URI gonflent le message au point de dépasser le seuil de troncature de
+// Gmail (~102 Ko, "Voir la totalité du message") et sont mal supportées par de
+// nombreux clients mail (Outlook en particulier) — c'était la cause des mails de
+// mailing qui s'affichaient mal / tronqués chez les destinataires.
 function getLogoBase64() {
-  if (logoBase64) {
-    return logoBase64;
-  }
-
-  try {
-    // Essayer plusieurs chemins possibles
-    const possiblePaths = [
-      path.join(__dirname, '../../uploads/logo.png'),
-      path.join(__dirname, '../../../frontend/public/amc_logo.png'),
-      path.join(process.cwd(), 'frontend/public/amc_logo.png'),
-      path.join(process.cwd(), 'uploads/logo.png'),
-    ];
-
-    for (const logoPath of possiblePaths) {
-      if (fs.existsSync(logoPath)) {
-        const logoBuffer = fs.readFileSync(logoPath);
-        logoBase64 = `data:image/png;base64,${logoBuffer.toString('base64')}`;
-        console.log(`[MAIL] Logo AMC chargé depuis: ${logoPath}`);
-        return logoBase64;
-      }
-    }
-
-    console.warn('[MAIL] Logo non trouvé, utilisation d\'une version par défaut');
-    // Retourner une image placeholder
-    logoBase64 = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzIxM0I4OCIvPjx0ZXh0IHg9IjUwIiB5PSI1MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtd2VpZ2h0PSJib2xkIiBkeT0iLjNlbSI+QU1DPC90ZXh0Pjwvc3ZnPg==';
-    return logoBase64;
-  } catch (error) {
-    console.warn('[MAIL] Erreur chargement logo:', error.message);
-    logoBase64 = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzIxM0I4OCIvPjx0ZXh0IHg9IjUwIiB5PSI1MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtd2VpZ2h0PSJib2xkIiBkeT0iLjNlbSI+QU1DPC90ZXh0Pjwvc3ZnPg==';
-    return logoBase64;
-  }
+  return `${(config.frontendUrl || '').replace(/\/$/, '')}/amc_logo.png`;
 }
 
 function getPartnerLogoBase64() {
-  if (partnerLogoBase64) {
-    return partnerLogoBase64;
-  }
-
-  try {
-    const possiblePaths = [
-      path.join(__dirname, '../../../frontend/public/amc_logo_partner.png'),
-      path.join(process.cwd(), 'frontend/public/amc_logo_partner.png'),
-    ];
-
-    for (const logoPath of possiblePaths) {
-      if (fs.existsSync(logoPath)) {
-        const logoBuffer = fs.readFileSync(logoPath);
-        partnerLogoBase64 = `data:image/png;base64,${logoBuffer.toString('base64')}`;
-        console.log(`[MAIL] Logo PARTAGE chargé depuis: ${logoPath}`);
-        return partnerLogoBase64;
-      }
-    }
-
-    partnerLogoBase64 = getLogoBase64();
-    return partnerLogoBase64;
-  } catch (error) {
-    console.warn('[MAIL] Erreur chargement logo PARTAGE:', error.message);
-    partnerLogoBase64 = getLogoBase64();
-    return partnerLogoBase64;
-  }
+  return `${(config.frontendUrl || '').replace(/\/$/, '')}/amc_logo_partner.png`;
 }
 
 /**

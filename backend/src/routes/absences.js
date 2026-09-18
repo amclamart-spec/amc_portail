@@ -4,7 +4,7 @@ const { actAsClassTeacher, POLE_MANAGER_ROLES } = require('../middleware/poleMan
 const { getAbsences, getAbsenceRanking, exportAbsenceRanking, getClassStudents, getAbsenceHistory, exportLessonAttendancePdf, postAbsences } = require('../controllers/absenceController');
 
 const router = Router();
-router.use(authenticate, authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher);
+router.use(authenticate, authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher);
 
 router.get('/class-students', getClassStudents);
 router.get('/ranking', getAbsenceRanking);

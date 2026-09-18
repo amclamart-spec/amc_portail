@@ -11,8 +11,8 @@ const router = Router();
 
 router.use(authenticate);
 
-router.post('/publish', authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), actAsClassTeacher, postPublishBulletin);
-router.get('/:studentId', authorize('PROFESSEUR', 'FAMILLE', ...POLE_MANAGER_ROLES), actAsClassTeacher, getBulletins);
-router.delete('/:id', authorize('PROFESSEUR', ...POLE_MANAGER_ROLES), deleteBulletin);
+router.post('/publish', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, postPublishBulletin);
+router.get('/:studentId', authorize('PROFESSEUR', 'FAMILLE', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, getBulletins);
+router.delete('/:id', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), deleteBulletin);
 
 module.exports = router;
