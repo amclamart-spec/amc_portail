@@ -3,6 +3,7 @@ const {
   fetchStudentAbsences,
   fetchStudentHomework,
   fetchStudentNotes,
+  declareAbsence,
   submitFamilyJustification,
   deleteJustificationDocument,
   setHomeworkCompletion,
@@ -83,6 +84,22 @@ async function putHomeworkCompletion(req, res) {
   }
 }
 
+async function postDeclareAbsence(req, res) {
+  try {
+    const { studentId, classId, date, reason, comment, documents } = req.body;
+    if (!studentId) {
+      return res.status(400).json({ error: 'studentId est requis' });
+    }
+
+    const result = await declareAbsence({ familyUserId: req.user.id, studentId, classId, date, reason, comment, documents });
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Erreur postDeclareAbsence:', error);
+    const status = error.statusCode || (error.message.includes('introuvable') ? 404 : 500);
+    return res.status(status).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
 async function postPedagogyJustification(req, res) {
   try {
     const { evaluationId } = req.params;
@@ -113,6 +130,7 @@ module.exports = {
   getPedagogyAbsences,
   getPedagogyHomework,
   getPedagogyNotes,
+  postDeclareAbsence,
   postPedagogyJustification,
   deletePedagogyJustificationDocument,
   putHomeworkCompletion,

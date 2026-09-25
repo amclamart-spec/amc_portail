@@ -15,7 +15,11 @@ const POLE_ROLE_TO_NAME = {
 const POLE_MANAGER_ROLES = Object.keys(POLE_ROLE_TO_NAME);
 
 const TEACHER_VISIBLE_ENROLLMENT_STATUSES = ['PENDING', 'CONFIRMED'];
-const CLASS_INCLUDE = { level: { include: { pole: true } }, teacher: { include: { user: true } } };
+const CLASS_INCLUDE = {
+  level: { include: { pole: true } },
+  teacher: { include: { user: true } },
+  classTeachers: { include: { teacher: { include: { user: true } } } },
+};
 
 // Substitue l'identité d'un responsable de pôle par celle du professeur titulaire
 // de la classe visée, pour la durée de la requête — tout le code métier existant
@@ -56,11 +60,15 @@ async function actAsClassTeacher(req, res, next) {
     if (poleName && (classRecord.level?.pole?.name || '').toLowerCase() !== poleName.toLowerCase()) {
       return res.status(403).json({ error: 'Cette classe n\'appartient pas à votre pôle' });
     }
-    if (!classRecord.teacher?.user) {
+    // Classe sans professeur référent (teacherId nul) mais gérée par un ou
+    // plusieurs professeurs supplémentaires (ClassTeacher, ex. pôle Coran) :
+    // on délègue vers le premier professeur supplémentaire trouvé.
+    const delegateUser = classRecord.teacher?.user || classRecord.classTeachers?.[0]?.teacher?.user;
+    if (!delegateUser) {
       return res.status(404).json({ error: 'Aucun professeur assigné à cette classe' });
     }
 
-    req.user = { ...req.user, id: classRecord.teacher.user.id, role: 'PROFESSEUR' };
+    req.user = { ...req.user, id: delegateUser.id, role: 'PROFESSEUR' };
     return next();
   } catch (error) {
     console.error('Erreur actAsClassTeacher:', error);

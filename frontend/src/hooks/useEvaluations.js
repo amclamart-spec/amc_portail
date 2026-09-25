@@ -7,6 +7,8 @@ export default function useEvaluations() {
   const [lessons, setLessons] = useState([]);
   const [absenceRoster, setAbsenceRoster] = useState(null);
   const [absenceHistory, setAbsenceHistory] = useState([]);
+  const [classJustifications, setClassJustifications] = useState([]);
+  const [classRanking, setClassRanking] = useState([]);
   const [homeworkHistory, setHomeworkHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -25,6 +27,17 @@ export default function useEvaluations() {
       return [];
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const fetchClassRanking = useCallback(async ({ classId }) => {
+    try {
+      const { data } = await api.get('/evaluations/ranking', { params: { classId } });
+      setClassRanking(data.ranking || []);
+      return data.ranking || [];
+    } catch (err) {
+      setClassRanking([]);
+      return [];
     }
   }, []);
 
@@ -147,6 +160,28 @@ export default function useEvaluations() {
     }
   }, []);
 
+  const fetchClassJustifications = useCallback(async ({ classId }) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { data } = await api.get('/absences/declarations', { params: { classId } });
+      setClassJustifications(data.declarations || []);
+      return data.declarations || [];
+    } catch (err) {
+      setError(err.response?.data?.error || 'Impossible de charger les déclarations d’absence');
+      setClassJustifications([]);
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const decideJustification = useCallback(async ({ evaluationId, decision }) => {
+    const { data } = await api.patch(`/absences/declarations/${evaluationId}`, { decision });
+    return data;
+  }, []);
+
   const saveHomeworkMessage = useCallback(async ({ classId, date, message, attachmentFilename, attachmentBase64 }) => {
     setLoading(true);
     setError(null);
@@ -250,14 +285,19 @@ export default function useEvaluations() {
     lessons,
     absenceRoster,
     absenceHistory,
+    classJustifications,
+    classRanking,
     homeworkHistory,
     loading,
     error,
     fetchEvaluations,
+    fetchClassRanking,
     fetchStats,
     fetchLessons,
     fetchAbsences,
     fetchAbsenceHistory,
+    fetchClassJustifications,
+    decideJustification,
     fetchClassStudents,
     fetchHomeworkMessage,
     fetchHomeworkHistory,

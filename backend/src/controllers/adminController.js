@@ -15,6 +15,7 @@ const { isProvisionalClass, getProvisionalClassFilter, PROVISIONAL_CLASS_NAME } 
 const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
 const { getReceiptInfo } = require('../utils/receiptUtils');
 const { generateInvoicePDF } = require('../utils/invoiceUtils');
+const { getFamilyEmailRecipients } = require('../utils/familyEmailUtils');
 
 const prisma = applyNameCasing(new PrismaClient());
 
@@ -1990,6 +1991,19 @@ async function updateEnrollment(req, res) {
       if (family.country !== undefined) familyUpdates.country = family.country;
       if (family.phonePrimary !== undefined) familyUpdates.phonePrimary = family.phonePrimary;
       if (family.phoneSecondary !== undefined) familyUpdates.phoneSecondary = family.phoneSecondary;
+      if (family.emailSecondary !== undefined) {
+        const newSecondaryEmail = family.emailSecondary ? family.emailSecondary.trim().toLowerCase() : null;
+        if (newSecondaryEmail) {
+          // L'email secondaire permet aussi de se connecter (voir authController.login) :
+          // il ne doit pas correspondre à l'email principal d'un autre compte, sous peine
+          // de résolution ambiguë à la connexion.
+          const conflict = await prisma.user.findUnique({ where: { email: newSecondaryEmail } });
+          if (conflict) {
+            return res.status(409).json({ error: 'Cette adresse email secondaire est déjà utilisée comme email principal par un autre compte' });
+          }
+        }
+        familyUpdates.emailSecondary = newSecondaryEmail;
+      }
       if (family.email !== undefined && family.email.trim()) {
         const newEmail = family.email.trim().toLowerCase();
         const familyRecord = await prisma.family.findUnique({
@@ -2264,7 +2278,7 @@ async function updateEnrollment(req, res) {
           <p><strong>Horaires :</strong> ${scheduleInfo || 'Non renseignés'}</p>
           <p><strong>Année scolaire :</strong> ${updated.schoolYear?.label || 'Non renseignée'}</p>
         `;
-        await sendEnrollmentApprovedEmail(familyUser, summaryHtml);
+        await sendEnrollmentApprovedEmail({ ...familyUser, email: getFamilyEmailRecipients(updated.student.family) }, summaryHtml);
       }
     } else if (status === 'CANCELLED' && currentStatus !== 'CANCELLED') {
       if (updated?.student?.family?.user?.email) {
@@ -2277,7 +2291,7 @@ async function updateEnrollment(req, res) {
           <p><strong>Horaires :</strong> ${scheduleInfo || 'Non renseignés'}</p>
           <p><strong>Année scolaire :</strong> ${updated.schoolYear?.label || 'Non renseignée'}</p>
         `;
-        await sendEnrollmentRejectedEmail(familyUser, summaryHtml, updated.comment || 'Aucun motif précisé.');
+        await sendEnrollmentRejectedEmail({ ...familyUser, email: getFamilyEmailRecipients(updated.student.family) }, summaryHtml, updated.comment || 'Aucun motif précisé.');
       }
     }
 
@@ -3659,7 +3673,7 @@ async function sendMessageToClassFamilies(req, res) {
 
     if (!cls) return res.status(404).json({ error: 'Classe introuvable' });
 
-    const emails = [...new Set(cls.enrollments.map((e) => e.student.family?.user?.email).filter(Boolean))];
+    const emails = [...new Set(cls.enrollments.flatMap((e) => getFamilyEmailRecipients(e.student.family)))];
 
     if (emails.length === 0) {
       return res.status(400).json({ error: 'Aucune adresse email famille trouvée pour cette classe' });

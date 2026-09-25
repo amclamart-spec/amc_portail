@@ -1,7 +1,9 @@
 const { PrismaClient } = require('@prisma/client');
+const { v4: uuidv4 } = require('uuid');
 const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const bcrypt = require('bcryptjs');
 const { createActivityLog } = require('../services/activityLogService');
+const { sendMail } = require('../services/emailService');
 
 const prisma = applyNameCasing(new PrismaClient());
 
@@ -162,6 +164,56 @@ async function getFamilyDetails(req, res) {
     res.json({ family });
   } catch (error) {
     console.error('Erreur getFamilyDetails:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// Génère un mot de passe temporaire dédié à l'email secondaire de la famille et
+// l'envoie à cette adresse — tant qu'aucun mot de passe n'est défini ici, la
+// connexion via l'email secondaire est refusée (voir authController.login).
+async function generateFamilySecondaryPassword(req, res) {
+  try {
+    const { id } = req.params;
+
+    const family = await prisma.family.findUnique({ where: { id } });
+    if (!family) {
+      return res.status(404).json({ error: 'Famille introuvable' });
+    }
+    if (!family.emailSecondary) {
+      return res.status(400).json({ error: 'Aucun email secondaire n\'est configuré pour cette famille' });
+    }
+
+    const temporaryPassword = `AMC-${uuidv4().slice(0, 10)}`;
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+
+    await prisma.family.update({
+      where: { id },
+      data: { emailSecondaryPasswordHash: passwordHash },
+    });
+
+    await sendMail({
+      to: family.emailSecondary,
+      subject: 'AMC — Mot de passe pour votre accès secondaire',
+      html: `
+        <p>Bonjour,</p>
+        <p>Un mot de passe a été généré pour vous permettre de vous connecter à l'espace famille AMC avec cette adresse email.</p>
+        <p><strong>Email :</strong> ${family.emailSecondary}<br />
+        <strong>Mot de passe temporaire :</strong> ${temporaryPassword}</p>
+        <p>Merci de vous connecter puis de modifier ce mot de passe dès la première connexion.</p>
+      `,
+    });
+
+    await createActivityLog({
+      userId: req.user?.id,
+      action: 'ADMIN_FAMILY_SECONDARY_PASSWORD_GENERATED',
+      entityType: 'Family',
+      entityId: id,
+      details: { familyName: family.familyName, emailSecondary: family.emailSecondary },
+    });
+
+    res.json({ message: 'Mot de passe généré et envoyé à l\'adresse secondaire' });
+  } catch (error) {
+    console.error('Erreur generateFamilySecondaryPassword:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 }
@@ -492,6 +544,7 @@ async function adminEnrollNewFamily(req, res) {
 module.exports = {
   getFamilies,
   getFamilyDetails,
+  generateFamilySecondaryPassword,
   createFamilyParent,
   updateFamilyParent,
   deleteFamilyParent,

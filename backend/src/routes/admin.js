@@ -74,6 +74,7 @@ const {
 const {
   getFamilies,
   getFamilyDetails,
+  generateFamilySecondaryPassword,
   adminEnrollForFamily,
   adminEnrollNewFamily,
 } = require('../controllers/adminFamilyController');
@@ -245,6 +246,7 @@ router.get('/families', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFam
 router.get('/families/:id', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilyDetails);
 router.post('/families/enroll-new', authorizePermission(PERMISSIONS.CLASSES_MANAGE), adminEnrollNewFamily);
 router.post('/families/:id/enroll', authorizePermission(PERMISSIONS.CLASSES_MANAGE), adminEnrollForFamily);
+router.post('/families/:id/secondary-password', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), generateFamilySecondaryPassword);
 
 router.get('/absences/justifications', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), getJustifications);
 router.get('/absences/justifications/export/excel', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), exportJustificationsExcel);

@@ -138,12 +138,37 @@ async function login(req, res) {
     // dès que l'utilisateur tapait son email avec une casse différente à la connexion.
     const normalizedEmail = String(email || '').trim().toLowerCase();
 
-    const user = await prisma.user.findFirst({ where: { email: { equals: normalizedEmail, mode: 'insensitive' } }, include: { additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } } } });
+    let user = await prisma.user.findFirst({ where: { email: { equals: normalizedEmail, mode: 'insensitive' } }, include: { additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } } } });
+    // Mot de passe à vérifier : celui du compte pour une connexion par email principal,
+    // ou celui dédié à l'email secondaire (Family.emailSecondaryPasswordHash) — les deux
+    // adresses d'une même famille ont chacune leur propre mot de passe.
+    let passwordHashToCheck = user?.passwordHash;
+
+    // Aucun compte trouvé sur l'email principal : une famille peut aussi se
+    // connecter avec son adresse email secondaire (Family.emailSecondary), à
+    // condition qu'un mot de passe dédié ait été généré pour cette adresse.
+    if (!user) {
+      const familyBySecondaryEmail = await prisma.family.findFirst({
+        where: { emailSecondary: { equals: normalizedEmail, mode: 'insensitive' } },
+        select: { userId: true, emailSecondaryPasswordHash: true },
+      });
+      if (familyBySecondaryEmail) {
+        if (!familyBySecondaryEmail.emailSecondaryPasswordHash) {
+          return res.status(401).json({ error: 'Aucun mot de passe n\'a été configuré pour cette adresse email. Contactez l\'administration.' });
+        }
+        user = await prisma.user.findUnique({
+          where: { id: familyBySecondaryEmail.userId },
+          include: { additionalRoles: { where: { status: 'APPROVED' }, select: { role: true } } },
+        });
+        passwordHashToCheck = familyBySecondaryEmail.emailSecondaryPasswordHash;
+      }
+    }
+
     if (!user) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
 
-    if (!user.passwordHash) {
+    if (!passwordHashToCheck) {
       return res.status(400).json({
         error: 'Ce compte est configuré pour la connexion Google. Utilisez "Se connecter avec Google".',
       });
@@ -158,7 +183,7 @@ async function login(req, res) {
       });
     }
 
-    const isValid = await bcrypt.compare(password, user.passwordHash);
+    const isValid = await bcrypt.compare(password, passwordHashToCheck);
     if (!isValid) {
       if (!isAdmin) {
         const attempts = user.failedLoginAttempts + 1;

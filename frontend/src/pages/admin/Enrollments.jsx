@@ -70,6 +70,7 @@ export default function AdminEnrollments() {
   const [poleBlockLoading, setPoleBlockLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [enrollmentsRefreshKey, setEnrollmentsRefreshKey] = useState(0);
+  const [generatingSecondaryPassword, setGeneratingSecondaryPassword] = useState(false);
 
   // Filtre "Fiche sanitaire" : vue dédiée, groupée par classe, en remplacement de la
   // grille habituelle tant qu'un critère est sélectionné.
@@ -87,15 +88,52 @@ export default function AdminEnrollments() {
   const [selectedFamilyDetails, setSelectedFamilyDetails] = useState(null);
   const [familyDetailsLoading, setFamilyDetailsLoading] = useState(false);
 
-  useEffect(() => {
-    setPagination((prev) => ({ ...prev, page: 1 }));
-  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, selectedPaymentStatus]);
+  // Recherches texte : débouncées (300ms) pour ne pas déclencher un appel réseau à
+  // chaque frappe — les champs restent branchés sur studentSearch/familySearch pour
+  // une saisie fluide, seule la valeur utilisée pour filtrer est différée.
+  const [debouncedStudentSearch, setDebouncedStudentSearch] = useState('');
+  const [debouncedFamilySearch, setDebouncedFamilySearch] = useState('');
 
   useEffect(() => {
+    const timer = setTimeout(() => setDebouncedStudentSearch(studentSearch), 300);
+    return () => clearTimeout(timer);
+  }, [studentSearch]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedFamilySearch(familySearch), 300);
+    return () => clearTimeout(timer);
+  }, [familySearch]);
+
+  // Classes & années scolaires : listes de référence indépendantes des filtres de
+  // recherche, chargées une seule fois (pas de raison de les refaire à chaque frappe).
+  useEffect(() => {
+    Promise.all([
+      api.get('/admin/classes'),
+      api.get('/admin/school-years'),
+    ])
+      .then(([classesRes, yearsRes]) => {
+        setClasses(classesRes.data.classes || []);
+        setSchoolYears(yearsRes.data.schoolYears || []);
+      })
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+  }, [provisionalOnly, debouncedStudentSearch, selectedPole, selectedClassId, selectedStatusFilter, debouncedFamilySearch, selectedPaymentStatus]);
+
+  useEffect(() => {
+    // Garde anti-course : si les filtres changent avant que cette requête ne soit
+    // revenue, sa réponse (désormais obsolète) ne doit pas écraser l'affichage avec
+    // un résultat qui ne correspond plus aux filtres actuels. C'était la cause du
+    // bug "la recherche n'est pas prise en compte au premier essai" — la réponse à
+    // la recherche vide (chargement initial) pouvait revenir après celle de la
+    // recherche déjà tapée et l'effacer.
+    let active = true;
     setLoading(true);
     const params = new URLSearchParams();
     if (provisionalOnly) params.set('provisional', 'true');
-    if (studentSearch.trim()) params.set('studentName', studentSearch.trim());
+    if (debouncedStudentSearch.trim()) params.set('studentName', debouncedStudentSearch.trim());
     if (selectedPole) params.set('poleId', selectedPole);
     if (selectedClassId) params.set('classId', selectedClassId);
     if (selectedStatusFilter === 'WAITLIST') {
@@ -103,23 +141,20 @@ export default function AdminEnrollments() {
     } else if (selectedStatusFilter) {
       params.set('status', selectedStatusFilter);
     }
-    if (familySearch.trim()) params.set('familyName', familySearch.trim());
+    if (debouncedFamilySearch.trim()) params.set('familyName', debouncedFamilySearch.trim());
     if (selectedPaymentStatus) params.set('paymentStatus', selectedPaymentStatus);
     params.set('page', pagination.page);
     params.set('limit', pagination.limit);
-    const enrollmentsCall = api.get(`/admin/enrollments?${params.toString()}`);
-    Promise.all([
-      enrollmentsCall,
-      api.get('/admin/classes'),
-      api.get('/admin/school-years'),
-    ])
-      .then(([enrollmentsRes, classesRes, yearsRes]) => {
-        setEnrollments(enrollmentsRes.data.enrollments || []);
+
+    api.get(`/admin/enrollments?${params.toString()}`)
+      .then(({ data }) => {
+        if (!active) return;
+        setEnrollments(data.enrollments || []);
         setPagination((prev) => {
-          const nextPage = enrollmentsRes.data.page || prev.page;
-          const nextLimit = enrollmentsRes.data.limit || prev.limit;
-          const nextTotal = enrollmentsRes.data.total || 0;
-          const nextTotalPages = enrollmentsRes.data.totalPages || Math.max(Math.ceil(nextTotal / nextLimit), 1);
+          const nextPage = data.page || prev.page;
+          const nextLimit = data.limit || prev.limit;
+          const nextTotal = data.total || 0;
+          const nextTotalPages = data.totalPages || Math.max(Math.ceil(nextTotal / nextLimit), 1);
           if (
             prev.page === nextPage &&
             prev.limit === nextLimit &&
@@ -136,19 +171,20 @@ export default function AdminEnrollments() {
             totalPages: nextTotalPages,
           };
         });
-        setClasses(classesRes.data.classes || []);
-        setSchoolYears(yearsRes.data.schoolYears || []);
       })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [provisionalOnly, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, selectedPaymentStatus, pagination.page, pagination.limit, enrollmentsRefreshKey]);
+      .catch((err) => { if (active) console.error(err); })
+      .finally(() => { if (active) setLoading(false); });
+
+    return () => { active = false; };
+  }, [provisionalOnly, debouncedStudentSearch, selectedPole, selectedClassId, selectedStatusFilter, debouncedFamilySearch, selectedPaymentStatus, pagination.page, pagination.limit, enrollmentsRefreshKey]);
 
   useEffect(() => {
     if (!healthCriteria) { setHealthResults([]); return; }
+    let active = true;
     setHealthLoading(true);
     const params = new URLSearchParams();
     params.set('healthCriteria', healthCriteria);
-    if (studentSearch.trim()) params.set('studentName', studentSearch.trim());
+    if (debouncedStudentSearch.trim()) params.set('studentName', debouncedStudentSearch.trim());
     if (selectedPole) params.set('poleId', selectedPole);
     if (selectedClassId) params.set('classId', selectedClassId);
     if (selectedStatusFilter === 'WAITLIST') {
@@ -156,14 +192,15 @@ export default function AdminEnrollments() {
     } else if (selectedStatusFilter) {
       params.set('status', selectedStatusFilter);
     }
-    if (familySearch.trim()) params.set('familyName', familySearch.trim());
+    if (debouncedFamilySearch.trim()) params.set('familyName', debouncedFamilySearch.trim());
     params.set('page', '1');
     params.set('limit', '5000');
     api.get(`/admin/enrollments?${params.toString()}`)
-      .then(({ data }) => setHealthResults(data.enrollments || []))
-      .catch(() => toast.error('Impossible de charger les inscriptions (fiche sanitaire)'))
-      .finally(() => setHealthLoading(false));
-  }, [healthCriteria, studentSearch, selectedPole, selectedClassId, selectedStatusFilter, familySearch, enrollmentsRefreshKey]);
+      .then(({ data }) => { if (active) setHealthResults(data.enrollments || []); })
+      .catch(() => { if (active) toast.error('Impossible de charger les inscriptions (fiche sanitaire)'); })
+      .finally(() => { if (active) setHealthLoading(false); });
+    return () => { active = false; };
+  }, [healthCriteria, debouncedStudentSearch, selectedPole, selectedClassId, selectedStatusFilter, debouncedFamilySearch, enrollmentsRefreshKey]);
 
   const healthGroupedByClass = useMemo(() => {
     const groups = new Map();
@@ -687,6 +724,7 @@ export default function AdminEnrollments() {
         phonePrimary: enrollment.student?.family?.phonePrimary || '',
         phoneSecondary: enrollment.student?.family?.phoneSecondary || '',
         email: enrollment.student?.family?.user?.email || enrollment.student?.family?.email || '',
+        emailSecondary: enrollment.student?.family?.emailSecondary || '',
       },
       healthForm: {
         hasChronicDisease: Boolean(healthForm.hasChronicDisease),
@@ -1268,6 +1306,20 @@ export default function AdminEnrollments() {
     setModalOpen(false);
     setEditingEnrollment(null);
     setEditForm(null);
+  };
+
+  const handleGenerateSecondaryPassword = async () => {
+    const familyId = editingEnrollment?.student?.family?.id;
+    if (!familyId) return;
+    setGeneratingSecondaryPassword(true);
+    try {
+      await api.post(`/admin/families/${familyId}/secondary-password`);
+      toast.success('Mot de passe généré et envoyé à l\'adresse secondaire');
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Impossible de générer le mot de passe');
+    } finally {
+      setGeneratingSecondaryPassword(false);
+    }
   };
 
   const closeRecordModal = () => {
@@ -1929,6 +1981,30 @@ export default function AdminEnrollments() {
                     value={editForm.family.email || ''}
                     onChange={(event) => updateEditForm('family', 'email', event.target.value)}
                   />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Email secondaire</label>
+                  <input
+                    type="email"
+                    className="form-control"
+                    placeholder="Optionnel — reçoit aussi les notifications automatiques"
+                    value={editForm.family.emailSecondary || ''}
+                    onChange={(event) => updateEditForm('family', 'emailSecondary', event.target.value)}
+                  />
+                  {editingEnrollment?.student?.family?.emailSecondary && (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      style={{ marginTop: 6 }}
+                      disabled={generatingSecondaryPassword}
+                      onClick={handleGenerateSecondaryPassword}
+                    >
+                      {generatingSecondaryPassword ? 'Envoi…' : '🔑 Générer un mot de passe pour cette adresse'}
+                    </button>
+                  )}
+                  <p style={{ margin: '4px 0 0', fontSize: 11, color: '#6B7280' }}>
+                    Un mot de passe distinct doit être généré ici pour que cette adresse puisse se connecter à l'espace famille.
+                  </p>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Téléphone principal</label>

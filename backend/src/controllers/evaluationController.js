@@ -4,6 +4,7 @@ const PDFDocument = require('pdfkit');
 const {
   fetchLessonsByClass,
   fetchEvaluations,
+  fetchClassGradeSummary,
   computeStats,
   upsertEvaluation,
   fetchPeriodNotes,
@@ -102,6 +103,22 @@ async function getEvaluationStats(req, res) {
   } catch (error) {
     console.error('Erreur getEvaluationStats:', error);
     return res.status(500).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function getClassRanking(req, res) {
+  try {
+    const { classId } = req.query;
+    if (!classId) {
+      return res.status(400).json({ error: 'classId est requis' });
+    }
+
+    const ranking = await fetchClassGradeSummary({ teacherUserId: req.user.id, classId });
+    return res.json({ ranking });
+  } catch (error) {
+    console.error('Erreur getClassRanking:', error);
+    const status = error.statusCode || (error.message.includes('accès') ? 403 : 500);
+    return res.status(status).json({ error: error.message || 'Erreur serveur' });
   }
 }
 
@@ -417,6 +434,7 @@ module.exports = {
   getEvaluations,
   postEvaluation,
   getEvaluationStats,
+  getClassRanking,
   getLessons,
   getPeriodNotes,
   postPeriodNote,

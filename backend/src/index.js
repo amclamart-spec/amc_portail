@@ -10,6 +10,7 @@ const config = require('./config');
 const routes = require('./routes');
 const authRoutes = require('./routes/auth');
 const configurePassport = require('./config/passport');
+const { startWeeklyRecapScheduler } = require('./services/weeklyRecapService');
 // SEPA scheduler disabled: mandate-first should not rely on backend polling for pending payments
 
 const app = express();
@@ -79,6 +80,8 @@ const server = app.listen(PORT, () => {
   `);
 
   // SEPA scheduler disabled by default for mandate-first flow
+
+  startWeeklyRecapScheduler();
 });
 
 server.on('error', (error) => {

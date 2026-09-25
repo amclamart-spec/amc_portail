@@ -9,6 +9,7 @@ const {
   getPedagogyAbsences,
   getPedagogyHomework,
   getPedagogyNotes,
+  postDeclareAbsence,
   postPedagogyJustification,
   deletePedagogyJustificationDocument,
   putHomeworkCompletion,
@@ -27,6 +28,7 @@ router.get('/pedagogy/absences', getPedagogyAbsences);
 router.get('/pedagogy/homework', getPedagogyHomework);
 router.put('/pedagogy/homework/:homeworkId/completion', putHomeworkCompletion);
 router.get('/pedagogy/notes', getPedagogyNotes);
+router.post('/pedagogy/absences/declare', postDeclareAbsence);
 router.post('/pedagogy/absences/:evaluationId/justify', postPedagogyJustification);
 router.delete('/pedagogy/absences/:evaluationId/documents/:documentId', deletePedagogyJustificationDocument);
 router.post('/profile', requireApproved, createOrUpdateProfile);
