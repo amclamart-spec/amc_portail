@@ -141,6 +141,137 @@ const ABSENCE_REASONS = ['MALADE', 'VOYAGE', 'AUTRE'];
 // automatique dès qu'un document est fourni.
 const AUTO_VALIDATE_POLE = 'coran';
 const AUTO_VALIDATE_REASONS = ['MALADE', 'VOYAGE'];
+// Même correspondance que côté professeur (SuiviPedagogique.jsx, DAY_MAP) pour
+// vérifier qu'une déclaration anticipée tombe bien sur le jour de cours de la classe.
+const DAY_OF_WEEK_INDEX = { DIMANCHE: 0, LUNDI: 1, MARDI: 2, MERCREDI: 3, JEUDI: 4, VENDREDI: 5, SAMEDI: 6 };
+
+// Déclaration d'absence future par la famille (avant que le cours n'ait eu lieu) :
+// crée (ou réutilise) la leçon du jour visé puis l'Evaluation correspondante en
+// statut 'missing' + justification déjà renseignée en attente de validation —
+// elle apparaît alors immédiatement dans la feuille d'appel du professeur/
+// responsable de pôle pour cette date, exactement comme une absence a posteriori.
+async function declareAbsence({ familyUserId, studentId, classId, date, reason, comment, documents }) {
+  if (!classId) {
+    const err = new Error('classId est requis');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!comment || !comment.trim()) {
+    const err = new Error('Le commentaire est requis');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!ABSENCE_REASONS.includes(reason)) {
+    const err = new Error('Le motif d\'absence est requis (Malade, Voyage ou Autre)');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, family: { userId: familyUserId } },
+    include: {
+      enrollments: {
+        where: { status: { in: FAMILY_VISIBLE_ENROLLMENT_STATUSES }, classId },
+        include: { class: true },
+      },
+    },
+  });
+  if (!student) {
+    const err = new Error('Élève introuvable pour cette famille');
+    err.statusCode = 404;
+    throw err;
+  }
+  const enrollment = student.enrollments[0];
+  if (!enrollment) {
+    const err = new Error('Cet élève n\'est pas inscrit à ce cours');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const targetDate = new Date(date);
+  targetDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (Number.isNaN(targetDate.getTime()) || targetDate < today) {
+    const err = new Error('La date doit être aujourd\'hui ou dans le futur');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const expectedDay = DAY_OF_WEEK_INDEX[enrollment.class?.dayOfWeek];
+  if (expectedDay !== undefined && targetDate.getDay() !== expectedDay) {
+    const dayLabel = enrollment.class.dayOfWeek.charAt(0) + enrollment.class.dayOfWeek.slice(1).toLowerCase();
+    const err = new Error(`Ce cours a lieu le ${dayLabel} — veuillez choisir une date correspondante`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const newDocuments = Array.isArray(documents) ? documents.filter((doc) => doc && doc.base64) : [];
+
+  const nextDate = new Date(targetDate);
+  nextDate.setDate(nextDate.getDate() + 1);
+
+  let lesson = await prisma.lesson.findFirst({
+    where: { classId, date: { gte: targetDate, lt: nextDate } },
+  });
+  if (!lesson) {
+    lesson = await prisma.lesson.create({
+      data: {
+        classId,
+        title: `Absence déclarée (${targetDate.toLocaleDateString('fr-FR')})`,
+        description: 'Séance créée automatiquement suite à une déclaration d\'absence anticipée par la famille',
+        date: targetDate,
+      },
+    });
+  }
+
+  const existingEvaluation = await prisma.evaluation.findUnique({
+    where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
+    include: { justificationDocuments: true },
+  });
+  const existingDocCount = existingEvaluation?.justificationDocuments.length || 0;
+  if (existingDocCount + newDocuments.length > MAX_JUSTIFICATION_DOCUMENTS) {
+    const err = new Error(`Vous ne pouvez pas joindre plus de ${MAX_JUSTIFICATION_DOCUMENTS} documents`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const evaluation = await prisma.evaluation.upsert({
+    where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
+    create: {
+      studentId,
+      lessonId: lesson.id,
+      grade: 0,
+      appreciation: '',
+      submitted: false,
+      status: 'missing',
+      familyJustification: comment.trim(),
+      justificationStatus: 'PENDING',
+      absenceReason: reason,
+      declaredInAdvance: true,
+    },
+    update: {
+      status: 'missing',
+      familyJustification: comment.trim(),
+      justificationStatus: 'PENDING',
+      absenceReason: reason,
+      declaredInAdvance: true,
+    },
+  });
+
+  for (const doc of newDocuments) {
+    const fileUrl = saveBase64File(doc.base64, 'absence-justifications', doc.fileName);
+    await prisma.absenceJustificationDocument.create({
+      data: {
+        evaluationId: evaluation.id,
+        fileUrl,
+        fileName: doc.fileName || path.basename(fileUrl),
+      },
+    });
+  }
+
+  return { evaluationId: evaluation.id };
+}
 
 async function submitFamilyJustification({ familyUserId, evaluationId, comment, documents, reason }) {
   if (!comment || !comment.trim()) {
@@ -387,6 +518,7 @@ module.exports = {
   fetchStudentAbsences,
   fetchStudentHomework,
   fetchStudentNotes,
+  declareAbsence,
   submitFamilyJustification,
   deleteJustificationDocument,
   setHomeworkCompletion,

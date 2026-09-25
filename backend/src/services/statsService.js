@@ -16,8 +16,12 @@ async function computeModuleStats({ teacherUserId, classId, module }) {
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
 
+  // Même définition que le reste de l'espace professeur (feuille d'appel, liste des
+  // élèves des devoirs, classement) : seuls les élèves à l'inscription confirmée et
+  // hors liste d'attente comptent comme "élèves de la classe" — sinon ce KPI comptait
+  // aussi les inscriptions encore PENDING, gonflant l'effectif affiché.
   const totalStudents = await prisma.enrollment.count({
-    where: { classId, status: { in: ['PENDING', 'CONFIRMED'] } },
+    where: { classId, status: 'CONFIRMED', isWaitlist: false },
   });
 
   // Module Absences: absence rate + lessons with evaluations
@@ -67,6 +71,29 @@ async function computeModuleStats({ teacherUserId, classId, module }) {
       submissionRate,
       homeworkCount: homeworkMessagesCount,
       totalStudents,
+    };
+  }
+
+  // Tableau de bord : vue d'ensemble de la classe (taux d'absence + nombre de
+  // devoirs publiés), indépendante de l'onglet actif — corrige les KPI du
+  // Tableau de bord qui reprenaient auparavant les stats laissées par le
+  // dernier onglet (Absences/Devoirs/Notes) visité, voire aucune au premier
+  // chargement.
+  if (module === 'dashboard') {
+    const [allEvaluations, homeworkMessagesCount] = await Promise.all([
+      prisma.evaluation.findMany({ where: { lesson: { classId } } }),
+      prisma.homeworkMessage.count({ where: { classId } }),
+    ]);
+
+    const absentCount = allEvaluations.filter((e) => e.status === 'missing').length;
+    const absenceRate = allEvaluations.length > 0
+      ? Number(((absentCount / allEvaluations.length) * 100).toFixed(1))
+      : 0;
+
+    return {
+      totalStudents,
+      absenceRate,
+      homeworkCount: homeworkMessagesCount,
     };
   }
 

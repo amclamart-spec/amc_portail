@@ -136,6 +136,14 @@ model Family {
   country           String        @default("France")
   phonePrimary      String        @map("phone_primary")
   phoneSecondary    String?       @map("phone_secondary")
+  // Adresse email secondaire (en plus de l'email du compte, "principal") : toutes
+  // les notifications automatiques envoyées à la famille (absences, mailing,
+  // paiements...) partent aussi vers cette adresse quand elle est renseignée.
+  emailSecondary    String?       @map("email_secondary")
+  // Mot de passe dédié à l'email secondaire (distinct de User.passwordHash, celui
+  // de l'email principal) : généré par un admin puis envoyé par email — la connexion
+  // avec l'email secondaire est refusée tant qu'aucun mot de passe n'a été défini ici.
+  emailSecondaryPasswordHash String? @map("email_secondary_password_hash")
   accountStatus     AccountStatus @default(ACTIVE) @map("account_status")
   notificationPrefs Json?         @default("{\"email\": true, \"sms\": false}") @map("notification_prefs")
   createdAt         DateTime      @default(now()) @map("created_at")
@@ -608,6 +616,9 @@ model Evaluation {
   familyJustification String?          @map("family_justification")
   justificationStatus String           @default("NONE") @map("justification_status")
   absenceReason       String?          @map("absence_reason")
+  // true = déclaration anticipée par la famille (avant le cours, familyPedagogyService.declareAbsence) ;
+  // false = absence déjà enregistrée (par le professeur ou une séance passée) puis justifiée a posteriori.
+  declaredInAdvance   Boolean          @default(false) @map("declared_in_advance")
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 

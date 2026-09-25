@@ -5,6 +5,7 @@ const {
   getEvaluations,
   postEvaluation,
   getEvaluationStats,
+  getClassRanking,
   getLessons,
   getPeriodNotes,
   postPeriodNote,
@@ -16,6 +17,7 @@ router.use(authenticate, authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES)
 
 router.get('/', getEvaluations);
 router.get('/stats', getEvaluationStats);
+router.get('/ranking', getClassRanking);
 router.get('/period', getPeriodNotes);
 router.get('/lessons', getLessons);
 router.post('/', postEvaluation);

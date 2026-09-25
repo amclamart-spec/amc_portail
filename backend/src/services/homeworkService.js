@@ -124,30 +124,17 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
   const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
   if (!classRecord) throw new Error('Vous n’avez pas accès à cette classe');
 
-  // Get current school year (September to August)
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const schoolYearStart = new Date(currentYear, 8, 1); // September 1st
-  const schoolYearEnd = new Date(currentYear + 1, 7, 31); // August 31st
-
-  // If we're before September, we're in the previous school year
-  if (now < schoolYearStart) {
-    schoolYearStart.setFullYear(currentYear - 1);
-    schoolYearEnd.setFullYear(currentYear);
-  }
-
   const totalStudents = await prisma.enrollment.count({
     where: { classId, status: { in: ['PENDING', 'CONFIRMED'] } },
   });
 
+  // Pas de filtre par année scolaire ici : `classId` scope déjà à une seule année
+  // (chaque Class a son propre schoolYearId). Un filtre calculé sur la date du jour
+  // (indépendant du schoolYearId réel de la classe) masquait silencieusement des
+  // devoirs bien réels dès que leur date sortait de cette fenêtre glissante Sept-Août
+  // — même bug que celui corrigé sur le classement des absences.
   const homeworks = await prisma.homeworkMessage.findMany({
-    where: {
-      classId,
-      date: {
-        gte: schoolYearStart,
-        lte: schoolYearEnd,
-      },
-    },
+    where: { classId },
     include: {
       completions: {
         include: { student: true },

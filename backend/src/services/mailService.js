@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const config = require('../config');
 const { sendMail } = require('./emailService');
+const { getFamilyEmailRecipients } = require('../utils/familyEmailUtils');
 
 const prisma = new PrismaClient();
 
@@ -39,9 +40,7 @@ async function getRecipients(recipientType, poleId, levelId, classId) {
           user: { select: { email: true } },
         },
       });
-      return families
-        .filter((f) => f.user?.email)
-        .map((f) => ({ email: f.user.email, name: f.familyName }));
+      return families.flatMap((f) => getFamilyEmailRecipients(f).map((email) => ({ email, name: f.familyName })));
     }
 
     if (recipientType === 'TEACHERS') {
@@ -75,13 +74,11 @@ async function getRecipients(recipientType, poleId, levelId, classId) {
 
       const uniqueFamilies = new Map();
       enrollments.forEach((e) => {
-        const email = e.student.family.user?.email;
-        if (email && !uniqueFamilies.has(email)) {
-          uniqueFamilies.set(email, {
-            email,
-            name: e.student.family.familyName,
-          });
-        }
+        getFamilyEmailRecipients(e.student.family).forEach((email) => {
+          if (!uniqueFamilies.has(email)) {
+            uniqueFamilies.set(email, { email, name: e.student.family.familyName });
+          }
+        });
       });
       return Array.from(uniqueFamilies.values());
     }
@@ -109,13 +106,11 @@ async function getRecipients(recipientType, poleId, levelId, classId) {
 
       const uniqueFamilies = new Map();
       enrollments.forEach((e) => {
-        const email = e.student.family.user?.email;
-        if (email && !uniqueFamilies.has(email)) {
-          uniqueFamilies.set(email, {
-            email,
-            name: e.student.family.familyName,
-          });
-        }
+        getFamilyEmailRecipients(e.student.family).forEach((email) => {
+          if (!uniqueFamilies.has(email)) {
+            uniqueFamilies.set(email, { email, name: e.student.family.familyName });
+          }
+        });
       });
       return Array.from(uniqueFamilies.values());
     }
@@ -143,13 +138,11 @@ async function getRecipients(recipientType, poleId, levelId, classId) {
 
       const uniqueFamilies = new Map();
       enrollments.forEach((e) => {
-        const email = e.student.family.user?.email;
-        if (email && !uniqueFamilies.has(email)) {
-          uniqueFamilies.set(email, {
-            email,
-            name: e.student.family.familyName,
-          });
-        }
+        getFamilyEmailRecipients(e.student.family).forEach((email) => {
+          if (!uniqueFamilies.has(email)) {
+            uniqueFamilies.set(email, { email, name: e.student.family.familyName });
+          }
+        });
       });
       return Array.from(uniqueFamilies.values());
     }
@@ -379,14 +372,16 @@ async function getRecipientsByCriteria({ population, objet, statut, classIds }) 
     const famMap = new Map();
     for (const e of enrollments) {
       const fam = e.student?.family;
-      const email = fam?.user?.email;
-      if (email && !famMap.has(email)) {
-        famMap.set(email, {
-          email,
-          firstName: fam.user.firstName || '',
-          lastName: fam.familyName || fam.user.lastName || '',
-        });
-      }
+      if (!fam) continue;
+      getFamilyEmailRecipients(fam).forEach((email) => {
+        if (!famMap.has(email)) {
+          famMap.set(email, {
+            email,
+            firstName: fam.user.firstName || '',
+            lastName: fam.familyName || fam.user.lastName || '',
+          });
+        }
+      });
     }
     return Array.from(famMap.values());
   }
@@ -408,14 +403,16 @@ async function getRecipientsByCriteria({ population, objet, statut, classIds }) 
       });
       for (const e of enrollments) {
         const fam = e.student?.family;
-        const email = fam?.user?.email;
-        if (email && !famMap.has(email)) {
-          famMap.set(email, {
-            email,
-            firstName: fam.user.firstName || '',
-            lastName: fam.familyName || fam.user.lastName || '',
-          });
-        }
+        if (!fam) continue;
+        getFamilyEmailRecipients(fam).forEach((email) => {
+          if (!famMap.has(email)) {
+            famMap.set(email, {
+              email,
+              firstName: fam.user.firstName || '',
+              lastName: fam.familyName || fam.user.lastName || '',
+            });
+          }
+        });
       }
     } else if (objet === 'PAIEMENT') {
       const paymentWhere = statut === 'VALIDE'
@@ -426,14 +423,16 @@ async function getRecipientsByCriteria({ population, objet, statut, classIds }) 
         include: { family: { include: { user: { select: { email: true, firstName: true, lastName: true } } } } },
       });
       for (const p of payments) {
-        const email = p.family?.user?.email;
-        if (email && !famMap.has(email)) {
-          famMap.set(email, {
-            email,
-            firstName: p.family.user.firstName || '',
-            lastName: p.family.familyName || p.family.user.lastName || '',
-          });
-        }
+        if (!p.family) continue;
+        getFamilyEmailRecipients(p.family).forEach((email) => {
+          if (!famMap.has(email)) {
+            famMap.set(email, {
+              email,
+              firstName: p.family.user.firstName || '',
+              lastName: p.family.familyName || p.family.user.lastName || '',
+            });
+          }
+        });
       }
     }
 

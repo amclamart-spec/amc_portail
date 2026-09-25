@@ -161,6 +161,15 @@ function EmptyState({ icon, text }) {
   );
 }
 
+/* ─── déclaration/justification famille d'une absence (feuille d'appel) ─────── */
+const ABSENCE_REASON_LABELS = { MALADE: 'Malade', VOYAGE: 'Voyage', AUTRE: 'Autre' };
+const JUSTIF_STATUS_META = {
+  PENDING:   { label: 'En attente de validation', color: '#92400E' },
+  VALIDATED: { label: 'Validée',                  color: '#166534' },
+  REJECTED:  { label: 'Refusée',                  color: '#991B1B' },
+};
+const JUSTIF_PAGE_SIZE = 5;
+
 /* ─── tabs config ──────────────────────────────────────────────────────────── */
 const TABS = [
   { id: 'dashboard', label: 'Tableau de bord', icon: '📊' },
@@ -196,6 +205,15 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
   const [editHomework,        setEditHomework]        = useState(null);
   const [editBody,            setEditBody]            = useState('');
   const [expandedHomeworkId,  setExpandedHomeworkId]  = useState(null);
+  const [expandedFamilyDeclId, setExpandedFamilyDeclId] = useState(null);
+  const [decidingJustificationId, setDecidingJustificationId] = useState(null);
+  const [justifTypeFilter,    setJustifTypeFilter]    = useState('ALL'); // ALL | ADVANCE | POSTERIORI
+  const [justifPage,          setJustifPage]          = useState(1);
+  const [hwDateFrom,          setHwDateFrom]          = useState('');
+  const [hwDateTo,            setHwDateTo]            = useState('');
+  const [hwStatusFilter,      setHwStatusFilter]      = useState('ALL'); // ALL | COMPLETE | PARTIAL | NONE
+  const [hwAttachmentFilter,  setHwAttachmentFilter]  = useState('ALL'); // ALL | WITH | WITHOUT
+  const [hwSearch,            setHwSearch]            = useState('');
 
   /* ── new: tab + bulletin state ── */
   const [tab,                 setTab]                 = useState('dashboard');
@@ -248,16 +266,58 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
   }, [absenceRanking, rankingJustifFilter]);
 
   const {
-    evaluations, stats, homeworkHistory, loading, error,
-    fetchEvaluations, fetchStats, fetchLessons, fetchAbsences,
-    fetchAbsenceHistory, fetchClassStudents, fetchHomeworkMessage, fetchHomeworkHistory,
+    stats, homeworkHistory, classJustifications, classRanking, loading, error,
+    fetchClassRanking, fetchStats, fetchLessons, fetchAbsences,
+    fetchAbsenceHistory, fetchClassJustifications, decideJustification, fetchClassStudents, fetchHomeworkMessage, fetchHomeworkHistory,
     saveHomeworkMessage, deleteHomeworkMessage, saveAbsences, saveEvaluations,
     fetchPeriodNotes, savePeriodNote,
   } = useEvaluations();
 
+  /* ── historique des devoirs : filtrage par date, statut de complétion, pièce jointe et recherche texte ── */
+  const filteredHomeworkHistory = useMemo(() => {
+    const search = hwSearch.trim().toLowerCase();
+    return [...(homeworkHistory || [])]
+      .filter((hw) => {
+        if (hwDateFrom && new Date(hw.date) < new Date(hwDateFrom)) return false;
+        if (hwDateTo && new Date(hw.date) > new Date(hwDateTo)) return false;
+        if (hwAttachmentFilter === 'WITH' && !hw.attachmentUrl) return false;
+        if (hwAttachmentFilter === 'WITHOUT' && hw.attachmentUrl) return false;
+        if (hwStatusFilter !== 'ALL') {
+          const done = (hw.completions || []).length;
+          const total = hw.totalStudents ?? 0;
+          if (hwStatusFilter === 'COMPLETE' && !(total > 0 && done >= total)) return false;
+          if (hwStatusFilter === 'PARTIAL' && !(done > 0 && done < total)) return false;
+          if (hwStatusFilter === 'NONE' && done !== 0) return false;
+        }
+        if (search && !(hw.body || '').toLowerCase().includes(search)) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [homeworkHistory, hwDateFrom, hwDateTo, hwStatusFilter, hwAttachmentFilter, hwSearch]);
+
+  /* ── déclarations/justificatifs famille : filtre par type + pagination (5 par page) ── */
+  const filteredJustifications = useMemo(() => {
+    return classJustifications.filter((d) => {
+      if (justifTypeFilter === 'ADVANCE') return d.declaredInAdvance;
+      if (justifTypeFilter === 'POSTERIORI') return !d.declaredInAdvance;
+      return true;
+    });
+  }, [classJustifications, justifTypeFilter]);
+  const justifTotalPages = Math.max(Math.ceil(filteredJustifications.length / JUSTIF_PAGE_SIZE), 1);
+  const paginatedJustifications = filteredJustifications.slice((justifPage - 1) * JUSTIF_PAGE_SIZE, justifPage * JUSTIF_PAGE_SIZE);
+
+  useEffect(() => {
+    setJustifPage(1);
+  }, [justifTypeFilter, selectedClassId]);
+
+  useEffect(() => {
+    setJustifPage((prev) => Math.min(prev, justifTotalPages));
+  }, [justifTotalPages]);
+
   /* ── sync tab → activeModule ── */
   useEffect(() => {
-    if (tab === 'absences')                setActiveModule('absences');
+    if (tab === 'dashboard')               setActiveModule('dashboard');
+    else if (tab === 'absences')                setActiveModule('absences');
     else if (tab === 'devoirs')            setActiveModule('devoirs');
     else if (tab === 'notes' || tab === 'bulletin') setActiveModule('notes');
   }, [tab]);
@@ -297,6 +357,26 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
     }
   }, [activeModule, selectedClassId, fetchHomeworkHistory]);
 
+  /* ── load family absence declarations/justifications ── */
+  useEffect(() => {
+    if (activeModule === 'absences' && selectedClassId) {
+      fetchClassJustifications({ classId: selectedClassId });
+    }
+  }, [activeModule, selectedClassId, fetchClassJustifications]);
+
+  const handleJustificationDecision = async (evaluationId, decision) => {
+    setDecidingJustificationId(evaluationId);
+    try {
+      await decideJustification({ evaluationId, decision });
+      toast.success(decision === 'VALIDATED' ? 'Déclaration validée' : 'Déclaration refusée');
+      fetchClassJustifications({ classId: selectedClassId });
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Impossible de mettre à jour cette déclaration');
+    } finally {
+      setDecidingJustificationId(null);
+    }
+  };
+
   /* ── load students whenever class changes ── */
   useEffect(() => {
     if (!selectedClassId) { setClassStudents([]); setRows([]); return; }
@@ -310,6 +390,12 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
   /* ── load data by module ── */
   useEffect(() => {
     if (!selectedClassId) { setRows([]); return; }
+
+    if (activeModule === 'dashboard') {
+      fetchStats({ classId: selectedClassId, module: 'dashboard' });
+      fetchClassRanking({ classId: selectedClassId });
+      return;
+    }
 
     if (activeModule === 'absences') {
       if (!dateFilter) return;
@@ -343,7 +429,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
       });
       fetchStats({ classId: selectedClassId, module: 'notes' });
     }
-  }, [activeModule, dateFilter, selectedClassId, selectedPeriod, fetchAbsences, fetchHomeworkMessage, fetchStats, fetchPeriodNotes]);
+  }, [activeModule, dateFilter, selectedClassId, selectedPeriod, fetchAbsences, fetchHomeworkMessage, fetchStats, fetchClassRanking, fetchPeriodNotes]);
 
   /* ── auto-select period ── */
   useEffect(() => {
@@ -367,10 +453,10 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
     setBulletinAppreciation('');
   }, [selectedClassId]);
 
-  /* ── absences ranking sidebar (classe Coran uniquement) ── */
+  /* ── absences ranking sidebar (toutes classes) ── */
   useEffect(() => {
     setAbsenceRanking([]);
-    if (!selectedClassId || !isCoranClass) return;
+    if (!selectedClassId) return;
 
     let cancelled = false;
     setLoadingRanking(true);
@@ -380,7 +466,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
       .finally(() => { if (!cancelled) setLoadingRanking(false); });
 
     return () => { cancelled = true; };
-  }, [selectedClassId, isCoranClass]);
+  }, [selectedClassId]);
 
   /* ── export Excel du classement absences/retards (respecte le filtre actif) ── */
   const handleExportRanking = async () => {
@@ -445,11 +531,9 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
     if (ok) {
       toast.success('Absences enregistrées');
       fetchAbsences({ classId: selectedClassId, date: dateFilter }).then((data) => { if (data?.students) setRows(data.students.map((s) => ({ ...s }))); });
-      if (isCoranClass) {
-        api.get('/absences/ranking', { params: { classId: selectedClassId } })
-          .then(({ data }) => setAbsenceRanking(data.ranking || []))
-          .catch(() => {});
-      }
+      api.get('/absences/ranking', { params: { classId: selectedClassId } })
+        .then(({ data }) => setAbsenceRanking(data.ranking || []))
+        .catch(() => {});
     } else { toast.error('Échec de l\'enregistrement'); }
   };
 
@@ -514,10 +598,11 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
   };
 
   /* ── dashboard derived ── */
-  const ranking = useMemo(() => {
-    return [...(evaluations || [])].filter((r) => r.grade != null).sort((a, b) => b.grade - a.grade);
-  }, [evaluations]);
-  const studentsInDifficulty = useMemo(() => (evaluations || []).filter((r) => r.grade != null && r.grade < 6).length, [evaluations]);
+  // classRanking (moyenne par élève sur toute la classe, via /evaluations/ranking)
+  // — pas `evaluations`, qui ne contient que les notes d'une seule leçon sélectionnée
+  // et n'était jamais chargé sur cet onglet (KPI "Classement"/"En difficulté" à 0).
+  const ranking = classRanking;
+  const studentsInDifficulty = useMemo(() => classRanking.filter((r) => r.grade < 6).length, [classRanking]);
 
   /* ── bulletin derived ── */
   const bulletinRow   = noteRows.find((r) => String(r.id) === String(bulletinStudentId));
@@ -670,8 +755,139 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
 
       {/* ══════════════════════ ABSENCES ══════════════════════════════ */}
       {tab === 'absences' && (
-        <div className={isCoranClass ? 'ep-side-layout' : undefined}>
+        <div className="ep-side-layout">
         <div>
+          {/* Déclarations & justificatifs des familles */}
+          <div className="ep-sec" style={{ marginBottom: 14 }}>
+            <SecHead
+              action={
+                <select
+                  className="form-control"
+                  style={{ fontSize: 12, padding: '3px 6px', width: 'auto' }}
+                  value={justifTypeFilter}
+                  onChange={(e) => setJustifTypeFilter(e.target.value)}
+                >
+                  <option value="ALL">Tous les types</option>
+                  <option value="ADVANCE">Déclaration préalable</option>
+                  <option value="POSTERIORI">Justification a posteriori</option>
+                </select>
+              }
+            >
+              📩 Déclarations & justificatifs des familles
+              {classJustifications.length > 0 && (
+                <span style={{ fontWeight: 400, fontSize: 12, color: '#6B7280', marginLeft: 8 }}>
+                  {classJustifications.filter((d) => d.justificationStatus === 'PENDING').length} en attente / {classJustifications.length}
+                </span>
+              )}
+            </SecHead>
+            <div className="ep-sec-body" style={{ overflowX: 'auto' }}>
+              {classJustifications.length === 0 ? (
+                <EmptyState icon="📩" text="Aucune déclaration ou justificatif famille pour cette classe" />
+              ) : filteredJustifications.length === 0 ? (
+                <EmptyState icon="🔍" text="Aucune déclaration ne correspond à ce filtre" />
+              ) : (
+                <>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ padding: '8px 12px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' }}>Élève</th>
+                      <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' }}>Date</th>
+                      <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' }}>Type</th>
+                      <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left' }}>Motif</th>
+                      <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left' }}>Commentaire &amp; pièces jointes</th>
+                      <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' }}>Statut</th>
+                      <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedJustifications.map((d) => (
+                      <tr key={d.evaluationId}>
+                        <td style={{ padding: '7px 12px', fontWeight: 600, fontSize: 13, borderBottom: '1px solid var(--amc-border)', whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Avatar name={d.studentName} size={24} />
+                            {d.studentName}
+                          </div>
+                        </td>
+                        <td style={{ padding: '7px 10px', fontSize: 12, borderBottom: '1px solid var(--amc-border)', whiteSpace: 'nowrap' }}>
+                          {fmtDate(d.date, { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td style={{ padding: '7px 10px', fontSize: 12, borderBottom: '1px solid var(--amc-border)', whiteSpace: 'nowrap' }}>
+                          {d.declaredInAdvance ? (
+                            <span className="badge badge-info" style={{ fontSize: 10 }}>📅 Préalable</span>
+                          ) : (
+                            <span className="badge badge-gray" style={{ fontSize: 10 }}>📝 A posteriori</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '7px 10px', fontSize: 12, borderBottom: '1px solid var(--amc-border)' }}>
+                          {ABSENCE_REASON_LABELS[d.absenceReason] || d.absenceReason || '—'}
+                        </td>
+                        <td style={{ padding: '7px 10px', fontSize: 12, borderBottom: '1px solid var(--amc-border)', maxWidth: 320 }}>
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.4, marginBottom: (d.justificationDocuments || []).length > 0 ? 6 : 0 }}>
+                            {d.familyJustification || '—'}
+                          </div>
+                          {(d.justificationDocuments || []).length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {d.justificationDocuments.map((doc) => (
+                                <a
+                                  key={doc.id}
+                                  href={doc.fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  style={{ fontSize: 11, color: T.primary, background: 'var(--amc-light-bg-2)', border: '1px solid var(--amc-border)', borderRadius: 6, padding: '3px 7px', textDecoration: 'none' }}
+                                >
+                                  📎 {doc.fileName}
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: '7px 10px', fontSize: 12, borderBottom: '1px solid var(--amc-border)', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontWeight: 700, color: JUSTIF_STATUS_META[d.justificationStatus]?.color || '#92400E' }}>
+                            {JUSTIF_STATUS_META[d.justificationStatus]?.label || d.justificationStatus}
+                          </span>
+                        </td>
+                        <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--amc-border)', whiteSpace: 'nowrap' }}>
+                          {d.justificationStatus === 'PENDING' ? (
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                style={{ background: '#16A34A', color: '#fff', padding: '3px 8px' }}
+                                disabled={decidingJustificationId === d.evaluationId}
+                                onClick={() => handleJustificationDecision(d.evaluationId, 'VALIDATED')}
+                              >
+                                ✓ Valider
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-danger"
+                                style={{ padding: '3px 8px' }}
+                                disabled={decidingJustificationId === d.evaluationId}
+                                onClick={() => handleJustificationDecision(d.evaluationId, 'REJECTED')}
+                              >
+                                ✗ Refuser
+                              </button>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: 11, color: '#6B7280' }}>—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {justifTotalPages > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, fontSize: 12, color: '#6B7280' }}>
+                    <button type="button" className="btn btn-outline btn-sm" disabled={justifPage <= 1} onClick={() => setJustifPage((p) => Math.max(1, p - 1))}>← Précédent</button>
+                    <span>Page {justifPage} / {justifTotalPages}</span>
+                    <button type="button" className="btn btn-outline btn-sm" disabled={justifPage >= justifTotalPages} onClick={() => setJustifPage((p) => Math.min(justifTotalPages, p + 1))}>Suivant →</button>
+                  </div>
+                )}
+                </>
+              )}
+            </div>
+          </div>
+
           {/* Filters */}
           <div className="ep-sec" style={{ marginBottom: 14 }}>
             <SecHead>Filtres</SecHead>
@@ -728,22 +944,64 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                   </div>
                   {rows.map((r) => {
                     const st = r.status || 'on_time';
+                    const hasFamilyDeclaration = !!r.familyJustification;
+                    const isExpanded = expandedFamilyDeclId === r.studentId;
                     return (
-                      <div key={r.studentId} className="ep-student-card">
-                        <Avatar name={r.studentName} size={30} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {r.studentName}
+                      <div key={r.studentId}>
+                        <div className="ep-student-card">
+                          <Avatar name={r.studentName} size={30} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {r.studentName}
+                            </div>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+                              {r.absenceCount > 0 && (
+                                <span className="badge badge-danger" style={{ fontSize: 10 }}>{r.absenceCount} abs.</span>
+                              )}
+                              {hasFamilyDeclaration && (
+                                <button
+                                  type="button"
+                                  className="badge badge-warning"
+                                  style={{ fontSize: 10, border: 'none', cursor: 'pointer' }}
+                                  onClick={() => setExpandedFamilyDeclId((prev) => (prev === r.studentId ? null : r.studentId))}
+                                >
+                                  📩 Déclarée par la famille {isExpanded ? '▲' : '▼'}
+                                </button>
+                              )}
+                            </div>
                           </div>
-                          {r.absenceCount > 0 && (
-                            <span className="badge badge-danger" style={{ fontSize: 10 }}>{r.absenceCount} abs.</span>
-                          )}
+                          <div className="ep-toggle">
+                            <button className={`ep-toggle-btn${st === 'on_time' ? ' present' : ''}`} onClick={() => handleStatusToggle(r.studentId, 'on_time')}>✓ P</button>
+                            <button className={`ep-toggle-btn${st === 'missing' ? ' absent' : ''}`} onClick={() => handleStatusToggle(r.studentId, 'missing')}>✗ A</button>
+                            <button className={`ep-toggle-btn${st === 'late' ? ' retard' : ''}`} onClick={() => handleStatusToggle(r.studentId, 'late')}>⏱ R</button>
+                          </div>
                         </div>
-                        <div className="ep-toggle">
-                          <button className={`ep-toggle-btn${st === 'on_time' ? ' present' : ''}`} onClick={() => handleStatusToggle(r.studentId, 'on_time')}>✓ P</button>
-                          <button className={`ep-toggle-btn${st === 'missing' ? ' absent' : ''}`} onClick={() => handleStatusToggle(r.studentId, 'missing')}>✗ A</button>
-                          <button className={`ep-toggle-btn${st === 'late' ? ' retard' : ''}`} onClick={() => handleStatusToggle(r.studentId, 'late')}>⏱ R</button>
-                        </div>
+                        {hasFamilyDeclaration && isExpanded && (
+                          <div style={{ margin: '-4px 0 8px', padding: '8px 12px', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 'var(--amc-border-radius)', fontSize: 12, color: '#92400E' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                              <strong>{ABSENCE_REASON_LABELS[r.absenceReason] || r.absenceReason || 'Motif non précisé'}</strong>
+                              <span style={{ fontWeight: 700, color: JUSTIF_STATUS_META[r.justificationStatus]?.color || '#92400E' }}>
+                                {JUSTIF_STATUS_META[r.justificationStatus]?.label || 'En attente de validation'}
+                              </span>
+                            </div>
+                            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5, color: 'var(--amc-text)' }}>{r.familyJustification}</div>
+                            {(r.justificationDocuments || []).length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                                {r.justificationDocuments.map((doc) => (
+                                  <a
+                                    key={doc.id}
+                                    href={doc.fileUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ fontSize: 11, color: T.primary, background: '#fff', border: '1px solid var(--amc-border)', borderRadius: 6, padding: '3px 7px', textDecoration: 'none' }}
+                                  >
+                                    📎 {doc.fileName}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -753,8 +1011,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
           </div>
         </div>
 
-        {isCoranClass && (
-          <div className="ep-sec">
+        <div className="ep-sec">
             <SecHead
               action={
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -804,7 +1061,6 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
               )}
             </div>
           </div>
-        )}
         </div>
       )}
 
@@ -881,13 +1137,72 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
 
           {/* History section below */}
           <div style={{ marginTop: 14 }}>
+            <div className="ep-sec" style={{ marginBottom: 14 }}>
+              <SecHead
+                action={
+                  (hwDateFrom || hwDateTo || hwStatusFilter !== 'ALL' || hwAttachmentFilter !== 'ALL' || hwSearch) ? (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      style={{ fontSize: 11, padding: '2px 8px' }}
+                      onClick={() => { setHwDateFrom(''); setHwDateTo(''); setHwStatusFilter('ALL'); setHwAttachmentFilter('ALL'); setHwSearch(''); }}
+                    >
+                      Réinitialiser
+                    </button>
+                  ) : null
+                }
+              >
+                Filtres
+              </SecHead>
+              <div className="ep-sec-body">
+                <div className="ep-3col">
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: 'block' }}>Du</label>
+                    <input type="date" className="form-control" value={hwDateFrom} onChange={(e) => setHwDateFrom(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: 'block' }}>Au</label>
+                    <input type="date" className="form-control" value={hwDateTo} onChange={(e) => setHwDateTo(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: 'block' }}>Statut de complétion</label>
+                    <select className="form-control" value={hwStatusFilter} onChange={(e) => setHwStatusFilter(e.target.value)}>
+                      <option value="ALL">Tous</option>
+                      <option value="COMPLETE">Fait par tous les élèves</option>
+                      <option value="PARTIAL">Fait partiellement</option>
+                      <option value="NONE">Fait par personne</option>
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: 'block' }}>Pièce jointe</label>
+                    <select className="form-control" value={hwAttachmentFilter} onChange={(e) => setHwAttachmentFilter(e.target.value)}>
+                      <option value="ALL">Toutes</option>
+                      <option value="WITH">Avec pièce jointe</option>
+                      <option value="WITHOUT">Sans pièce jointe</option>
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: 'block' }}>Recherche</label>
+                    <input type="text" className="form-control" placeholder="Rechercher dans les consignes…" value={hwSearch} onChange={(e) => setHwSearch(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="ep-sec">
-              <SecHead>📋 Historique des devoirs</SecHead>
+              <SecHead>
+                📋 Historique des devoirs
+                <span style={{ fontWeight: 400, fontSize: 12, color: '#6B7280', marginLeft: 8 }}>
+                  {filteredHomeworkHistory.length}{filteredHomeworkHistory.length !== (homeworkHistory || []).length ? ` / ${(homeworkHistory || []).length}` : ''}
+                </span>
+              </SecHead>
               <div className="ep-sec-body">
                 {(homeworkHistory || []).length === 0 ? (
                   <EmptyState icon="📚" text="Aucun devoir publié" />
+                ) : filteredHomeworkHistory.length === 0 ? (
+                  <EmptyState icon="🔍" text="Aucun devoir ne correspond à ces filtres" />
                 ) : (
-                  [...(homeworkHistory || [])].sort((a, b) => new Date(b.date) - new Date(a.date)).map((hw) => {
+                  filteredHomeworkHistory.map((hw) => {
                     const editing = editHomework?.id === hw.id;
                     return (
                       <div key={hw.id} className="ep-hw-card">

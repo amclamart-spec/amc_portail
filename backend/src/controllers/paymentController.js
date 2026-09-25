@@ -25,6 +25,7 @@ const {
 } = require('../services/pricingService');
 const { generateInvoicePDF, getInvoiceFilePath, deleteInvoiceFile } = require('../utils/invoiceUtils');
 const { getReceiptInfo, saveReceiptFile } = require('../utils/receiptUtils');
+const { getFamilyEmailRecipients } = require('../utils/familyEmailUtils');
 const config = require('../config');
 const { hasPermission, PERMISSIONS } = require('../config/permissions');
 
@@ -229,7 +230,7 @@ async function handlePaymentCompletionForEnrollment(paymentId) {
     totalAmount: payment.totalAmount,
     method: payment.paymentMethod,
   };
-  await sendPaymentValidationEmail(payment.family.user, paymentData);
+  await sendPaymentValidationEmail({ ...payment.family.user, email: getFamilyEmailRecipients(payment.family) }, paymentData);
 
   if (payment.status === 'COMPLETED') {
     const invoiceResult = await generateInvoiceForPayment(paymentId);
@@ -892,7 +893,7 @@ async function recordOfflinePayment(req, res) {
     });
 
     if (!payment.metadata?.enrollmentIds?.length) {
-      await sendPaymentConfirmationEmail(payment.family.user, {
+      await sendPaymentConfirmationEmail({ ...payment.family.user, email: getFamilyEmailRecipients(payment.family) }, {
         id: payment.id,
         amount,
         method,
@@ -2200,7 +2201,7 @@ async function handleStripeWebhook(req, res) {
               });
 
               if (!payment.metadata?.enrollmentIds?.length && !isInstallment) {
-                await sendPaymentConfirmationEmail(payment.family.user, {
+                await sendPaymentConfirmationEmail({ ...payment.family.user, email: getFamilyEmailRecipients(payment.family) }, {
                   id: payment.id,
                   totalAmount: Number(payment.totalAmount),
                   method: 'Carte bancaire Stripe',

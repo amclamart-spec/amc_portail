@@ -3,6 +3,7 @@ const PDFDocument = require('pdfkit');
 const { PrismaClient } = require('@prisma/client');
 const { sendMail } = require('../services/emailService');
 const { createActivityLog } = require('../services/activityLogService');
+const { getFamilyEmailRecipients } = require('../utils/familyEmailUtils');
 
 const prisma = new PrismaClient();
 
@@ -1581,7 +1582,7 @@ async function deleteEmailTemplate(req, res) {
 async function resolveRecipients(recipientType, recipientIds = []) {
   if (recipientType === 'ALL_FAMILIES') {
     const families = await prisma.family.findMany({ include: { user: true } });
-    return families.map((f) => ({ familyId: f.id, email: f.user?.email, label: f.familyName })).filter((f) => f.email);
+    return families.flatMap((f) => getFamilyEmailRecipients(f).map((email) => ({ familyId: f.id, email, label: f.familyName })));
   }
 
   if (recipientType === 'SPECIFIC_CLASS') {
@@ -1608,12 +1609,14 @@ async function resolveRecipients(recipientType, recipientIds = []) {
     const map = new Map();
     enrollments.forEach((item) => {
       const family = item.student.family;
-      const email = family?.user?.email;
-      if (!family?.id || !email) return;
-      map.set(family.id, {
-        familyId: family.id,
-        email,
-        label: `${family.familyName} (${item.class?.level?.name || 'Classe'})`,
+      if (!family?.id) return;
+      getFamilyEmailRecipients(family).forEach((email) => {
+        if (map.has(email)) return;
+        map.set(email, {
+          familyId: family.id,
+          email,
+          label: `${family.familyName} (${item.class?.level?.name || 'Classe'})`,
+        });
       });
     });
 
@@ -1629,7 +1632,7 @@ async function resolveRecipients(recipientType, recipientIds = []) {
       include: { user: true },
     });
 
-    return families.map((f) => ({ familyId: f.id, email: f.user?.email, label: f.familyName })).filter((f) => f.email);
+    return families.flatMap((f) => getFamilyEmailRecipients(f).map((email) => ({ familyId: f.id, email, label: f.familyName })));
   }
 
   return [];

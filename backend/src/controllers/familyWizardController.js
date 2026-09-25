@@ -28,6 +28,7 @@ const { getNextEnrollmentRegistrationCode, extractSchoolYearCode } = require('..
 
 const { savePhotoBase64 } = require('../utils/photoUtils');
 const { saveBase64File } = require('../utils/fileUtils');
+const { getFamilyEmailRecipients } = require('../utils/familyEmailUtils');
 
 const { isRegistrationBlocked } = require('../services/systemService');
 
@@ -2312,7 +2313,11 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-    sendEnrollmentRequestRegisteredEmail(req.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+    const familyForEmail = await prisma.family.findUnique({ where: { userId: req.user.id }, select: { emailSecondary: true } });
+
+    const registeredEmailRecipient = { ...req.user, email: getFamilyEmailRecipients({ user: req.user, emailSecondary: familyForEmail?.emailSecondary }) };
+
+    sendEnrollmentRequestRegisteredEmail(registeredEmailRecipient, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
 
       console.error('[EMAIL] Erreur envoi email demande inscription:', err?.message || err);
 
@@ -2322,7 +2327,7 @@ async function completeExistingFamilyRegistration(req, res) {
 
     if (result.payment?.provider === 'STRIPE') {
 
-      sendStripePaymentPendingEmail(req.user, {
+      sendStripePaymentPendingEmail(registeredEmailRecipient, {
 
         id: result.payment.id,
 
@@ -3954,7 +3959,9 @@ async function completeFamilyRegistration(req, res) {
 
     // Envoi du mail de demande d'inscription enregistrÃ©e aprÃ¨s validation de la derniÃ¨re Ã©tape
 
-    sendEnrollmentRequestRegisteredEmail(result.user, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
+    const registeredEmailRecipient = { ...result.user, email: getFamilyEmailRecipients(result.family) };
+
+    sendEnrollmentRequestRegisteredEmail(registeredEmailRecipient, `${enrollmentDetailsHtml}${paymentDetailsHtml}`).catch((err) => {
 
       console.error('[EMAIL] Erreur envoi email demande inscription:', err?.message || err);
 
@@ -3964,7 +3971,7 @@ async function completeFamilyRegistration(req, res) {
 
     if (result.payment.provider === 'STRIPE') {
 
-      sendStripePaymentPendingEmail(result.user, {
+      sendStripePaymentPendingEmail(registeredEmailRecipient, {
 
         id: result.payment.id,
 

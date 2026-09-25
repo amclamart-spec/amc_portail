@@ -2,8 +2,14 @@ const { PrismaClient } = require('@prisma/client');
 const { validateEvaluationPayload } = require('../models/Evaluation');
 const { sendMail } = require('../services/emailService');
 const { classAccessWhere, teacherHasClassAccess } = require('../utils/classAccessUtils');
+const { getFamilyEmailRecipients } = require('../utils/familyEmailUtils');
 
 const prisma = new PrismaClient();
+
+// Gestion des absences (feuille d'appel, classement, historique, export) : seuls
+// les élèves dont l'inscription est confirmée et qui ne sont pas en liste d'attente
+// doivent apparaître — contrairement aux devoirs/notes qui restent visibles dès PENDING.
+const ABSENCE_ELIGIBLE_ENROLLMENT_WHERE = { status: 'CONFIRMED', isWaitlist: false };
 
 async function getTeacherProfile(userId) {
   return prisma.teacher.findUnique({ where: { userId } });
@@ -41,7 +47,7 @@ async function fetchClassStudents({ teacherUserId, classId }) {
   const enrollments = await prisma.enrollment.findMany({
     where: {
       classId,
-      status: { in: ['PENDING', 'CONFIRMED'] },
+      ...ABSENCE_ELIGIBLE_ENROLLMENT_WHERE,
     },
     include: { student: true },
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
@@ -77,6 +83,77 @@ async function fetchAbsenceHistory({ teacherUserId, classId }) {
   }));
 }
 
+// Déclarations d'absence à l'avance et justificatifs a posteriori soumis par les
+// familles pour une classe — grille dédiée côté professeur/responsable de pôle
+// (onglet Absences) permettant de valider ou refuser chaque déclaration.
+async function fetchClassJustifications({ teacherUserId, classId }) {
+  const teacherProfile = await getTeacherProfile(teacherUserId);
+  if (!teacherProfile) throw new Error('Profil professeur introuvable');
+
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
+  if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
+
+  const evaluations = await prisma.evaluation.findMany({
+    where: {
+      justificationStatus: { not: 'NONE' },
+      lesson: { classId },
+    },
+    include: {
+      student: true,
+      lesson: true,
+      justificationDocuments: { orderBy: { createdAt: 'asc' } },
+    },
+    orderBy: [{ lesson: { date: 'desc' } }],
+  });
+
+  return evaluations.map((evaluation) => ({
+    evaluationId: evaluation.id,
+    studentId: evaluation.studentId,
+    studentName: `${evaluation.student.firstName} ${evaluation.student.lastName}`,
+    date: evaluation.lesson.date,
+    lessonTitle: evaluation.lesson.title,
+    status: evaluation.status,
+    absenceReason: evaluation.absenceReason,
+    familyJustification: evaluation.familyJustification,
+    justificationStatus: evaluation.justificationStatus,
+    declaredInAdvance: evaluation.declaredInAdvance,
+    justificationDocuments: evaluation.justificationDocuments.map((doc) => ({
+      id: doc.id,
+      fileName: doc.fileName,
+      fileUrl: doc.fileUrl,
+    })),
+  }));
+}
+
+async function updateJustificationDecision({ teacherUserId, evaluationId, decision }) {
+  if (!['VALIDATED', 'REJECTED'].includes(decision)) {
+    const error = new Error('Décision invalide (VALIDATED ou REJECTED)');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const teacherProfile = await getTeacherProfile(teacherUserId);
+  if (!teacherProfile) throw new Error('Profil professeur introuvable');
+
+  const evaluation = await prisma.evaluation.findUnique({
+    where: { id: evaluationId },
+    include: { lesson: { include: { class: { include: { classTeachers: true } } } } },
+  });
+  if (!evaluation) {
+    const error = new Error('Déclaration introuvable');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!teacherHasClassAccess(evaluation.lesson.class, teacherProfile.id)) {
+    throw new Error('Vous n\'avez pas accès à cette classe');
+  }
+
+  return prisma.evaluation.update({
+    where: { id: evaluationId },
+    data: { justificationStatus: decision },
+  });
+}
+
 async function fetchLessonAttendanceSheet({ teacherUserId, lessonId }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
@@ -102,7 +179,7 @@ async function fetchLessonAttendanceSheet({ teacherUserId, lessonId }) {
   const enrollments = await prisma.enrollment.findMany({
     where: {
       classId: lesson.classId,
-      status: { in: ['PENDING', 'CONFIRMED'] },
+      ...ABSENCE_ELIGIBLE_ENROLLMENT_WHERE,
     },
     include: { student: true },
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
@@ -126,11 +203,18 @@ async function fetchLessonAttendanceSheet({ teacherUserId, lessonId }) {
   };
 }
 
-// Compte les absences et retards ('missing'/'late') de chaque élève d'une classe
-// sur toute l'année scolaire — partagé entre la feuille d'appel et le classement.
-// Le classement a en plus besoin de la répartition justifiée/non justifiée (filtre),
-// donc on groupe aussi par justificationStatus ; seul VALIDATED compte comme "justifiée".
-async function computeYearlyAttendanceCounts(classRecord, classId) {
+// Compte les absences et retards ('missing'/'late') de chaque élève d'une classe —
+// partagé entre la feuille d'appel et le classement. Le classement a en plus besoin
+// de la répartition justifiée/non justifiée (filtre), donc on groupe aussi par
+// justificationStatus ; seul VALIDATED compte comme "justifiée".
+// Pas de filtre par date/année scolaire ici : `classId` scope déjà à une seule année
+// scolaire (chaque Class a un schoolYearId propre, une nouvelle classe est créée à
+// chaque rentrée). Filtrer en plus sur les dates de la SchoolYear liée masquait
+// silencieusement des absences bien réelles dès qu'une leçon sortait de cette plage
+// (ex. rentrée pas encore basculée sur la nouvelle année scolaire, séance de
+// rattrapage estivale) — le classement affichait alors 0 alors que la feuille
+// d'appel du jour montrait bien l'élève absent.
+async function computeYearlyAttendanceCounts(classId) {
   const absentCountByStudent = new Map();
   const lateCountByStudent = new Map();
   const absentJustifiedByStudent = new Map();
@@ -140,22 +224,16 @@ async function computeYearlyAttendanceCounts(classRecord, classId) {
   // Les maps sont partagées par référence : `result` reflète déjà leur contenu une
   // fois `accumulate` appelé plus bas, pas besoin de reconstruire l'objet au retour.
   const result = { absentCountByStudent, lateCountByStudent, absentJustifiedByStudent, absentUnjustifiedByStudent, lateJustifiedByStudent, lateUnjustifiedByStudent };
-  if (!classRecord.schoolYear) return result;
 
-  const lessonDateWhere = {
-    classId,
-    date: { gte: classRecord.schoolYear.startDate, lte: classRecord.schoolYear.endDate },
-  };
-
-  const [schoolYearAbsences, schoolYearLates] = await Promise.all([
+  const [classAbsences, classLates] = await Promise.all([
     prisma.evaluation.groupBy({
       by: ['studentId', 'justificationStatus'],
-      where: { lesson: lessonDateWhere, status: 'missing' },
+      where: { lesson: { classId }, status: 'missing' },
       _count: { id: true },
     }),
     prisma.evaluation.groupBy({
       by: ['studentId', 'justificationStatus'],
-      where: { lesson: lessonDateWhere, status: 'late' },
+      where: { lesson: { classId }, status: 'late' },
       _count: { id: true },
     }),
   ]);
@@ -169,8 +247,8 @@ async function computeYearlyAttendanceCounts(classRecord, classId) {
     });
   };
 
-  accumulate(schoolYearAbsences, absentCountByStudent, absentJustifiedByStudent, absentUnjustifiedByStudent);
-  accumulate(schoolYearLates, lateCountByStudent, lateJustifiedByStudent, lateUnjustifiedByStudent);
+  accumulate(classAbsences, absentCountByStudent, absentJustifiedByStudent, absentUnjustifiedByStudent);
+  accumulate(classLates, lateCountByStudent, lateJustifiedByStudent, lateUnjustifiedByStudent);
 
   return result;
 }
@@ -181,12 +259,11 @@ async function fetchAbsenceRanking({ teacherUserId, classId }) {
 
   const classRecord = await prisma.class.findFirst({
     where: { id: classId, ...classAccessWhere(teacherProfile.id) },
-    include: { schoolYear: true },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
 
   const enrollments = await prisma.enrollment.findMany({
-    where: { classId, status: { in: ['PENDING', 'CONFIRMED'] } },
+    where: { classId, ...ABSENCE_ELIGIBLE_ENROLLMENT_WHERE },
     include: { student: true },
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
   });
@@ -195,7 +272,7 @@ async function fetchAbsenceRanking({ teacherUserId, classId }) {
     absentCountByStudent, lateCountByStudent,
     absentJustifiedByStudent, absentUnjustifiedByStudent,
     lateJustifiedByStudent, lateUnjustifiedByStudent,
-  } = await computeYearlyAttendanceCounts(classRecord, classId);
+  } = await computeYearlyAttendanceCounts(classId);
 
   return enrollments
     .map((enrollment) => ({
@@ -222,7 +299,6 @@ async function fetchAbsenceRoster({ teacherUserId, classId, date }) {
 
   const classRecord = await prisma.class.findFirst({
     where: { id: classId, ...classAccessWhere(teacherProfile.id) },
-    include: { schoolYear: true },
   });
   if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
 
@@ -242,18 +318,18 @@ async function fetchAbsenceRoster({ teacherUserId, classId, date }) {
   const enrollments = await prisma.enrollment.findMany({
     where: {
       classId,
-      status: { in: ['PENDING', 'CONFIRMED'] },
+      ...ABSENCE_ELIGIBLE_ENROLLMENT_WHERE,
     },
     include: { student: true },
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
   });
 
   const existingEvaluations = lesson
-    ? await prisma.evaluation.findMany({ where: { lessonId: lesson.id } })
+    ? await prisma.evaluation.findMany({ where: { lessonId: lesson.id }, include: { justificationDocuments: true } })
     : [];
   const evaluationByStudent = new Map(existingEvaluations.map((evaluation) => [evaluation.studentId, evaluation]));
 
-  const { absentCountByStudent, lateCountByStudent } = await computeYearlyAttendanceCounts(classRecord, classId);
+  const { absentCountByStudent, lateCountByStudent } = await computeYearlyAttendanceCounts(classId);
 
   return {
     lessonId: lesson?.id || null,
@@ -272,6 +348,17 @@ async function fetchAbsenceRoster({ teacherUserId, classId, date }) {
         submitted: evaluation?.submitted ?? false,
         status: evaluation?.status || 'on_time',
         justification: evaluation?.justification || '',
+        // Déclaration/justification famille (voir familyPedagogyService) — permet
+        // d'afficher côté professeur/responsable de pôle le motif et les pièces
+        // jointes d'une absence déclarée à l'avance ou justifiée après coup.
+        familyJustification: evaluation?.familyJustification || null,
+        justificationStatus: evaluation?.justificationStatus || 'NONE',
+        absenceReason: evaluation?.absenceReason || null,
+        justificationDocuments: (evaluation?.justificationDocuments || []).map((doc) => ({
+          id: doc.id,
+          fileName: doc.fileName,
+          fileUrl: doc.fileUrl,
+        })),
         createdAt: evaluation?.createdAt || null,
         absenceCount: absentCountByStudent.get(student.id) || 0,
         lateCount: lateCountByStudent.get(student.id) || 0,
@@ -344,62 +431,92 @@ async function saveAbsences({ teacherUserId, classId, date, lessonId, students }
     .filter((studentRow) => studentRow.status === 'missing')
     .map((studentRow) => studentRow.studentId);
 
-  if (absentStudentIds.length > 0) {
-    const absentees = await prisma.student.findMany({
-      where: { id: { in: absentStudentIds } },
-      include: {
-        family: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
+  // Élèves déclarés absents lors d'un précédent enregistrement de cette même
+  // feuille d'appel, et que le professeur vient de repasser à "présent" (arrivée
+  // après le début du cours) — déclenche un second mail distinct de celui d'absence.
+  const nowPresentStudentIds = students
+    .filter((studentRow) => evaluationByStudent.get(studentRow.studentId)?.status === 'missing' && studentRow.status === 'on_time')
+    .map((studentRow) => studentRow.studentId);
 
-    const absencesByFamily = new Map();
-    absentees.forEach((student) => {
-      if (!student.family) return;
-      const familyEntry = absencesByFamily.get(student.familyId) || { family: student.family, students: [] };
-      familyEntry.students.push(student);
-      absencesByFamily.set(student.familyId, familyEntry);
-    });
-
+  if (absentStudentIds.length > 0 || nowPresentStudentIds.length > 0) {
     const lessonDate = new Date(lesson.date).toLocaleDateString('fr-FR');
     const classLabel = `${classRecord.level?.pole?.name || ''}${classRecord.level?.pole ? ' - ' : ''}${classRecord.level?.name || ''}`;
     const teacherName = `${teacherProfile.firstName || ''} ${teacherProfile.lastName || ''}`.trim();
 
-    await Promise.all(Array.from(absencesByFamily.values()).map(async ({ family, students: familyStudents }) => {
-      // N'envoyer qu'à l'email principal du compte famille, pas à chaque parent renseigné.
-      const primaryEmail = family.user?.email;
+    const groupStudentsByFamily = async (studentIds) => {
+      if (studentIds.length === 0) return [];
+      const foundStudents = await prisma.student.findMany({
+        where: { id: { in: studentIds } },
+        include: { family: { include: { user: true } } },
+      });
 
-      if (!primaryEmail) return;
+      const byFamily = new Map();
+      foundStudents.forEach((student) => {
+        if (!student.family) return;
+        const entry = byFamily.get(student.familyId) || { family: student.family, students: [] };
+        entry.students.push(student);
+        byFamily.set(student.familyId, entry);
+      });
+      return Array.from(byFamily.values());
+    };
 
+    const sendFamilyEmails = async (studentIds, buildEmail) => {
+      const familyGroups = await groupStudentsByFamily(studentIds);
+      await Promise.all(familyGroups.map(async ({ family, students: familyStudents }) => {
+        // Email du compte famille + email secondaire (Family.emailSecondary) si renseigné.
+        const recipients = getFamilyEmailRecipients(family);
+        if (recipients.length === 0) return;
+
+        const { subject, contentHtml } = buildEmail(familyStudents);
+        await sendMail({ to: recipients, subject, html: contentHtml });
+      }));
+    };
+
+    await sendFamilyEmails(absentStudentIds, (familyStudents) => {
+      const studentListHtml = familyStudents
+        .map((student) => `<li><strong>${student.firstName} ${student.lastName}</strong> — Classe : ${classLabel}</li>`)
+        .join('');
+      return {
+        subject: `AMC — Absence(s) de votre/vos membre(s) de famille le ${lessonDate}`,
+        contentHtml: `
+          <p>Bonjour,</p>
+          <p>Nous vous informons que votre enfant a été absent au cours suivant :</p>
+          <ul>${studentListHtml}</ul>
+          <p><strong>Informations du cours</strong></p>
+          <ul>
+            <li>Cours : ${lesson.title}</li>
+            <li>Date : ${lessonDate}</li>
+            <li>Classe : ${classLabel}</li>
+            <li>Professeur : ${teacherName}</li>
+          </ul>
+          <p>Merci de justifier son absence en vous connectant à votre espace famille (onglet absence) ou vous rapprocher de l'administration pour justifier cette absence.</p>
+          <p>Cordialement,<br/>Administration AMC</p>
+        `,
+      };
+    });
+
+    await sendFamilyEmails(nowPresentStudentIds, (familyStudents) => {
       const studentListHtml = familyStudents
         .map((student) => `<li><strong>${student.firstName} ${student.lastName}</strong> — Classe : ${classLabel}</li>`)
         .join('');
       const plural = familyStudents.length > 1;
-      const subject = `AMC — Absence${plural ? 's' : ''} de votre enfant${plural ? 's' : ''} le ${lessonDate}`;
-      const contentHtml = `
-        <p>Bonjour,</p>
-        <p>Nous vous informons que ${plural ? 'vos enfants' : 'votre enfant'} a été absent${plural ? 's' : ''} au cours suivant :</p>
-        <ul>${studentListHtml}</ul>
-        <p><strong>Informations du cours</strong></p>
-        <ul>
-          <li>Cours : ${lesson.title}</li>
-          <li>Date : ${lessonDate}</li>
-          <li>Classe : ${classLabel}</li>
-          <li>Professeur : ${teacherName}</li>
-        </ul>
-        <p>Merci de justifier son absence en vous connectant à votre espace famille (onglet absence) ou vous rapprocher de l'administration pour justifier cette absence.</p>
-        <p>Cordialement,<br/>Administration AMC</p>
-      `;
-
-      await sendMail({
-        to: primaryEmail,
-        subject,
-        html: contentHtml,
-      });
-    }));
+      return {
+        subject: `AMC — ${plural ? 'Vos enfants sont' : 'Votre enfant est'} bien présent${plural ? 's' : ''} au cours du ${lessonDate}`,
+        contentHtml: `
+          <p>Bonjour,</p>
+          <p>Nous vous informons que ${plural ? 'vos enfants sont arrivés et sont' : 'votre enfant est arrivé et est'} désormais présent${plural ? 's' : ''} au cours suivant :</p>
+          <ul>${studentListHtml}</ul>
+          <p><strong>Informations du cours</strong></p>
+          <ul>
+            <li>Cours : ${lesson.title}</li>
+            <li>Date : ${lessonDate}</li>
+            <li>Classe : ${classLabel}</li>
+            <li>Professeur : ${teacherName}</li>
+          </ul>
+          <p>Cordialement,<br/>Administration AMC</p>
+        `,
+      };
+    });
   }
 
   return { lessonId: lesson.id };
@@ -541,6 +658,50 @@ async function fetchPeriodNotes({ teacherUserId, classId, period }) {
   };
 }
 
+// Classement de la classe (Tableau de bord, onglet "Classement des élèves" et KPI
+// "En difficulté") : moyenne par élève sur toutes ses évaluations réellement saisies
+// par le professeur (`submitted: true` — même signal que fetchStudentNotes, une
+// leçon de prise de présence a `submitted: false` par défaut et ne doit pas fausser
+// la moyenne). Contrairement à `fetchEvaluations`, qui ne porte que sur une leçon
+// précise, ceci agrège sur toute la classe.
+async function fetchClassGradeSummary({ teacherUserId, classId }) {
+  const teacherProfile = await getTeacherProfile(teacherUserId);
+  if (!teacherProfile) throw new Error('Profil professeur introuvable');
+
+  const classRecord = await prisma.class.findFirst({ where: { id: classId, ...classAccessWhere(teacherProfile.id) } });
+  if (!classRecord) throw new Error('Vous n\'avez pas accès à cette classe');
+
+  const enrollments = await prisma.enrollment.findMany({
+    where: { classId, status: { in: ['PENDING', 'CONFIRMED'] } },
+    include: { student: true },
+  });
+
+  const evaluations = await prisma.evaluation.findMany({
+    where: { lesson: { classId }, submitted: true },
+  });
+
+  const gradesByStudent = new Map();
+  evaluations.forEach((evaluation) => {
+    const grades = gradesByStudent.get(evaluation.studentId) || [];
+    grades.push(evaluation.grade);
+    gradesByStudent.set(evaluation.studentId, grades);
+  });
+
+  return enrollments
+    .map((enrollment) => {
+      const grades = gradesByStudent.get(enrollment.studentId) || [];
+      if (grades.length === 0) return null;
+      const average = grades.reduce((sum, grade) => sum + grade, 0) / grades.length;
+      return {
+        studentId: enrollment.studentId,
+        studentName: `${enrollment.student.firstName} ${enrollment.student.lastName}`,
+        grade: Number(average.toFixed(1)),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.grade - a.grade);
+}
+
 async function computeStats({ teacherUserId, classId, lessonId }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
@@ -669,11 +830,14 @@ module.exports = {
   fetchLessonsByClass,
   fetchClassStudents,
   fetchAbsenceHistory,
+  fetchClassJustifications,
+  updateJustificationDecision,
   fetchLessonAttendanceSheet,
   fetchAbsenceRoster,
   fetchAbsenceRanking,
   saveAbsences,
   fetchEvaluations,
+  fetchClassGradeSummary,
   computeStats,
   upsertEvaluation,
   fetchPeriodNotes,
