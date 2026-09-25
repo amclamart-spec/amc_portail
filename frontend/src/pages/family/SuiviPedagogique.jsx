@@ -405,6 +405,159 @@ function AbsenceCard({ absence, onJustified }) {
   );
 }
 
+/* ─── DeclareAbsenceForm : déclaration d'une absence à venir, avant le cours ──── */
+function DeclareAbsenceForm({ student, onDeclared }) {
+  const [open, setOpen]           = useState(false);
+  const [classId, setClassId]     = useState('');
+  const [date, setDate]           = useState('');
+  const [reason, setReason]       = useState('');
+  const [comment, setComment]     = useState('');
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [saving, setSaving]       = useState(false);
+
+  const enrollments = student?.enrollments || [];
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const handleFilesSelected = async (event) => {
+    const selected = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (selected.length === 0) return;
+    if (pendingFiles.length + selected.length > MAX_JUSTIFICATION_DOCUMENTS) {
+      toast.error(`Vous ne pouvez pas joindre plus de ${MAX_JUSTIFICATION_DOCUMENTS} documents`);
+      return;
+    }
+    try {
+      const encoded = await Promise.all(selected.map(async (file) => ({
+        fileName: file.name,
+        base64: await fileToBase64(file),
+      })));
+      setPendingFiles((prev) => [...prev, ...encoded]);
+    } catch {
+      toast.error('Impossible de lire un des fichiers sélectionnés');
+    }
+  };
+
+  const removePendingFile = (index) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const resetForm = () => {
+    setClassId('');
+    setDate('');
+    setReason('');
+    setComment('');
+    setPendingFiles([]);
+  };
+
+  const handleSubmit = async () => {
+    if (!classId) { toast.error('Veuillez sélectionner un cours'); return; }
+    if (!date) { toast.error('Veuillez sélectionner une date'); return; }
+    if (!comment.trim()) { toast.error('Veuillez saisir un commentaire'); return; }
+    if (!reason) { toast.error('Veuillez sélectionner un motif d\'absence'); return; }
+    setSaving(true);
+    try {
+      await api.post('/family/pedagogy/absences/declare', {
+        studentId: student.id,
+        classId,
+        date,
+        reason,
+        comment,
+        documents: pendingFiles,
+      });
+      toast.success('Absence déclarée — le professeur en sera informé');
+      resetForm();
+      setOpen(false);
+      if (typeof onDeclared === 'function') onDeclared();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Impossible de déclarer cette absence');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (enrollments.length === 0) return null;
+
+  return (
+    <div className="sp-ab-card">
+      <div className="sp-ab-head">
+        <div style={{ fontWeight: 700, fontSize: 14 }}>📅 Déclarer une absence à venir</div>
+        <button type="button" className="btn btn-outline btn-sm" onClick={() => setOpen((v) => !v)}>
+          {open ? 'Annuler' : '+ Déclarer'}
+        </button>
+      </div>
+      {open && (
+        <div className="sp-justify-form">
+          <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>Cours</label>
+          <select className="form-control" value={classId} onChange={(e) => setClassId(e.target.value)} style={{ marginBottom: 8, fontSize: 13 }}>
+            <option value="">Sélectionner un cours…</option>
+            {enrollments.map((e) => (
+              <option key={e.classId} value={e.classId}>{e.classLabel}</option>
+            ))}
+          </select>
+
+          <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>Date de l'absence</label>
+          <input type="date" className="form-control" min={todayStr} value={date} onChange={(e) => setDate(e.target.value)} style={{ marginBottom: 8, fontSize: 13 }} />
+
+          <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>Motif d'absence</label>
+          <select className="form-control" value={reason} onChange={(e) => setReason(e.target.value)} style={{ marginBottom: 8, fontSize: 13 }}>
+            <option value="">Sélectionner un motif…</option>
+            {REASON_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+
+          <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>Commentaire</label>
+          <textarea
+            className="form-control"
+            rows={3}
+            placeholder="Expliquez le motif de l'absence à venir…"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            style={{ marginBottom: 8, fontSize: 13 }}
+          />
+
+          <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>
+            Documents (optionnel)
+          </label>
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+            onChange={handleFilesSelected}
+            style={{ marginBottom: 8, fontSize: 13 }}
+          />
+          {pendingFiles.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {pendingFiles.map((file, index) => (
+                <div key={`${file.fileName}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#F8FAFC', border: '1px solid var(--amc-border)', borderRadius: 8, padding: '4px 8px' }}>
+                  <span style={{ fontSize: 12, color: 'var(--amc-text)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    📎 {file.fileName}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removePendingFile(index)}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#DC2626', fontSize: 13, padding: 0, lineHeight: 1 }}
+                    aria-label={`Retirer ${file.fileName}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => { setOpen(false); resetForm(); }}>Annuler</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={saving || !classId || !date || !comment.trim() || !reason}>
+              {saving ? 'Envoi…' : 'Déclarer l\'absence'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── main ──────────────────────────────────────────────────────────────────── */
 export default function FamilyPedagogy() {
   const [students,          setStudents]          = useState([]);
@@ -702,6 +855,10 @@ export default function FamilyPedagogy() {
                     {pendingCount > 0 && <span className="badge badge-warning">{pendingCount} en attente</span>}
                   </div>
                 )}
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <DeclareAbsenceForm student={selectedStudent} onDeclared={reloadAbsences} />
               </div>
 
               {absences.length === 0 ? (

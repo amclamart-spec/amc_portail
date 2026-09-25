@@ -3,7 +3,10 @@ const ExcelJS = require('exceljs');
 const fs = require('fs');
 const path = require('path');
 const { PrismaClient } = require('@prisma/client');
-const { fetchAbsenceRoster, fetchAbsenceRanking, fetchAbsenceHistory, fetchLessonAttendanceSheet, saveAbsences, fetchClassStudents } = require('../services/evaluationService');
+const {
+  fetchAbsenceRoster, fetchAbsenceRanking, fetchAbsenceHistory, fetchLessonAttendanceSheet, saveAbsences, fetchClassStudents,
+  fetchClassJustifications, updateJustificationDecision,
+} = require('../services/evaluationService');
 const { POLE_MANAGER_ROLES, POLE_ROLE_TO_NAME } = require('../middleware/poleManagerDelegation');
 
 // Un responsable de pôle ne doit voir/agir que sur les absences de son propre pôle ;
@@ -32,6 +35,18 @@ function findLogo(names) {
   }
   return null;
 }
+
+// Détecte le vrai format d'une image (certains fichiers du dossier public ont une
+// extension .png alors que le contenu est en réalité un JPEG) pour renseigner le bon
+// `extension` à ExcelJS — un mauvais type produit un fichier Excel dont l'image ne
+// s'affiche pas (même utilitaire que adminController.js/exportClassStudentsExcel).
+function detectImageExtension(filePath) {
+  const buf = fs.readFileSync(filePath);
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'jpeg';
+  return 'png';
+}
+
+const ABSENCE_EXPORT_PRIMARY = '213B88';
 
 async function getAbsences(req, res) {
   try {
@@ -95,14 +110,85 @@ async function exportAbsenceRanking(req, res) {
       .sort((a, b) => b.absence - a.absence || b.late - a.late);
 
     const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'AMC Portail';
     const worksheet = workbook.addWorksheet('Classement absences');
-    worksheet.columns = [
-      { header: 'Élève', key: 'studentName', width: 32 },
-      { header: 'Absences', key: 'absence', width: 14 },
-      { header: 'Retards', key: 'late', width: 14 },
-    ];
-    worksheet.addRows(rows);
-    worksheet.getRow(1).font = { bold: true };
+    const COLUMN_COUNT = 3;
+    worksheet.columns = [{ width: 32 }, { width: 16 }, { width: 16 }];
+
+    let rowCursor = 1;
+
+    // ── En-tête : logos de l'association + titre ────────────────────────────
+    worksheet.mergeCells(rowCursor, 1, rowCursor, COLUMN_COUNT);
+    const titleCell = worksheet.getCell(rowCursor, 1);
+    titleCell.value = 'ASSOCIATION PARTAGE ET DES MUSULMANS DE CLAMART';
+    titleCell.font = { bold: true, size: 13, color: { argb: `FF${ABSENCE_EXPORT_PRIMARY}` } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    worksheet.getRow(rowCursor).height = 46;
+    rowCursor += 1;
+
+    const filterLabel = justified === 'JUSTIFIED'
+      ? ' — Justifiées'
+      : justified === 'UNJUSTIFIED'
+        ? ' — Non justifiées'
+        : '';
+    worksheet.mergeCells(rowCursor, 1, rowCursor, COLUMN_COUNT);
+    const subtitleCell = worksheet.getCell(rowCursor, 1);
+    subtitleCell.value = `Classement absences / retards${filterLabel}`;
+    subtitleCell.font = { bold: true, size: 11, color: { argb: 'FF6B7280' } };
+    subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    worksheet.getRow(rowCursor).height = 20;
+    rowCursor += 1;
+
+    try {
+      const amcLogoPath = findLogo(['amc_logo.png']);
+      const partnerLogoPath = findLogo(['amc_logo_partner.png']);
+      if (amcLogoPath) {
+        const imageId = workbook.addImage({ filename: amcLogoPath, extension: detectImageExtension(amcLogoPath) });
+        worksheet.addImage(imageId, { tl: { col: 0.15, row: 0.1 }, ext: { width: 46, height: 68 } });
+      }
+      if (partnerLogoPath) {
+        const imageId = workbook.addImage({ filename: partnerLogoPath, extension: detectImageExtension(partnerLogoPath) });
+        worksheet.addImage(imageId, { tl: { col: COLUMN_COUNT - 0.9, row: 0.1 }, ext: { width: 46, height: 56 } });
+      }
+    } catch (logoError) {
+      console.warn('Export classement absences: erreur logo', logoError?.message);
+    }
+
+    rowCursor += 1; // ligne d'espacement
+
+    // ── Tableau ───────────────────────────────────────────────────────────
+    const headerRowIndex = rowCursor;
+    const headerRow = worksheet.getRow(headerRowIndex);
+    ['Élève', 'Absences', 'Retards'].forEach((label, idx) => {
+      const cell = headerRow.getCell(idx + 1);
+      cell.value = label;
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${ABSENCE_EXPORT_PRIMARY}` } };
+      cell.alignment = { horizontal: idx === 0 ? 'left' : 'center', vertical: 'middle' };
+    });
+    headerRow.height = 22;
+    rowCursor += 1;
+
+    rows.forEach((row) => {
+      const dataRow = worksheet.getRow(rowCursor);
+      dataRow.getCell(1).value = row.studentName;
+      dataRow.getCell(2).value = row.absence;
+      dataRow.getCell(3).value = row.late;
+      dataRow.getCell(2).alignment = { horizontal: 'center' };
+      dataRow.getCell(3).alignment = { horizontal: 'center' };
+      rowCursor += 1;
+    });
+
+    if (rows.length === 0) {
+      worksheet.mergeCells(rowCursor, 1, rowCursor, COLUMN_COUNT);
+      const emptyCell = worksheet.getCell(rowCursor, 1);
+      emptyCell.value = 'Aucun résultat';
+      emptyCell.font = { italic: true, color: { argb: 'FF6B7280' } };
+      emptyCell.alignment = { horizontal: 'center' };
+      rowCursor += 1;
+    }
+
+    worksheet.views = [{ state: 'frozen', ySplit: headerRowIndex }];
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="classement-absences-${Date.now()}.xlsx"`);
@@ -153,6 +239,37 @@ async function getAbsenceHistory(req, res) {
   } catch (error) {
     console.error('Erreur getAbsenceHistory:', error);
     const status = error.statusCode || 500;
+    return res.status(status).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+// Grille dédiée (onglet Absences, espace professeur/responsable de pôle) des
+// déclarations anticipées et justificatifs a posteriori soumis par les familles.
+async function getClassJustifications(req, res) {
+  try {
+    const { classId } = req.query;
+    if (!classId) {
+      return res.status(400).json({ error: 'classId est requis' });
+    }
+
+    const declarations = await fetchClassJustifications({ teacherUserId: req.user.id, classId });
+    return res.json({ declarations });
+  } catch (error) {
+    console.error('Erreur getClassJustifications:', error);
+    const status = error.statusCode || (error.message.includes('accès') ? 403 : 500);
+    return res.status(status).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function patchClassJustification(req, res) {
+  try {
+    const { evaluationId } = req.params;
+    const { decision } = req.body;
+    const evaluation = await updateJustificationDecision({ teacherUserId: req.user.id, evaluationId, decision });
+    return res.json({ success: true, justificationStatus: evaluation.justificationStatus });
+  } catch (error) {
+    console.error('Erreur patchClassJustification:', error);
+    const status = error.statusCode || (error.message.includes('accès') ? 403 : error.message.includes('introuvable') ? 404 : 500);
     return res.status(status).json({ error: error.message || 'Erreur serveur' });
   }
 }
@@ -601,6 +718,8 @@ module.exports = {
   exportAbsenceRanking,
   getClassStudents,
   getAbsenceHistory,
+  getClassJustifications,
+  patchClassJustification,
   exportLessonAttendancePdf,
   postAbsences,
   getJustifications,

@@ -56,7 +56,7 @@ export default function ResponsablePoleSuiviPedagogique() {
         </div>
       ) : (
         classes.map((cls) => {
-          const hasTeacher = !!cls.teacherName;
+          const hasTeacher = !!cls.teacherName || cls.additionalTeacherNames?.length > 0;
           return (
             <div
               key={cls.id}
