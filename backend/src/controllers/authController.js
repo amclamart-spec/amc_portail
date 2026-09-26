@@ -54,6 +54,15 @@ async function issueTokensForUser(user) {
   return { accessToken, refreshToken };
 }
 
+// Rôles qu'un visiteur non authentifié peut choisir à l'inscription publique.
+// N'inclut JAMAIS ADMIN/SUPER_ADMIN (ni aucun rôle de responsable de pôle) —
+// une ancienne version de ce whitelist incluait 'ADMIN', permettant à quiconque
+// de s'auto-créer un compte administrateur (en attente d'approbation, mais
+// pouvant être approuvé par erreur par un admin ne s'attendant pas à voir ce
+// rôle dans une inscription publique). Ne jamais élargir cette liste sans
+// revalider explicitement ce risque.
+const SELF_REGISTERABLE_ROLES = ['FAMILLE', 'PROFESSEUR', 'TRESORIER', 'BENEVOLE'];
+
 /**
  * POST /api/auth/register
  */
@@ -77,7 +86,7 @@ async function register(req, res) {
     const passwordHash = await bcrypt.hash(password, 12);
     const emailVerifyToken = uuidv4();
 
-    const userRole = ['FAMILLE', 'PROFESSEUR', 'TRESORIER', 'BENEVOLE'].includes(role) ? role : 'FAMILLE';
+    const userRole = SELF_REGISTERABLE_ROLES.includes(role) ? role : 'FAMILLE';
     const validationStatus = userRole === 'FAMILLE' ? 'APPROVED' : 'PENDING';
     const user = await prisma.user.create({
       data: {
@@ -104,7 +113,7 @@ async function register(req, res) {
     const responsePayload = {
       message: userRole === 'FAMILLE'
         ? 'Inscription réussie ! Votre compte famille est activé automatiquement. Vérifiez votre email pour confirmer votre adresse.'
-        : 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes professeur, administrateur, trésorier et bénévole doivent être validés par un administrateur.',
+        : 'Inscription réussie ! Vérifiez votre email pour activer votre compte. Les comptes professeur, trésorier et bénévole doivent être validés par un administrateur.',
       user: {
         id: user.id,
         email: user.email,
