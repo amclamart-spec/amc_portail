@@ -35,7 +35,10 @@ const registerValidation = [
     .matches(/[0-9]/).withMessage('Au moins un chiffre'),
   body('firstName').trim().notEmpty().withMessage('Prénom requis'),
   body('lastName').trim().notEmpty().withMessage('Nom requis'),
-  body('role').optional().isIn(['FAMILLE', 'PROFESSEUR', 'TRESORIER', 'BENEVOLE', 'RESPONSABLE_POLE_CORAN', 'RESPONSABLE_POLE_ARABE', 'RESPONSABLE_POLE_SOUTIEN_SCO', 'RESPONSABLE_POLE_SCIENCE_IS']).withMessage('Profil invalide'),
+  // Doit rester strictement aligné sur SELF_REGISTERABLE_ROLES (authController.js) :
+  // ni ADMIN/SUPER_ADMIN, ni aucun rôle de responsable de pôle ne doit être
+  // sélectionnable depuis l'inscription publique (voir le commentaire associé).
+  body('role').optional().isIn(['FAMILLE', 'PROFESSEUR', 'TRESORIER', 'BENEVOLE']).withMessage('Profil invalide'),
 ];
 
 const loginValidation = [
