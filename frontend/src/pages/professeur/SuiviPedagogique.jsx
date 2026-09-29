@@ -794,7 +794,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                       <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' }}>Date</th>
                       <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' }}>Type</th>
                       <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left' }}>Motif</th>
-                      <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left' }}>Commentaire &amp; pièces jointes</th>
+                      <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left', width: '38%' }}>Commentaire &amp; pièces jointes</th>
                       <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' }}>Statut</th>
                       <th style={{ padding: '8px 10px', background: T.primary, color: '#fff', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>Action</th>
                     </tr>
@@ -821,7 +821,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                         <td style={{ padding: '7px 10px', fontSize: 12, borderBottom: '1px solid var(--amc-border)' }}>
                           {ABSENCE_REASON_LABELS[d.absenceReason] || d.absenceReason || '—'}
                         </td>
-                        <td style={{ padding: '7px 10px', fontSize: 12, borderBottom: '1px solid var(--amc-border)', maxWidth: 320 }}>
+                        <td style={{ padding: '7px 10px', fontSize: 12, borderBottom: '1px solid var(--amc-border)', minWidth: 280, maxWidth: 480 }}>
                           <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.4, marginBottom: (d.justificationDocuments || []).length > 0 ? 6 : 0 }}>
                             {d.familyJustification || '—'}
                           </div>

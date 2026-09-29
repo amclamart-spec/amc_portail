@@ -37,6 +37,13 @@ async function fetchLessonsByClass({ teacherUserId, classId, date }) {
   });
 }
 
+// Liste "Élèves de la classe" — partagée par plusieurs onglets du suivi pédagogique
+// (Devoirs, Notes, Bulletin, et le seed initial de la feuille d'appel avant qu'une
+// date ne soit choisie), pas seulement les absences. Doit donc rester alignée sur
+// le même périmètre que "Détail de la classe" côté admin (PENDING + CONFIRMED),
+// et non sur ABSENCE_ELIGIBLE_ENROLLMENT_WHERE (CONFIRMED uniquement) — cette
+// restriction-là ne s'applique qu'à la prise d'appel elle-même, déjà gérée
+// indépendamment par fetchAbsenceRoster/fetchAbsenceRanking/fetchLessonAttendanceSheet.
 async function fetchClassStudents({ teacherUserId, classId }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
@@ -47,7 +54,7 @@ async function fetchClassStudents({ teacherUserId, classId }) {
   const enrollments = await prisma.enrollment.findMany({
     where: {
       classId,
-      ...ABSENCE_ELIGIBLE_ENROLLMENT_WHERE,
+      status: { in: ['PENDING', 'CONFIRMED'] },
     },
     include: { student: true },
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
