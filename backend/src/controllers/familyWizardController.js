@@ -2349,41 +2349,10 @@ async function completeExistingFamilyRegistration(req, res) {
 
 
 
-    // Notify admins about provisional enrollments (if any were created)
-
-    try {
-
-      const adminUsers = await prisma.user.findMany({ where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } }, select: { email: true, firstName: true } });
-
-      const adminEmails = adminUsers.map((u) => u.email).filter(Boolean);
-
-      if (adminEmails.length > 0 && result.enrollments && result.enrollments.length > 0) {
-
-        const provisionalListHtml = result.enrollments.map((en) => `• ${en.registrationCode || en.id} — ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Élève'}`).join('<br/>');
-
-        const contentHtml = `
-
-          <p>Bonjour,</p>
-
-          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont été créées via l’assistant famille :</p>
-
-          <div style="margin:12px 0;padding:12px;background:#FEF3C7;border-radius:8px;">${provisionalListHtml}</div>
-
-          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces élèves :</p>
-
-          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">Accéder aux inscriptions</a></p>
-
-        `;
-
-        await sendMail({ to: adminEmails.join(','), subject: 'AMC — Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
-
-      }
-
-    } catch (err) {
-
-      console.error('Erreur notification admins pour inscriptions provisoires:', err?.message || err);
-
-    }
+    // Notification admin "affectation provisoire" désactivée : elle partait à tous
+    // les admins pour CHAQUE inscription créée via l'assistant famille (provisoire
+    // ou non — la condition ne filtrait pas sur le caractère réellement provisoire),
+    // ce qui produisait des mails non pertinents en masse.
 
     try {
       await registerStudentsToEvents(result.students, eventSelections);
@@ -3993,41 +3962,10 @@ async function completeFamilyRegistration(req, res) {
 
 
 
-    // Notify admins about provisional enrollments (if any were created)
-
-    try {
-
-      const adminUsers = await prisma.user.findMany({ where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } }, select: { email: true, firstName: true } });
-
-      const adminEmails = adminUsers.map((u) => u.email).filter(Boolean);
-
-      if (adminEmails.length > 0 && result.enrollments && result.enrollments.length > 0) {
-
-        const provisionalListHtml = result.enrollments.map((en) => `• ${en.registrationCode || en.id} — ${result.students.find((s) => s.id === en.studentId)?.firstName || 'Élève'}`).join('<br/>');
-
-        const contentHtml = `
-
-          <p>Bonjour,</p>
-
-          <p>De nouvelles inscriptions avec <strong>affectation provisoire</strong> ont été créées via l’assistant famille :</p>
-
-          <div style="margin:12px 0;padding:12px;background:#FEF3C7;border-radius:8px;">${provisionalListHtml}</div>
-
-          <p>Consultez la liste des inscriptions administrateur pour traiter et affecter ces élèves :</p>
-
-          <p style="text-align:center;"><a href="${config.frontendUrl}/admin/enrollments" style="display:inline-block;padding:10px 16px;background:#213B88;color:#fff;border-radius:8px;text-decoration:none;">Accéder aux inscriptions</a></p>
-
-        `;
-
-        await sendMail({ to: adminEmails.join(','), subject: 'AMC — Nouvelles inscriptions (affectation provisoire)', html: contentHtml });
-
-      }
-
-    } catch (err) {
-
-      console.error('Erreur notification admins pour inscriptions provisoires:', err?.message || err);
-
-    }
+    // Notification admin "affectation provisoire" désactivée : elle partait à tous
+    // les admins pour CHAQUE inscription créée via l'assistant famille (provisoire
+    // ou non — la condition ne filtrait pas sur le caractère réellement provisoire),
+    // ce qui produisait des mails non pertinents en masse.
 
     try {
       await registerStudentsToEvents(result.students, eventSelections);
