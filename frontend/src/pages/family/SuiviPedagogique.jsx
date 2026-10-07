@@ -5,6 +5,7 @@ import CoranFamilyPanel from '../../components/coran/CoranFamilyPanel';
 import FamilyAppreciationsPanel from '../../components/appreciations/FamilyAppreciationsPanel';
 import NotesScolaireFamilyPanel from '../../components/notesScolaires/NotesScolaireFamilyPanel';
 import FamilyBulletinsPanel from '../../components/bulletins/FamilyBulletinsPanel';
+import LiaisonFamilyPanel from '../../components/liaison/LiaisonFamilyPanel';
 
 /* ─── styles ────────────────────────────────────────────────────────────────── */
 const STYLES = `
@@ -569,6 +570,9 @@ export default function FamilyPedagogy() {
   const [absences,          setAbsences]          = useState([]);
   const [homeworks,         setHomeworks]         = useState([]);
   const [notes,             setNotes]             = useState([]);
+  const [liaisonThreads,    setLiaisonThreads]    = useState([]);
+  const [liaisonContacts,   setLiaisonContacts]   = useState([]);
+  const [liaisonLoading,    setLiaisonLoading]    = useState(false);
 
   useEffect(() => {
     api.get('/family/pedagogy/students')
@@ -600,6 +604,26 @@ export default function FamilyPedagogy() {
   };
 
   useEffect(() => { loadData(selectedStudentId); }, [selectedStudentId]);
+
+  // Cahier de liaison chargé à part : une erreur ici ne doit pas masquer le reste du
+  // suivi, et le nombre de non lus s'affiche sur l'onglet avant même de l'ouvrir.
+  const loadLiaison = (studentId) => {
+    if (!studentId) return Promise.resolve();
+    return api.get('/family/pedagogy/liaison', { params: { studentId } })
+      .then(({ data }) => {
+        setLiaisonThreads(data.threads || []);
+        setLiaisonContacts(data.contacts || []);
+      })
+      .catch((e) => toast.error(e.response?.data?.error || 'Impossible de charger le cahier de liaison'));
+  };
+
+  useEffect(() => {
+    setLiaisonThreads([]);
+    setLiaisonContacts([]);
+    if (!selectedStudentId) return;
+    setLiaisonLoading(true);
+    loadLiaison(selectedStudentId).finally(() => setLiaisonLoading(false));
+  }, [selectedStudentId]);
 
   const reloadAbsences = () => {
     api.get('/family/pedagogy/absences', { params: { studentId: selectedStudentId } })
@@ -640,12 +664,16 @@ export default function FamilyPedagogy() {
   const pendingCount = absences.filter((a) => a.justificationStatus === 'PENDING').length;
   const missingCount = absences.filter((a) => a.status !== 'late').length;
   const lateCount    = absences.filter((a) => a.status === 'late').length;
+  const liaisonUnread = liaisonThreads.reduce((n, t) => n + t.unreadCount, 0);
   const hasCoranEnrollment = (selectedStudent?.enrollments || []).some((e) => (e.classLabel || '').toLowerCase().includes('coran'));
   const soutienScolaireEnrollment = (selectedStudent?.enrollments || []).find((e) => (e.classLabel || '').toLowerCase().includes('soutien'));
   const hasSoutienScolaireEnrollment = !!soutienScolaireEnrollment;
   const soutienScolairePeriodOptions = getPeriodOptions(soutienScolaireEnrollment?.period);
+  // Cahier de liaison en 2e position, juste après le tableau de bord.
   const visibleTabs = [
-    ...TABS,
+    TABS[0],
+    { id: 'liaison', label: 'Cahier de liaison', icon: '📒' },
+    ...TABS.slice(1),
     ...(hasCoranEnrollment ? [{ id: 'coran', label: 'Suivi Coran', icon: '📖' }] : []),
     ...(hasSoutienScolaireEnrollment ? [
       { id: 'appreciations', label: 'Appréciations régulières', icon: '⭐' },
@@ -700,6 +728,9 @@ export default function FamilyPedagogy() {
               {t.id === 'absences' && pendingCount > 0 && (
                 <span style={{ marginLeft: 4, background: '#DC2626', color: '#fff', borderRadius: 999, padding: '0 5px', fontSize: 10 }}>{pendingCount}</span>
               )}
+              {t.id === 'liaison' && liaisonUnread > 0 && (
+                <span style={{ marginLeft: 4, background: '#DC2626', color: '#fff', borderRadius: 999, padding: '0 5px', fontSize: 10 }}>{liaisonUnread}</span>
+              )}
             </span>
           </button>
         ))}
@@ -718,6 +749,15 @@ export default function FamilyPedagogy() {
           {/* ════════ DASHBOARD ════════ */}
           {tab === 'dashboard' && (
             <div>
+              {liaisonUnread > 0 && (
+                <button type="button" className="sp-hw-card" onClick={() => setTab('liaison')}
+                  style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', gap: 8, cursor: 'pointer', background: '#EFF6FF', borderColor: '#BFDBFE', marginBottom: 14, fontFamily: 'var(--amc-font-family)' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--amc-primary)' }}>
+                    📒 {liaisonUnread} nouveau{liaisonUnread > 1 ? 'x' : ''} message{liaisonUnread > 1 ? 's' : ''} dans le cahier de liaison
+                  </span>
+                  <span className="sp-link-btn">Lire →</span>
+                </button>
+              )}
               {selectedStudent?.enrollments?.length > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: '#6B7280' }}>
@@ -1034,6 +1074,18 @@ export default function FamilyPedagogy() {
               </h3>
               <NotesScolaireFamilyPanel studentId={selectedStudentId} periodOptions={soutienScolairePeriodOptions} />
             </div>
+          )}
+
+          {/* ════════ CAHIER DE LIAISON ════════ */}
+          {tab === 'liaison' && selectedStudent && (
+            <LiaisonFamilyPanel
+              student={selectedStudent}
+              threads={liaisonThreads}
+              contacts={liaisonContacts}
+              loading={liaisonLoading}
+              onReload={() => loadLiaison(selectedStudentId)}
+              onThreadsChange={setLiaisonThreads}
+            />
           )}
         </>
       )}

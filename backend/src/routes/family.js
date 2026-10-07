@@ -14,6 +14,12 @@ const {
   deletePedagogyJustificationDocument,
   putHomeworkCompletion,
 } = require('../controllers/familyPedagogyController');
+const {
+  getFamilyThreads,
+  postFamilyThread,
+  postFamilyReply,
+  postFamilyRead,
+} = require('../controllers/liaisonController');
 
 const router = Router();
 
@@ -31,6 +37,10 @@ router.get('/pedagogy/notes', getPedagogyNotes);
 router.post('/pedagogy/absences/declare', postDeclareAbsence);
 router.post('/pedagogy/absences/:evaluationId/justify', postPedagogyJustification);
 router.delete('/pedagogy/absences/:evaluationId/documents/:documentId', deletePedagogyJustificationDocument);
+router.get('/pedagogy/liaison', getFamilyThreads);
+router.post('/pedagogy/liaison', postFamilyThread);
+router.post('/pedagogy/liaison/:threadId/replies', postFamilyReply);
+router.post('/pedagogy/liaison/:threadId/read', postFamilyRead);
 router.post('/profile', requireApproved, createOrUpdateProfile);
 router.post('/parents', requireApproved, addParent);
 router.put('/parents/:id', requireApproved, updateParent);

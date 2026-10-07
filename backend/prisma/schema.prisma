@@ -83,6 +83,8 @@ model User {
   payslipsUploaded             Payslip[]                     @relation("PayslipUploader")
   leaveRequestsDecided         LeaveRequest[]                @relation("LeaveDecider")
   mailLogsSent                 MailLog[]                     @relation("MailLogSender")
+  liaisonMessagesSent          LiaisonMessage[]              @relation("LiaisonMessageSender")
+  liaisonMessageReads          LiaisonMessageRead[]
 
   @@map("users")
 }
@@ -176,6 +178,62 @@ model HomeworkMessage {
 
   @@unique([classId, date])
   @@map("homework_messages")
+}
+
+enum LiaisonSenderType {
+  STAFF
+  FAMILY
+}
+
+// Cahier de liaison (suivi pédagogique) : échanges entre l'équipe pédagogique d'une
+// classe (professeur, responsable de pôle, admin) et les familles. Une conversation
+// = un message racine (threadId nul) + ses réponses (threadId = id de la racine).
+// studentId nul = message collectif adressé à toute la classe ; sur une conversation
+// collective, une réponse portant un studentId n'est visible que de la famille de
+// cet élève (et de l'équipe pédagogique).
+model LiaisonMessage {
+  id                 String            @id @default(uuid())
+  classId            String            @map("class_id")
+  studentId          String?           @map("student_id")
+  threadId           String?           @map("thread_id")
+  senderUserId       String            @map("sender_user_id")
+  senderType         LiaisonSenderType @map("sender_type")
+  senderName         String            @map("sender_name")
+  senderLabel        String            @map("sender_label")
+  subject            String?
+  body               String
+  attachmentUrl      String?           @map("attachment_url")
+  attachmentFilename String?           @map("attachment_filename")
+  // Sur le message racine : date du dernier message de la conversation (tri de la grille).
+  lastActivityAt     DateTime          @default(now()) @map("last_activity_at")
+  createdAt          DateTime          @default(now()) @map("created_at")
+
+  class   Class                @relation(fields: [classId], references: [id], onDelete: Cascade)
+  student Student?             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sender  User                 @relation("LiaisonMessageSender", fields: [senderUserId], references: [id], onDelete: Cascade)
+  thread  LiaisonMessage?      @relation("LiaisonThread", fields: [threadId], references: [id], onDelete: Cascade)
+  replies LiaisonMessage[]     @relation("LiaisonThread")
+  reads   LiaisonMessageRead[]
+
+  @@index([classId, lastActivityAt])
+  @@index([studentId])
+  @@index([threadId])
+  @@map("liaison_messages")
+}
+
+// Accusé de lecture par utilisateur (un message collectif est lu par plusieurs familles).
+model LiaisonMessageRead {
+  id        String   @id @default(uuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id")
+  readAt    DateTime @default(now()) @map("read_at")
+
+  message LiaisonMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@map("liaison_message_reads")
 }
 
 model HomeworkCompletion {
@@ -342,6 +400,7 @@ model Student {
   bulletinScolaireUploads BulletinScolaireUpload[]
   bulletins               Bulletin[]
   eventRegistrations      VolunteerEventChildRegistration[]
+  liaisonMessages         LiaisonMessage[]
 
   @@map("students")
 }
@@ -558,6 +617,7 @@ model Class {
   notesScolaires          NoteScolaire[]
   bulletinScolaireUploads BulletinScolaireUpload[]
   bulletins               Bulletin[]
+  liaisonMessages         LiaisonMessage[]
 
   @@index([schoolYearId, poleId, levelId])
   @@index([timeSlotId])
@@ -1765,6 +1825,21 @@ model Payslip {
 // Historique des envois de mailing en masse (espace admin, rubrique Mailing) — une
 // entrée par campagne envoyée (pas par destinataire), pour retrouver ensuite qui a
 // reçu quoi et le contenu exact du message envoyé.
+// RIB joints aux paiements par prélèvement/virement, stockés en base et non sur le
+// disque : en production (Render, sans disque persistant) les fichiers de uploads/
+// sont effacés à chaque redéploiement/redémarrage. Référencés depuis
+// Payment.metadata.bankDebitRibFileId et servis par une route authentifiée.
+model RibFile {
+  id        String   @id @default(uuid())
+  fileName  String   @map("file_name")
+  mimeType  String   @map("mime_type")
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("rib_files")
+}
+
 model MailLog {
   id                 String   @id @default(uuid())
   subject            String
