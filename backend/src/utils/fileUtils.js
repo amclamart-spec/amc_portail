@@ -67,4 +67,5 @@ function saveBase64File(base64, subDir, originalFilename) {
 
 module.exports = {
   saveBase64File,
+  parseBase64DataUri,
 };

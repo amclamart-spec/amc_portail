@@ -10,7 +10,7 @@ const { v4: uuidv4 } = require('uuid');
 const { sendAccountApprovedEmail, sendAccountRejectedEmail, sendAccountInvitationEmail, sendEnrollmentApprovedEmail, sendEnrollmentRejectedEmail, sendMail, sendRoleRequestApprovedEmail, sendRoleRequestRejectedEmail } = require('../services/emailService');
 const { finalizeStripePayment, cancelStripePayment } = require('./paymentController');
 const { savePhotoBase64 } = require('../utils/photoUtils');
-const { saveBase64File } = require('../utils/fileUtils');
+const { storeRibDocument } = require('../utils/ribFileUtils');
 const { isProvisionalClass, getProvisionalClassFilter, PROVISIONAL_CLASS_NAME } = require('../utils/provisionalClassUtils');
 const { getRegistrationBlock, setRegistrationBlock } = require('../services/systemService');
 const { getReceiptInfo } = require('../utils/receiptUtils');
@@ -1189,8 +1189,7 @@ async function updateEnrollmentPayment(req, res) {
       if (firstPaymentDate !== undefined) { paymentMetadataUpdate.firstPaymentDate = String(firstPaymentDate || '').trim(); hasMetadataUpdate = true; }
       if (scheduleDay !== undefined) { paymentMetadataUpdate.bankDebitDay = Number(scheduleDay) || 10; hasMetadataUpdate = true; }
       if (ribDocument?.base64) {
-        paymentMetadataUpdate.bankDebitRibUrl = saveBase64File(ribDocument.base64, 'ribs', ribDocument.name || 'rib.pdf');
-        paymentMetadataUpdate.bankDebitRibFilename = String(ribDocument.name || 'RIB');
+        Object.assign(paymentMetadataUpdate, await storeRibDocument(ribDocument));
         hasMetadataUpdate = true;
       }
     } else if (effectiveMethod === 'CHEQUE') {
@@ -1505,8 +1504,7 @@ async function createEnrollmentPayment(req, res) {
       if (firstPaymentDate) paymentMetadata.firstPaymentDate = String(firstPaymentDate).trim();
       if (scheduleDay !== undefined) paymentMetadata.bankDebitDay = Number(scheduleDay) || 10;
       if (ribDocument?.base64) {
-        paymentMetadata.bankDebitRibUrl = saveBase64File(ribDocument.base64, 'ribs', ribDocument.name || 'rib.pdf');
-        paymentMetadata.bankDebitRibFilename = String(ribDocument.name || 'RIB');
+        Object.assign(paymentMetadata, await storeRibDocument(ribDocument));
       }
     } else if (method === 'CHEQUE') {
       if (numberOfInstallments !== undefined) paymentMetadata.chequeInstallmentsCount = Number(numberOfInstallments) || 1;

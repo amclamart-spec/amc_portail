@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { FiDownload, FiEdit2, FiTrash2, FiFileText, FiCreditCard, FiCheckCircle, FiXCircle } from 'react-icons/fi';
 import AdminEnrollmentWizard from './AdminEnrollmentWizard';
+import { downloadRib } from '../../utils/ribDownload';
 import { useAuth } from '../../context/AuthContext';
 import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
 
@@ -356,38 +357,7 @@ export default function AdminEnrollments() {
 
   const formatBankSwiftForDisplay = (value) => normalizeBankValue(value);
 
-  const resolveUploadUrl = (url) => {
-    if (!url) return url;
-    if (/^https?:\/\//i.test(url)) return url;
-    const base = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-    const prefix = base.endsWith('/') ? base.slice(0, -1) : base;
-    return `${prefix}${url.startsWith('/') ? '' : '/'}${url}`;
-  };
 
-  const handleDownloadRib = async (ribUrl, filename) => {
-    try {
-      const downloadUrl = resolveUploadUrl(ribUrl);
-      if (!downloadUrl) throw new Error('URL RIB invalide');
-      const response = await fetch(downloadUrl, { method: 'GET' });
-      if (!response.ok) {
-        throw new Error(`Erreur HTTP ${response.status}`);
-      }
-      const blob = await response.blob();
-      const objectUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = filename || 'rib.pdf';
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(objectUrl);
-      toast.success('Téléchargement du RIB en cours...');
-    } catch (err) {
-      console.error('Erreur téléchargement RIB', err);
-      toast.error('Impossible de télécharger le RIB');
-    }
-  }; 
 
   const exportEnrollments = async () => {
     setExporting(true);
@@ -2761,7 +2731,7 @@ export default function AdminEnrollments() {
                                         <button
                                           type="button"
                                           className="btn btn-link"
-                                          onClick={() => handleDownloadRib(bankDebitRibUrl, bankDebitRibFilename)}
+                                          onClick={() => downloadRib({ ribFileId: metadata.bankDebitRibFileId, ribUrl: bankDebitRibUrl, filename: bankDebitRibFilename })}
                                           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, marginTop: 6, color: '#1d4ed8' }}
                                         >
                                           <FiDownload size={14} /> Télécharger le RIB
