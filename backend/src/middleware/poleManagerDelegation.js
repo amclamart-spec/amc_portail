@@ -68,6 +68,9 @@ async function actAsClassTeacher(req, res, next) {
       return res.status(404).json({ error: 'Aucun professeur assigné à cette classe' });
     }
 
+    // Identité réelle conservée pour les traitements qui doivent tracer l'auteur
+    // effectif (ex. expéditeur d'un message du cahier de liaison).
+    req.originalUser = req.user;
     req.user = { ...req.user, id: delegateUser.id, role: 'PROFESSEUR' };
     return next();
   } catch (error) {

@@ -27,7 +27,7 @@ const { getNextEnrollmentRegistrationCode, extractSchoolYearCode } = require('..
 
 
 const { savePhotoBase64 } = require('../utils/photoUtils');
-const { saveBase64File } = require('../utils/fileUtils');
+const { storeRibDocument } = require('../utils/ribFileUtils');
 const { getFamilyEmailRecipients } = require('../utils/familyEmailUtils');
 
 const { isRegistrationBlocked } = require('../services/systemService');
@@ -656,7 +656,7 @@ function mapPaymentMethod(method) {
 
 
 
-function buildBankDebitMetadata(payment) {
+async function buildBankDebitMetadata(payment) {
   const metadata = {};
 
   // Handle PRELEVEMENT_BANCAIRE
@@ -681,8 +681,7 @@ function buildBankDebitMetadata(payment) {
     }
 
     if (payment.ribDocument?.base64) {
-      metadata.bankDebitRibUrl = saveBase64File(payment.ribDocument.base64, 'ribs', payment.ribDocument.name || 'rib.pdf');
-      metadata.bankDebitRibFilename = String(payment.ribDocument.name || 'RIB');
+      Object.assign(metadata, await storeRibDocument(payment.ribDocument));
     }
   }
 
@@ -1324,7 +1323,7 @@ async function completeExistingFamilyRegistration(req, res) {
     const ipAddress = getClientIp(req);
 
     const userAgent = req.headers['user-agent'] || null;
-    const bankDebitMetadata = buildBankDebitMetadata(payment);
+    const bankDebitMetadata = await buildBankDebitMetadata(payment);
 
 
 
@@ -3043,7 +3042,7 @@ async function completeFamilyRegistration(req, res) {
     const ipAddress = getClientIp(req);
 
     const userAgent = req.headers['user-agent'] || null;
-    const bankDebitMetadata = buildBankDebitMetadata(payment);
+    const bankDebitMetadata = await buildBankDebitMetadata(payment);
 
 
 

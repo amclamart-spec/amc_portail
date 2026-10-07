@@ -7,3 +7,6 @@ backend/.env
 backend/.env.production
 *.log
 .DS_Store
+
+# RIB récupérés depuis la prod (scripts/recoverProdRibs.js) : données bancaires
+backend/rib-recovery/

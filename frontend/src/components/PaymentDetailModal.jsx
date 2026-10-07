@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/axios';
 import toast from 'react-hot-toast';
 import { FiCheckCircle, FiXCircle } from 'react-icons/fi';
+import { downloadRib } from '../utils/ribDownload';
 
 const paymentStatusLabels = {
   SUCCEEDED: 'Payé',
@@ -65,13 +66,6 @@ const formatBankIbanForDisplay = (value) => {
 
 const formatBankSwiftForDisplay = (value) => normalizeBankValue(value);
 
-const resolveUploadUrl = (url) => {
-  if (!url) return url;
-  if (/^https?:\/\//i.test(url)) return url;
-  const base = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-  const prefix = base.endsWith('/') ? base.slice(0, -1) : base;
-  return `${prefix}${url.startsWith('/') ? '' : '/'}${url}`;
-};
 
 const overlayStyle = {
   position: 'fixed',
@@ -390,30 +384,6 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
     }
   };
 
-  const handleDownloadRib = async (ribUrl, filename) => {
-    try {
-      const downloadUrl = resolveUploadUrl(ribUrl);
-      if (!downloadUrl) throw new Error('URL RIB invalide');
-      const response = await fetch(downloadUrl, { method: 'GET' });
-      if (!response.ok) {
-        throw new Error(`Erreur HTTP ${response.status}`);
-      }
-      const blob = await response.blob();
-      const objectUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = filename || 'rib.pdf';
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(objectUrl);
-      toast.success('Téléchargement du RIB en cours...');
-    } catch (err) {
-      console.error('Erreur téléchargement RIB', err);
-      toast.error('Impossible de télécharger le RIB');
-    }
-  };
 
   if (!isOpen || !transaction) {
     return null;
@@ -562,7 +532,7 @@ export default function PaymentDetailModal({ transaction, isOpen, onClose, onRef
                     {bankDebitMetadata.bankDebitRibUrl ? (
                       <button
                         type="button"
-                        onClick={() => handleDownloadRib(bankDebitMetadata.bankDebitRibUrl, bankDebitMetadata.bankDebitRibFilename)}
+                        onClick={() => downloadRib({ ribFileId: bankDebitMetadata.bankDebitRibFileId, ribUrl: bankDebitMetadata.bankDebitRibUrl, filename: bankDebitMetadata.bankDebitRibFilename })}
                         style={{ 
                           fontWeight: 600,
                           backgroundColor: 'transparent',

@@ -7,6 +7,7 @@ import CoranTeacherPanel from '../../components/coran/CoranTeacherPanel';
 import AppreciationsPanel from '../../components/appreciations/AppreciationsPanel';
 import NotesScolaireTeacherPanel from '../../components/notesScolaires/NotesScolaireTeacherPanel';
 import CoranBulletin from '../../components/coran/CoranBulletin';
+import LiaisonTeacherPanel from '../../components/liaison/LiaisonTeacherPanel';
 
 /* ─── Teal teacher palette ─────────────────────────────────────────────────── */
 const T = {
@@ -178,6 +179,7 @@ const TABS = [
   { id: 'notes',     label: 'Notes',             icon: '📝' },
   { id: 'bulletin',  label: 'Bulletin',           icon: '📄' },
 ];
+const LIAISON_TAB = { id: 'liaison', label: 'Cahier de liaison', icon: '📒' };
 
 /* ─── main component ───────────────────────────────────────────────────────── */
 export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {}) {
@@ -231,11 +233,13 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
   const selectedClass  = classes.find((c) => String(c.id) === String(selectedClassId)) || null;
   const isCoranClass   = (selectedClass?.level?.pole?.name || '').toLowerCase().includes('coran');
   const isSoutienScolaireClass = (selectedClass?.level?.pole?.name || '').toLowerCase().includes('soutien');
-  const visibleTabs    = isCoranClass
+  const baseTabs       = isCoranClass
     ? [...TABS.filter((t) => t.id !== 'notes'), { id: 'coran', label: 'Suivi Coran', icon: '📖' }]
     : isSoutienScolaireClass
       ? [...TABS, { id: 'appreciations', label: 'Appréciations régulières', icon: '⭐' }, { id: 'notesScolaires', label: 'Notes Scolaire', icon: '📓' }]
       : TABS;
+  // Cahier de liaison en 2e position, juste après le tableau de bord.
+  const visibleTabs    = [baseTabs[0], LIAISON_TAB, ...baseTabs.slice(1)];
   const classPeriod    = selectedClass?.level?.pole?.period;
   const periodOptions  = useMemo(() => {
     if (classPeriod === 'TRIMESTRIEL') return [
@@ -1749,6 +1753,11 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
       {/* ══════════════════════ NOTES SCOLAIRE ══════════════════════ */}
       {tab === 'notesScolaires' && isSoutienScolaireClass && (
         <NotesScolaireTeacherPanel classId={selectedClassId} periodOptions={periodOptions} />
+      )}
+
+      {/* ══════════════════════ CAHIER DE LIAISON ══════════════════════ */}
+      {tab === 'liaison' && (
+        <LiaisonTeacherPanel classId={selectedClassId} accent={{ primary: T.primary, light: T.light }} />
       )}
 
       {/* ── Absence history modal ── */}
