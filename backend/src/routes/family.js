@@ -19,6 +19,7 @@ const {
   postFamilyThread,
   postFamilyReply,
   postFamilyRead,
+  getFamilyAttachment,
 } = require('../controllers/liaisonController');
 
 const router = Router();
@@ -38,6 +39,7 @@ router.post('/pedagogy/absences/declare', postDeclareAbsence);
 router.post('/pedagogy/absences/:evaluationId/justify', postPedagogyJustification);
 router.delete('/pedagogy/absences/:evaluationId/documents/:documentId', deletePedagogyJustificationDocument);
 router.get('/pedagogy/liaison', getFamilyThreads);
+router.get('/pedagogy/liaison/attachments/:attachmentId', getFamilyAttachment);
 router.post('/pedagogy/liaison', postFamilyThread);
 router.post('/pedagogy/liaison/:threadId/replies', postFamilyReply);
 router.post('/pedagogy/liaison/:threadId/read', postFamilyRead);

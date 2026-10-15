@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
-import LiaisonThreadGrid, { LIAISON_STYLES, AttachmentInput, matchesCommonFilters } from './LiaisonThreadGrid';
+import LiaisonThreadGrid, { LIAISON_STYLES, AttachmentInput, matchesCommonFilters, downloadAttachment } from './LiaisonThreadGrid';
 
 const EMPTY_FILTERS = { search: '' };
 
@@ -202,6 +202,7 @@ export default function LiaisonTeacherPanel({ classId, accent }) {
             columns={columns}
             onOpen={handleOpen}
             onReply={handleReply}
+            onDownload={(message) => downloadAttachment(message, (id) => api.get(`/liaison/attachments/${id}`, { params: { classId }, responseType: 'blob' }))}
             emptyText={filtersActive ? 'Aucune conversation ne correspond à ces filtres.' : 'Aucun échange pour cette classe. Écrivez aux familles avec « Nouveau message ».'}
           />
         )}

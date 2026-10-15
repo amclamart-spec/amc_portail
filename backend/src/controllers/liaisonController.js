@@ -7,6 +7,8 @@ const {
   createFamilyThread,
   replyAsFamily,
   markThreadReadAsFamily,
+  getAttachmentForStaff,
+  getAttachmentForFamily,
 } = require('../services/liaisonService');
 
 function sendError(res, error, label) {
@@ -28,7 +30,27 @@ function staffActor(req) {
   };
 }
 
+function sendAttachment(res, attachment) {
+  const asciiName = attachment.fileName.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
+  res.setHeader('Content-Type', attachment.mimeType);
+  res.setHeader('Content-Length', attachment.size);
+  res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(Buffer.from(attachment.data));
+}
+
 /* ─── espace professeur / responsable de pôle / admin ───────────────────────── */
+
+async function getStaffAttachment(req, res) {
+  try {
+    const { classId } = req.query;
+    if (!classId) return res.status(400).json({ error: 'classId est requis' });
+    const attachment = await getAttachmentForStaff({ teacherUserId: req.user.id, classId, attachmentId: req.params.attachmentId });
+    return sendAttachment(res, attachment);
+  } catch (error) {
+    return sendError(res, error, 'getStaffAttachment');
+  }
+}
 
 async function getStaffThreads(req, res) {
   try {
@@ -82,6 +104,17 @@ async function postStaffRead(req, res) {
 
 /* ─── espace famille ────────────────────────────────────────────────────────── */
 
+async function getFamilyAttachment(req, res) {
+  try {
+    const { studentId } = req.query;
+    if (!studentId) return res.status(400).json({ error: 'studentId est requis' });
+    const attachment = await getAttachmentForFamily({ familyUserId: req.user.id, studentId, attachmentId: req.params.attachmentId });
+    return sendAttachment(res, attachment);
+  } catch (error) {
+    return sendError(res, error, 'getFamilyAttachment');
+  }
+}
+
 async function getFamilyThreads(req, res) {
   try {
     const { studentId } = req.query;
@@ -127,6 +160,8 @@ async function postFamilyRead(req, res) {
 }
 
 module.exports = {
+  getStaffAttachment,
+  getFamilyAttachment,
   getStaffThreads,
   postStaffThread,
   postStaffReply,

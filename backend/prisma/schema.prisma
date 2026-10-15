@@ -204,6 +204,7 @@ model LiaisonMessage {
   body               String
   attachmentUrl      String?           @map("attachment_url")
   attachmentFilename String?           @map("attachment_filename")
+  attachmentId       String?           @map("attachment_id")
   // Sur le message racine : date du dernier message de la conversation (tri de la grille).
   lastActivityAt     DateTime          @default(now()) @map("last_activity_at")
   createdAt          DateTime          @default(now()) @map("created_at")
@@ -212,13 +213,32 @@ model LiaisonMessage {
   student Student?             @relation(fields: [studentId], references: [id], onDelete: Cascade)
   sender  User                 @relation("LiaisonMessageSender", fields: [senderUserId], references: [id], onDelete: Cascade)
   thread  LiaisonMessage?      @relation("LiaisonThread", fields: [threadId], references: [id], onDelete: Cascade)
+  attachment LiaisonAttachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
   replies LiaisonMessage[]     @relation("LiaisonThread")
   reads   LiaisonMessageRead[]
 
   @@index([classId, lastActivityAt])
   @@index([studentId])
   @@index([threadId])
+  @@index([attachmentId])
   @@map("liaison_messages")
+}
+
+// Pièce jointe d'un message du cahier de liaison, stockée en base (comme RibFile) :
+// les fichiers de uploads/ sont perdus à chaque redémarrage en production. Un même
+// fichier peut être partagé par plusieurs messages (message individuel envoyé à
+// plusieurs élèves) ; téléchargement via une route qui vérifie la visibilité.
+model LiaisonAttachment {
+  id        String   @id @default(uuid())
+  fileName  String   @map("file_name")
+  mimeType  String   @map("mime_type")
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now()) @map("created_at")
+
+  messages LiaisonMessage[]
+
+  @@map("liaison_attachments")
 }
 
 // Accusé de lecture par utilisateur (un message collectif est lu par plusieurs familles).

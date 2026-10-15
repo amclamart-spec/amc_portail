@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
+import api from '../../api/axios';
 
 /* ─── Cahier de liaison : éléments partagés espace famille / espace professeur ── */
 
@@ -101,6 +102,30 @@ export function matchesCommonFilters(thread, { search, status, dateFrom, dateTo,
   return true;
 }
 
+// Pièces jointes récentes : stockées en base, téléchargées via l'API avec la session
+// (`fetchById` fourni par l'espace famille ou professeur). Anciennes pièces jointes
+// (fichier dans uploads/) : lien vers l'API et non vers le site frontend.
+export async function downloadAttachment(message, fetchById) {
+  try {
+    if (message.attachmentId) {
+      const { data } = await fetchById(message.attachmentId);
+      const objectUrl = window.URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = message.attachmentFilename || 'piece-jointe';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(objectUrl);
+      return;
+    }
+    const apiOrigin = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
+    window.open(`${apiOrigin}${message.attachmentUrl}`, '_blank', 'noopener');
+  } catch {
+    toast.error('Impossible de télécharger la pièce jointe');
+  }
+}
+
 export function AttachmentInput({ value, onChange }) {
   const handleSelect = async (event) => {
     const file = event.target.files?.[0];
@@ -198,7 +223,7 @@ function ReplyForm({ thread, side, onReply }) {
   );
 }
 
-function MessageCard({ message, thread, side }) {
+function MessageCard({ message, thread, side, onDownload }) {
   const isStaff = message.senderType === 'STAFF';
   // Sur une conversation collective, distinguer les messages privés (une famille) des messages à toute la classe.
   const privateTo = thread.isCollective && message.studentId && message.id !== thread.id ? message.studentName : null;
@@ -217,10 +242,11 @@ function MessageCard({ message, thread, side }) {
         <span className="lz-muted">{fmtDateTime(message.createdAt)}</span>
       </div>
       <div className="lz-msg-body">{message.body}</div>
-      {message.attachmentUrl && (
-        <a href={message.attachmentUrl} target="_blank" rel="noreferrer" className="lz-file-chip" style={{ marginTop: 8, textDecoration: 'none', color: 'var(--lz-accent)' }}>
+      {(message.attachmentId || message.attachmentUrl) && (
+        <button type="button" className="lz-file-chip" onClick={() => onDownload(message)}
+          style={{ marginTop: 8, cursor: 'pointer', color: 'var(--lz-accent)', fontFamily: 'var(--amc-font-family)' }}>
           <span>📥 {message.attachmentFilename || 'Pièce jointe'}</span>
-        </a>
+        </button>
       )}
     </div>
   );
@@ -232,7 +258,7 @@ function MessageCard({ message, thread, side }) {
  * `columns` : [{ key, label, width, optional, render(thread) }] — la colonne
  * "Objet / dernier message" et les colonnes date/statut sont communes.
  */
-export default function LiaisonThreadGrid({ threads, side, columns, onOpen, onReply, emptyText }) {
+export default function LiaisonThreadGrid({ threads, side, columns, onOpen, onReply, onDownload, emptyText }) {
   const [openId, setOpenId] = useState(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
@@ -293,7 +319,7 @@ export default function LiaisonThreadGrid({ threads, side, columns, onOpen, onRe
             {isOpen && (
               <div className="lz-thread">
                 <ReplyForm thread={thread} side={side} onReply={onReply} />
-                {thread.messages.map((m) => <MessageCard key={m.id} message={m} thread={thread} side={side} />)}
+                {thread.messages.map((m) => <MessageCard key={m.id} message={m} thread={thread} side={side} onDownload={onDownload} />)}
               </div>
             )}
           </div>
