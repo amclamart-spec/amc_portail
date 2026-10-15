@@ -6,6 +6,7 @@ const {
   postStaffThread,
   postStaffReply,
   postStaffRead,
+  getStaffAttachment,
 } = require('../controllers/liaisonController');
 
 // Cahier de liaison, côté équipe pédagogique (les routes famille sont dans family.js).
@@ -14,6 +15,7 @@ const staff = [authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsCla
 
 router.use(authenticate);
 router.get('/', ...staff, getStaffThreads);
+router.get('/attachments/:attachmentId', ...staff, getStaffAttachment);
 router.post('/', ...staff, postStaffThread);
 router.post('/:threadId/replies', ...staff, postStaffReply);
 router.post('/:threadId/read', ...staff, postStaffRead);

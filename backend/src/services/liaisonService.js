@@ -1,7 +1,7 @@
 const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 const config = require('../config');
-const { saveBase64File } = require('../utils/fileUtils');
+const { parseBase64DataUri } = require('../utils/fileUtils');
 const { classAccessWhere } = require('../utils/classAccessUtils');
 const { getFamilyEmailRecipients } = require('../utils/familyEmailUtils');
 const { sendMail } = require('./emailService');
@@ -17,8 +17,7 @@ const FAMILY_VISIBLE_ENROLLMENT_STATUSES = ['CONFIRMED'];
 const MAX_SUBJECT_LENGTH = 150;
 const MAX_BODY_LENGTH = 5000;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-// Liste blanche : les fichiers sont servis tels quels sous /uploads, un .html ou
-// .svg déposé ici serait exécuté dans le navigateur du destinataire.
+// Liste blanche des formats acceptés (documents usuels uniquement).
 const ALLOWED_ATTACHMENT_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.doc', '.docx', '.xls', '.xlsx', '.odt', '.ods', '.txt'];
 
 const CLASS_INCLUDE = {
@@ -58,8 +57,10 @@ function validateContent({ subject, body, requireSubject }) {
   return { subject: cleanSubject || null, body: cleanBody };
 }
 
-function saveAttachment(attachment) {
-  if (!attachment || !attachment.base64) return { attachmentUrl: null, attachmentFilename: null };
+// Pièce jointe stockée en base (LiaisonAttachment) et non dans uploads/, perdu à
+// chaque redémarrage du serveur de production.
+async function saveAttachment(attachment) {
+  if (!attachment || !attachment.base64) return { attachmentId: null, attachmentFilename: null };
 
   const fileName = String(attachment.fileName || '').trim();
   const extension = path.extname(fileName).toLowerCase();
@@ -71,12 +72,17 @@ function saveAttachment(attachment) {
     throw httpError(400, 'La pièce jointe ne doit pas dépasser 5 Mo');
   }
 
+  let parsed;
   try {
-    const attachmentUrl = saveBase64File(attachment.base64, 'liaison', fileName);
-    return { attachmentUrl, attachmentFilename: fileName.slice(0, 200) };
+    parsed = parseBase64DataUri(attachment.base64);
   } catch (error) {
     throw httpError(400, error.message || 'Pièce jointe invalide');
   }
+  const stored = await prisma.liaisonAttachment.create({
+    data: { fileName: fileName.slice(0, 200), mimeType: parsed.mime, size: parsed.buffer.length, data: parsed.buffer },
+    select: { id: true },
+  });
+  return { attachmentId: stored.id, attachmentFilename: fileName.slice(0, 200) };
 }
 
 /* ─── sérialisation ─────────────────────────────────────────────────────────── */
@@ -102,6 +108,7 @@ function serializeMessage(message, viewerUserId, viewerSide) {
     senderName: message.senderName,
     senderLabel: message.senderLabel,
     body: message.body,
+    attachmentId: message.attachmentId,
     attachmentUrl: message.attachmentUrl,
     attachmentFilename: message.attachmentFilename,
     studentId: message.studentId,
@@ -142,7 +149,7 @@ function serializeThread(root, viewerUserId, viewerSide) {
     },
     messageCount: messages.length,
     unreadCount: messages.filter((m) => m.isUnread).length,
-    hasAttachment: messages.some((m) => m.attachmentUrl),
+    hasAttachment: messages.some((m) => m.attachmentId || m.attachmentUrl),
     awaitingStaffReply: last.senderType === 'FAMILY',
     messages,
   };
@@ -284,7 +291,7 @@ async function createStaffThreads({ teacherUserId, sender, classId, mode, studen
     throw httpError(400, 'Type de message invalide');
   }
 
-  const files = saveAttachment(attachment);
+  const files = await saveAttachment(attachment);
   // Un message individuel adressé à plusieurs élèves ouvre une conversation privée
   // par élève : chaque famille ne voit que la sienne et y répond séparément.
   const created = await prisma.$transaction(targets.map((studentId) => prisma.liaisonMessage.create({
@@ -303,7 +310,7 @@ async function createStaffThreads({ teacherUserId, sender, classId, mode, studen
 
   targets.forEach((studentId) => fireAndForget(notifyFamilies({
     classRecord, studentId, subject: content.subject, senderName: sender.name, senderLabel: sender.label,
-    body: content.body, hasAttachment: !!files.attachmentUrl,
+    body: content.body, hasAttachment: !!files.attachmentId,
   }), 'familles'));
 
   return { count: created.length };
@@ -321,7 +328,7 @@ async function replyAsStaff({ teacherUserId, sender, classId, threadId, studentI
   const targetStudentId = root.studentId || studentId || null;
   if (!root.studentId && targetStudentId) await assertStudentsInClass(classId, [targetStudentId]);
 
-  const files = saveAttachment(attachment);
+  const files = await saveAttachment(attachment);
   const [reply] = await prisma.$transaction([
     prisma.liaisonMessage.create({
       data: {
@@ -341,7 +348,7 @@ async function replyAsStaff({ teacherUserId, sender, classId, threadId, studentI
 
   fireAndForget(notifyFamilies({
     classRecord, studentId: targetStudentId, subject: `Re : ${root.subject}`, senderName: sender.name,
-    senderLabel: sender.label, body: content.body, hasAttachment: !!files.attachmentUrl,
+    senderLabel: sender.label, body: content.body, hasAttachment: !!files.attachmentId,
   }), 'familles');
 
   return { id: reply.id };
@@ -426,7 +433,7 @@ async function createFamilyThread({ familyUser, studentId, classId, subject, bod
   const classRecord = student.enrollments.find((e) => e.classId === classId).class;
   const sender = familySender(familyUser, student.family);
 
-  const files = saveAttachment(attachment);
+  const files = await saveAttachment(attachment);
   const thread = await prisma.liaisonMessage.create({
     data: {
       classId,
@@ -443,7 +450,7 @@ async function createFamilyThread({ familyUser, studentId, classId, subject, bod
 
   fireAndForget(notifyTeachers({
     classRecord, student, subject: content.subject, senderName: sender.name, senderLabel: sender.label,
-    body: content.body, hasAttachment: !!files.attachmentUrl,
+    body: content.body, hasAttachment: !!files.attachmentId,
   }), 'enseignants');
 
   return { id: thread.id };
@@ -459,7 +466,7 @@ async function replyAsFamily({ familyUser, studentId, threadId, body, attachment
   const content = validateContent({ body });
   const sender = familySender(familyUser, student.family);
 
-  const files = saveAttachment(attachment);
+  const files = await saveAttachment(attachment);
   const [reply] = await prisma.$transaction([
     prisma.liaisonMessage.create({
       data: {
@@ -479,7 +486,7 @@ async function replyAsFamily({ familyUser, studentId, threadId, body, attachment
 
   fireAndForget(notifyTeachers({
     classRecord: root.class, student, subject: `Re : ${root.subject}`, senderName: sender.name,
-    senderLabel: sender.label, body: content.body, hasAttachment: !!files.attachmentUrl,
+    senderLabel: sender.label, body: content.body, hasAttachment: !!files.attachmentId,
   }), 'enseignants');
 
   return { id: reply.id };
@@ -501,7 +508,39 @@ async function markThreadReadAsFamily({ familyUserId, studentId, threadId }) {
   return { marked: await markMessagesRead({ messageIds: messages.map((m) => m.id), userId: familyUserId }) };
 }
 
+/* ─── téléchargement des pièces jointes ─────────────────────────────────────── */
+
+async function loadAttachment(attachmentId) {
+  const attachment = await prisma.liaisonAttachment.findUnique({ where: { id: attachmentId } });
+  if (!attachment) throw httpError(404, 'Pièce jointe introuvable');
+  return attachment;
+}
+
+async function getAttachmentForStaff({ teacherUserId, classId, attachmentId }) {
+  await getStaffClass({ teacherUserId, classId });
+  const message = await prisma.liaisonMessage.findFirst({ where: { attachmentId, classId }, select: { id: true } });
+  if (!message) throw httpError(404, 'Pièce jointe introuvable');
+  return loadAttachment(attachmentId);
+}
+
+// Visible de la famille : message adressé à cet élève, ou message collectif d'une
+// de ses classes (une réponse privée à une autre famille porte un autre studentId).
+async function getAttachmentForFamily({ familyUserId, studentId, attachmentId }) {
+  const { student, classIds } = await getFamilyStudentContext({ familyUserId, studentId });
+  const message = await prisma.liaisonMessage.findFirst({
+    where: {
+      attachmentId,
+      OR: [{ studentId: student.id }, { studentId: null, classId: { in: classIds } }],
+    },
+    select: { id: true },
+  });
+  if (!message) throw httpError(404, 'Pièce jointe introuvable');
+  return loadAttachment(attachmentId);
+}
+
 module.exports = {
+  getAttachmentForStaff,
+  getAttachmentForFamily,
   listStaffThreads,
   createStaffThreads,
   replyAsStaff,
