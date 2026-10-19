@@ -191,7 +191,7 @@ function messageHtml({ intro, senderName, senderLabel, subject, body, hasAttachm
     </ul>
     <blockquote style="margin:12px 0;padding:10px 14px;border-left:3px solid #213B88;background:#f8fafc;">${escapeHtml(excerpt).replace(/\n/g, '<br/>')}</blockquote>
     <p>Pour répondre, connectez-vous au portail : <a href="${link}">${link}</a> (Suivi pédagogique, onglet Cahier de liaison).</p>
-    <p>Cordialement,<br/>Administration AMC</p>`;
+    <p>Cordialement,<br/>Administration PARTAGE</p>`;
 }
 
 async function notifyFamilies({ classRecord, studentId, subject, senderName, senderLabel, body, hasAttachment }) {

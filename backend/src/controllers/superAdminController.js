@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
 const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const { sendAccountInvitationEmail } = require('../services/emailService');
+const { getDeletionImpact, deleteUserCompletely } = require('../services/userDeletionService');
 
 const prisma = applyNameCasing(new PrismaClient());
 
@@ -233,8 +234,36 @@ async function resetUserPassword(req, res) {
   }
 }
 
+// GET /api/super-admin/users/:id/deletion-impact — aperçu de ce qui sera supprimé,
+// affiché dans la fenêtre de confirmation avant toute suppression
+async function getUserDeletionImpact(req, res) {
+  try {
+    const impact = await getDeletionImpact({ userId: req.params.id, actorId: req.user.id });
+    return res.json(impact);
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    console.error('Erreur getUserDeletionImpact (super-admin):', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// DELETE /api/super-admin/users/:id — suppression définitive du compte et de toutes
+// ses données ; exige de ressaisir l'email du compte (body.confirmEmail)
+async function deleteUser(req, res) {
+  try {
+    await deleteUserCompletely({ userId: req.params.id, actorId: req.user.id, confirmEmail: req.body?.confirmEmail });
+    return res.json({ success: true });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    console.error('Erreur deleteUser (super-admin):', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   VALID_ROLES,
+  getUserDeletionImpact,
+  deleteUser,
   getAllUsers,
   createUser,
   updateUserRoles,
