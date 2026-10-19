@@ -497,7 +497,7 @@ async function saveAbsences({ teacherUserId, classId, date, lessonId, students }
             <li>Professeur : ${teacherName}</li>
           </ul>
           <p>Merci de justifier son absence en vous connectant à votre espace famille (onglet absence). Ne pas répondre à ce mail car il ne sera pas traité par l'administration.</p>
-          <p>Cordialement,<br/>Administration AMC</p>
+          <p>Cordialement,<br/>Administration PARTAGE</p>
         `,
       };
     });
@@ -520,7 +520,7 @@ async function saveAbsences({ teacherUserId, classId, date, lessonId, students }
             <li>Classe : ${classLabel}</li>
             <li>Professeur : ${teacherName}</li>
           </ul>
-          <p>Cordialement,<br/>Administration AMC</p>
+          <p>Cordialement,<br/>Administration PARTAGE</p>
         `,
       };
     });

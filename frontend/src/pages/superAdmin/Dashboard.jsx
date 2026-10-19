@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
-import { FiPlus, FiCheck, FiX, FiShield, FiKey, FiCopy, FiUserX, FiUserCheck } from 'react-icons/fi';
+import { FiPlus, FiCheck, FiX, FiShield, FiKey, FiCopy, FiUserX, FiUserCheck, FiTrash2 } from 'react-icons/fi';
 import { ROLE_LABEL as SHARED_ROLE_LABEL } from '../../utils/roles';
 
 // Dans l'espace Super Admin, on affiche les rôles sans le préfixe "Espace" (qui n'a de sens
@@ -68,6 +68,96 @@ function GeneratedPasswordModal({ user, onClose }) {
   );
 }
 
+// Confirmation de suppression définitive : aperçu de tout ce qui sera effacé, puis
+// ressaisie de l'email du compte avant d'activer le bouton.
+function DeleteUserModal({ user, onClose, onDeleted }) {
+  const [impact, setImpact] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    api.get(`/super-admin/users/${user.id}/deletion-impact`)
+      .then(({ data }) => setImpact(data))
+      .catch((err) => { toast.error(err.response?.data?.error || 'Impossible de préparer la suppression'); onClose(); })
+      .finally(() => setLoading(false));
+  }, [user.id]);
+
+  const emailMatches = confirmEmail.trim().toLowerCase() === user.email.toLowerCase();
+
+  const handleDelete = async () => {
+    if (!emailMatches) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/super-admin/users/${user.id}`, { data: { confirmEmail } });
+      toast.success(`Compte de ${user.firstName} ${user.lastName} supprimé définitivement`);
+      onDeleted();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Erreur lors de la suppression');
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="card modal-card" style={{ maxWidth: 520 }}>
+        <div className="card-header">
+          <h3 style={{ color: 'var(--amc-danger)' }}>Supprimer le compte — {user.firstName} {user.lastName}</h3>
+          <button className="btn btn-outline btn-sm" onClick={onClose} disabled={deleting}>Fermer</button>
+        </div>
+        <div style={{ padding: 16 }}>
+          {loading ? <p style={{ textAlign: 'center', color: '#6B7280' }}>Analyse des données liées…</p> : impact && (
+            impact.canDelete ? (
+              <>
+                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12 }}>
+                  ⚠️ <strong>Action définitive et irréversible.</strong> Le compte <strong>{user.email}</strong> et toutes les données ci-dessous seront supprimés.
+                  Pour conserver l'historique, utilisez plutôt « Désactiver ».
+                </div>
+                {impact.items.length > 0 ? (
+                  <ul style={{ margin: '0 0 12px', paddingLeft: 18, fontSize: 13, lineHeight: 1.7 }}>
+                    {impact.items.map((item) => (
+                      <li key={item.label}><strong>{item.count}</strong> — {item.label}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={{ fontSize: 13, color: '#6B7280' }}>Aucune donnée liée en dehors du compte lui-même.</p>
+                )}
+                <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>
+                  Pour confirmer, saisissez l'email du compte : <span style={{ fontFamily: 'monospace' }}>{user.email}</span>
+                </label>
+                <input className="form-control" value={confirmEmail} onChange={(e) => setConfirmEmail(e.target.value)} autoComplete="off" placeholder={user.email} />
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+                  <button type="button" className="btn btn-outline" onClick={onClose} disabled={deleting}>Annuler</button>
+                  <button type="button" className="btn btn-danger" onClick={handleDelete} disabled={!emailMatches || deleting}>
+                    <FiTrash2 size={12} /> {deleting ? 'Suppression…' : 'Supprimer définitivement'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 8, padding: '10px 12px', fontSize: 13 }}>
+                  {impact.refusal || (
+                    <>
+                      Ce compte ne peut pas être supprimé : il est l'auteur d'enregistrements de l'association qu'il faut conserver
+                      <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                        {impact.blockers.map((b) => <li key={b.label}><strong>{b.count}</strong> {b.label}</li>)}
+                      </ul>
+                      <div style={{ marginTop: 6 }}>Utilisez « Désactiver » pour bloquer l'accès à ce compte.</div>
+                    </>
+                  )}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+                  <button type="button" className="btn btn-outline" onClick={onClose}>Fermer</button>
+                </div>
+              </>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SuperAdminDashboard() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('all'); // 'all' | 'pending'
@@ -94,6 +184,7 @@ export default function SuperAdminDashboard() {
   const [rejectModal, setRejectModal] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [passwordModalUser, setPasswordModalUser] = useState(null);
+  const [deleteModalUser, setDeleteModalUser] = useState(null);
 
   const loadUsers = async (p = page) => {
     setLoading(true);
@@ -258,6 +349,9 @@ export default function SuperAdminDashboard() {
                           <button className="btn btn-sm btn-outline" onClick={() => handleToggleActive(u)}>
                             {u.isActive === false ? <><FiUserCheck size={12} /> Réactiver</> : <><FiUserX size={12} /> Désactiver</>}
                           </button>
+                          {u.id !== user?.id && (
+                            <button className="btn btn-sm btn-danger" onClick={() => setDeleteModalUser(u)}><FiTrash2 size={12} /> Supprimer</button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -407,6 +501,14 @@ export default function SuperAdminDashboard() {
 
       {passwordModalUser && (
         <GeneratedPasswordModal user={passwordModalUser} onClose={() => setPasswordModalUser(null)} />
+      )}
+
+      {deleteModalUser && (
+        <DeleteUserModal
+          user={deleteModalUser}
+          onClose={() => setDeleteModalUser(null)}
+          onDeleted={() => { setDeleteModalUser(null); loadUsers(page); }}
+        />
       )}
     </div>
   );

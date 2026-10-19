@@ -1,7 +1,9 @@
 const { Router } = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
 const { getPendingUsers, approveUser, rejectUser } = require('../controllers/adminController');
-const { getAllUsers, createUser, updateUserRoles, toggleUserActive, resetUserPassword } = require('../controllers/superAdminController');
+const {
+  getAllUsers, createUser, updateUserRoles, toggleUserActive, resetUserPassword, getUserDeletionImpact, deleteUser,
+} = require('../controllers/superAdminController');
 
 const router = Router();
 router.use(authenticate, authorize('SUPER_ADMIN'));
@@ -12,6 +14,9 @@ router.post('/users', createUser);
 router.put('/users/:id/roles', updateUserRoles);
 router.put('/users/:id/active', toggleUserActive);
 router.post('/users/:id/reset-password', resetUserPassword);
+// Suppression définitive d'un compte et de toutes ses données (Super Admin uniquement)
+router.get('/users/:id/deletion-impact', getUserDeletionImpact);
+router.delete('/users/:id', deleteUser);
 
 // Validation des demandes de création de compte (hors Famille, auto-validée à l'inscription)
 router.get('/users/pending', getPendingUsers);
