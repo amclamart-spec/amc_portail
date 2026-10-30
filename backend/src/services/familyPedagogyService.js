@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { PrismaClient } = require('@prisma/client');
-const { saveBase64File } = require('../utils/fileUtils');
+const { randomUUID } = require('crypto');
+const { parseBase64DataUri } = require('../utils/fileUtils');
 
 const prisma = new PrismaClient();
 const MAX_JUSTIFICATION_DOCUMENTS = 5;
@@ -55,6 +56,7 @@ async function fetchFamilyStudents({ familyUserId }) {
       status: enrollment.status,
       classId: enrollment.classId,
       classLabel: formatClassLabel(enrollment.class),
+      poleName: enrollment.class?.level?.pole?.name || null,
       period: enrollment.class?.level?.pole?.period || null,
       schoolYear: enrollment.schoolYear ? {
         id: enrollment.schoolYear.id,
@@ -109,7 +111,7 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
   if (ids.length > 0) {
     const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
     const rawRows = await prisma.$queryRawUnsafe(
-      `SELECT id, family_justification as "familyJustification", justification_status as "justificationStatus", absence_reason as "absenceReason" FROM evaluations WHERE id IN (${placeholders})`,
+      `SELECT id, family_justification as "familyJustification", justification_status as "justificationStatus", absence_reason as "absenceReason", rejection_comment as "rejectionComment" FROM evaluations WHERE id IN (${placeholders})`,
       ...ids,
     );
     rawFieldsMap = Object.fromEntries(rawRows.map((r) => [r.id, r]));
@@ -123,6 +125,10 @@ async function fetchStudentAbsences({ familyUserId, studentId }) {
     familyJustification: rawFieldsMap[evaluation.id]?.familyJustification || null,
     justificationStatus: rawFieldsMap[evaluation.id]?.justificationStatus || 'NONE',
     absenceReason: rawFieldsMap[evaluation.id]?.absenceReason || null,
+    // Commentaire du responsable des absences, montré uniquement tant que le justificatif est refusé.
+    rejectionComment: rawFieldsMap[evaluation.id]?.justificationStatus === 'REJECTED'
+      ? (rawFieldsMap[evaluation.id]?.rejectionComment || null)
+      : null,
     justificationDocuments: (evaluation.justificationDocuments || []).map((doc) => ({
       id: doc.id,
       fileName: doc.fileName,
@@ -150,6 +156,30 @@ const DAY_OF_WEEK_INDEX = { DIMANCHE: 0, LUNDI: 1, MARDI: 2, MERCREDI: 3, JEUDI:
 // statut 'missing' + justification déjà renseignée en attente de validation —
 // elle apparaît alors immédiatement dans la feuille d'appel du professeur/
 // responsable de pôle pour cette date, exactement comme une absence a posteriori.
+// Justificatif d'absence stocké en base (AbsenceJustificationDocumentFile) et non dans
+// uploads/, perdu à chaque redémarrage en production. fileUrl pointe vers la route
+// authentifiée de téléchargement (/absence-documents/:id).
+async function storeJustificationDocument(evaluationId, doc) {
+  let parsed;
+  try {
+    parsed = parseBase64DataUri(doc.base64);
+  } catch (error) {
+    const err = new Error(`Document « ${doc.fileName || 'sans nom'} » illisible`);
+    err.statusCode = 400;
+    throw err;
+  }
+  const id = randomUUID();
+  await prisma.absenceJustificationDocument.create({
+    data: {
+      id,
+      evaluationId,
+      fileUrl: `/absence-documents/${id}`,
+      fileName: String(doc.fileName || 'justificatif').slice(0, 200),
+      file: { create: { mimeType: parsed.mime, size: parsed.buffer.length, data: parsed.buffer } },
+    },
+  });
+}
+
 async function declareAbsence({ familyUserId, studentId, classId, date, reason, comment, documents }) {
   if (!classId) {
     const err = new Error('classId est requis');
@@ -172,7 +202,7 @@ async function declareAbsence({ familyUserId, studentId, classId, date, reason, 
     include: {
       enrollments: {
         where: { status: { in: FAMILY_VISIBLE_ENROLLMENT_STATUSES }, classId },
-        include: { class: true },
+        include: { class: { include: { level: { include: { pole: true } } } } },
       },
     },
   });
@@ -236,6 +266,15 @@ async function declareAbsence({ familyUserId, studentId, classId, date, reason, 
     throw err;
   }
 
+  // Même règle que pour la justification a posteriori : pôle Coran + motif
+  // Malade/Voyage → document obligatoire ; motif Autre → document facultatif.
+  const poleName = (enrollment.class?.level?.pole?.name || '').trim().toLowerCase();
+  if (poleName === AUTO_VALIDATE_POLE && AUTO_VALIDATE_REASONS.includes(reason) && existingDocCount + newDocuments.length === 0) {
+    const err = new Error('Un document justificatif est requis pour ce motif d\'absence');
+    err.statusCode = 400;
+    throw err;
+  }
+
   const evaluation = await prisma.evaluation.upsert({
     where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
     create: {
@@ -260,14 +299,7 @@ async function declareAbsence({ familyUserId, studentId, classId, date, reason, 
   });
 
   for (const doc of newDocuments) {
-    const fileUrl = saveBase64File(doc.base64, 'absence-justifications', doc.fileName);
-    await prisma.absenceJustificationDocument.create({
-      data: {
-        evaluationId: evaluation.id,
-        fileUrl,
-        fileName: doc.fileName || path.basename(fileUrl),
-      },
-    });
+    await storeJustificationDocument(evaluation.id, doc);
   }
 
   return { evaluationId: evaluation.id };
@@ -322,9 +354,12 @@ async function submitFamilyJustification({ familyUserId, evaluationId, comment, 
     throw err;
   }
 
-  // Coran + Malade/Voyage + document fourni → justification automatique.
+  // Coran + Malade/Voyage + document fourni → justification automatique, sauf si le
+  // responsable des absences a déjà refusé ce justificatif : le nouveau justificatif
+  // lui revient alors pour décision (une validation automatique contournerait le refus).
   // Tous les autres cas restent en attente de validation par le responsable de pôle / l'administration.
-  const justificationStatus = requiresDocument && totalDocuments > 0 ? 'VALIDATED' : 'PENDING';
+  const previouslyRejected = evaluation.justificationStatus === 'REJECTED';
+  const justificationStatus = requiresDocument && totalDocuments > 0 && !previouslyRejected ? 'VALIDATED' : 'PENDING';
 
   await prisma.$queryRawUnsafe(
     `UPDATE evaluations SET family_justification = $1, justification_status = $2, absence_reason = $3 WHERE id = $4`,
@@ -335,14 +370,7 @@ async function submitFamilyJustification({ familyUserId, evaluationId, comment, 
   );
 
   for (const doc of newDocuments) {
-    const fileUrl = saveBase64File(doc.base64, 'absence-justifications', doc.fileName);
-    await prisma.absenceJustificationDocument.create({
-      data: {
-        evaluationId,
-        fileUrl,
-        fileName: doc.fileName || path.basename(fileUrl),
-      },
-    });
+    await storeJustificationDocument(evaluationId, doc);
   }
 
   return { justificationStatus };
@@ -368,9 +396,13 @@ async function deleteJustificationDocument({ familyUserId, evaluationId, documen
 
   await prisma.absenceJustificationDocument.delete({ where: { id: documentId } });
 
-  const filePath = path.resolve(__dirname, '../../', document.fileUrl.replace(/^\//, ''));
-  if (fs.existsSync(filePath)) {
-    try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+  // Anciens justificatifs écrits dans uploads/ (les nouveaux sont stockés en base et
+  // supprimés en cascade avec le document).
+  if (document.fileUrl.startsWith('/uploads/')) {
+    const filePath = path.resolve(__dirname, '../../', document.fileUrl.replace(/^\//, ''));
+    if (fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+    }
   }
 
   return { success: true };

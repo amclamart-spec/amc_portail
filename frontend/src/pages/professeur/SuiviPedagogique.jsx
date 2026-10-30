@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FiLoader, FiPrinter, FiDownload, FiCheck, FiX, FiSave, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
+import { openAbsenceDocument } from '../../utils/absenceDocument';
 import useEvaluations from '../../hooks/useEvaluations';
 import CoranTeacherPanel from '../../components/coran/CoranTeacherPanel';
 import AppreciationsPanel from '../../components/appreciations/AppreciationsPanel';
@@ -835,6 +836,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                                 <a
                                   key={doc.id}
                                   href={doc.fileUrl}
+                              onClick={(e) => openAbsenceDocument(e, doc)}
                                   target="_blank"
                                   rel="noreferrer"
                                   style={{ fontSize: 11, color: T.primary, background: 'var(--amc-light-bg-2)', border: '1px solid var(--amc-border)', borderRadius: 6, padding: '3px 7px', textDecoration: 'none' }}
@@ -995,6 +997,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                                   <a
                                     key={doc.id}
                                     href={doc.fileUrl}
+                              onClick={(e) => openAbsenceDocument(e, doc)}
                                     target="_blank"
                                     rel="noreferrer"
                                     style={{ fontSize: 11, color: T.primary, background: '#fff', border: '1px solid var(--amc-border)', borderRadius: 6, padding: '3px 7px', textDecoration: 'none' }}

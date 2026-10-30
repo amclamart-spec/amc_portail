@@ -440,6 +440,8 @@ async function fetchJustificationsList({ status, poleName, poleId, levelId, stud
       e.family_justification AS "familyJustification",
       e.justification_status AS "justificationStatus",
       e.absence_reason AS "absenceReason",
+      e.rejection_comment AS "rejectionComment",
+      e.rejection_count AS "rejectionCount",
       e.justification,
       s.first_name AS "studentFirstName",
       s.last_name AS "studentLastName",
@@ -485,6 +487,8 @@ async function fetchJustificationsList({ status, poleName, poleId, levelId, stud
     justificationStatus: r.justificationStatus,
     absenceReason: r.absenceReason,
     teacherJustification: r.justification,
+    rejectionComment: r.rejectionComment,
+    rejectionCount: Number(r.rejectionCount || 0),
     justificationDocuments: documentsByEvaluation[r.id] || [],
   }));
 }
@@ -505,7 +509,7 @@ async function getEvaluationPoleName(evaluationId) {
 // Met à jour le statut d'un justificatif. Si `poleName` est fourni (cas d'un
 // responsable de pôle), vérifie d'abord que le justificatif appartient bien à
 // ce pôle avant d'autoriser la modification.
-async function updateJustificationStatus({ evaluationId, status, poleName }) {
+async function updateJustificationStatus({ evaluationId, status, poleName, comment }) {
   if (!['VALIDATED', 'REJECTED'].includes(status)) {
     const error = new Error('Statut invalide (VALIDATED ou REJECTED)');
     error.statusCode = 400;
@@ -521,9 +525,19 @@ async function updateJustificationStatus({ evaluationId, status, poleName }) {
     }
   }
 
+  // Commentaire de refus (optionnel), visible par la famille ; effacé en cas de validation.
+  const rejectionComment = status === 'REJECTED' ? (String(comment || '').trim().slice(0, 1000) || null) : null;
+
+  // rejection_count n'augmente que lors d'un nouveau refus (pas quand on modifie
+  // seulement le commentaire d'un justificatif déjà refusé).
   await prisma.$queryRawUnsafe(
-    `UPDATE evaluations SET justification_status = $1 WHERE id = $2`,
+    `UPDATE evaluations
+     SET rejection_count = rejection_count + CASE WHEN $1 = 'REJECTED' AND justification_status <> 'REJECTED' THEN 1 ELSE 0 END,
+         justification_status = $1,
+         rejection_comment = $2
+     WHERE id = $3`,
     status,
+    rejectionComment,
     evaluationId,
   );
 }
@@ -574,6 +588,7 @@ async function exportJustificationsExcel(req, res) {
       { header: 'Statut', key: 'status', width: 14 },
       { header: 'Justificatif famille', key: 'familyJustification', width: 45 },
       { header: 'Note professeur', key: 'teacherJustification', width: 35 },
+      { header: 'Commentaire', key: 'rejectionComment', width: 40 },
     ];
     worksheet.addRows(justifications.map((j) => ({
       date: j.lessonDate ? new Date(j.lessonDate).toLocaleDateString('fr-FR') : '-',
@@ -584,6 +599,7 @@ async function exportJustificationsExcel(req, res) {
       status: STATUS_LABELS[j.justificationStatus] || j.justificationStatus,
       familyJustification: j.familyJustification || '-',
       teacherJustification: j.teacherJustification || '-',
+      rejectionComment: j.rejectionComment || '-',
     })));
 
     const headerRow = worksheet.getRow(1);
@@ -591,7 +607,7 @@ async function exportJustificationsExcel(req, res) {
     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF213B88' } };
     headerRow.alignment = { vertical: 'middle' };
     worksheet.views = [{ state: 'frozen', ySplit: 1 }];
-    worksheet.autoFilter = { from: 'A1', to: 'H1' };
+    worksheet.autoFilter = { from: 'A1', to: 'I1' };
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="suivi-absences-${Date.now()}.xlsx"`);
@@ -702,9 +718,9 @@ async function exportJustificationsPdf(req, res) {
 async function patchJustification(req, res) {
   try {
     const { evaluationId } = req.params;
-    const { status } = req.body;
+    const { status, comment } = req.body;
     const poleName = poleNameForUser(req.user);
-    await updateJustificationStatus({ evaluationId, status, poleName });
+    await updateJustificationStatus({ evaluationId, status, poleName, comment });
     return res.json({ success: true });
   } catch (error) {
     console.error('Erreur patchJustification:', error);
