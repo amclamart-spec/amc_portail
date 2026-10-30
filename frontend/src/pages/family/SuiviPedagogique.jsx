@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { openAbsenceDocument } from '../../utils/absenceDocument';
 import toast from 'react-hot-toast';
 import CoranFamilyPanel from '../../components/coran/CoranFamilyPanel';
 import FamilyAppreciationsPanel from '../../components/appreciations/FamilyAppreciationsPanel';
@@ -297,7 +298,7 @@ function AbsenceCard({ absence, onJustified }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
               {documents.map((doc) => (
                 <div key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid var(--amc-border)', borderRadius: 8, padding: '4px 8px' }}>
-                  <a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--amc-primary)', textDecoration: 'none', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <a href={doc.fileUrl} onClick={(e) => openAbsenceDocument(e, doc)} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--amc-primary)', textDecoration: 'none', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     📎 {doc.fileName}
                   </a>
                   <button
@@ -316,6 +317,12 @@ function AbsenceCard({ absence, onJustified }) {
           {absence.justificationStatus === 'REJECTED' && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#DC2626', fontStyle: 'italic' }}>
               Ce justificatif a été refusé. Vous pouvez en soumettre un nouveau.
+            </div>
+          )}
+          {absence.justificationStatus === 'REJECTED' && absence.rejectionComment && (
+            <div style={{ marginTop: 8, padding: '8px 10px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#991B1B', marginBottom: 2 }}>Motif du refus</div>
+              <div style={{ fontSize: 13, color: '#7F1D1D', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{absence.rejectionComment}</div>
             </div>
           )}
         </div>
@@ -371,7 +378,9 @@ function AbsenceCard({ absence, onJustified }) {
           />
           {documentRequired && !hasDocument && (
             <div style={{ marginBottom: 8, fontSize: 12, color: '#DC2626' }}>
-              Un document justificatif est requis pour ce motif — l'absence sera automatiquement justifiée dès son ajout.
+              {absence.justificationStatus === 'REJECTED'
+                ? 'Un document justificatif est requis pour ce motif — il sera examiné par le responsable des absences.'
+                : 'Un document justificatif est requis pour ce motif — l\'absence sera automatiquement justifiée dès son ajout.'}
             </div>
           )}
           {pendingFiles.length > 0 && (
@@ -418,6 +427,11 @@ function DeclareAbsenceForm({ student, onDeclared }) {
 
   const enrollments = student?.enrollments || [];
   const todayStr = new Date().toISOString().slice(0, 10);
+  // Pôle Coran + motif Malade/Voyage : document obligatoire (même règle que « Justifier »).
+  const selectedEnrollment = enrollments.find((e) => e.classId === classId);
+  const isCoran = (selectedEnrollment?.poleName || '').trim().toLowerCase() === AUTO_VALIDATE_POLE;
+  const documentRequired = isCoran && AUTO_VALIDATE_REASONS.includes(reason);
+  const missingDocument = documentRequired && pendingFiles.length === 0;
 
   const handleFilesSelected = async (event) => {
     const selected = Array.from(event.target.files || []);
@@ -455,6 +469,7 @@ function DeclareAbsenceForm({ student, onDeclared }) {
     if (!date) { toast.error('Veuillez sélectionner une date'); return; }
     if (!comment.trim()) { toast.error('Veuillez saisir un commentaire'); return; }
     if (!reason) { toast.error('Veuillez sélectionner un motif d\'absence'); return; }
+    if (missingDocument) { toast.error('Un document justificatif est requis pour ce motif'); return; }
     setSaving(true);
     try {
       await api.post('/family/pedagogy/absences/declare', {
@@ -518,7 +533,7 @@ function DeclareAbsenceForm({ student, onDeclared }) {
           />
 
           <label style={{ fontSize: 13, fontWeight: 700, display: 'block', marginBottom: 6 }}>
-            Documents (optionnel)
+            Documents {documentRequired ? '(obligatoire pour ce motif)' : '(optionnel)'}
           </label>
           <input
             type="file"
@@ -527,6 +542,11 @@ function DeclareAbsenceForm({ student, onDeclared }) {
             onChange={handleFilesSelected}
             style={{ marginBottom: 8, fontSize: 13 }}
           />
+          {missingDocument && (
+            <div style={{ marginBottom: 8, fontSize: 12, color: '#DC2626' }}>
+              Pour le pôle Coran, un document justificatif (certificat médical, justificatif de voyage…) est obligatoire pour le motif « {reason === 'MALADE' ? 'Malade' : 'Voyage'} ».
+            </div>
+          )}
           {pendingFiles.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
               {pendingFiles.map((file, index) => (
@@ -549,7 +569,7 @@ function DeclareAbsenceForm({ student, onDeclared }) {
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button type="button" className="btn btn-outline btn-sm" onClick={() => { setOpen(false); resetForm(); }}>Annuler</button>
-            <button type="button" className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={saving || !classId || !date || !comment.trim() || !reason}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={saving || !classId || !date || !comment.trim() || !reason || missingDocument}>
               {saving ? 'Envoi…' : 'Déclarer l\'absence'}
             </button>
           </div>

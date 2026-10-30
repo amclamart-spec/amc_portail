@@ -696,6 +696,12 @@ model Evaluation {
   familyJustification String?          @map("family_justification")
   justificationStatus String           @default("NONE") @map("justification_status")
   absenceReason       String?          @map("absence_reason")
+  // Commentaire du responsable des absences en cas de refus du justificatif (Suivi des
+  // absences, espace admin) — affiché à la famille sur l'absence refusée.
+  rejectionComment    String?          @map("rejection_comment")
+  // Nombre de refus du justificatif : > 0 sur une absence en attente = nouveau
+  // justificatif soumis par la famille après un refus (signalé au responsable).
+  rejectionCount      Int              @default(0) @map("rejection_count")
   // true = déclaration anticipée par la famille (avant le cours, familyPedagogyService.declareAbsence) ;
   // false = absence déjà enregistrée (par le professeur ou une séance passée) puis justifiée a posteriori.
   declaredInAdvance   Boolean          @default(false) @map("declared_in_advance")
@@ -720,10 +726,27 @@ model AbsenceJustificationDocument {
   fileName     String   @map("file_name")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  evaluation Evaluation                        @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  file       AbsenceJustificationDocumentFile?
 
   @@index([evaluationId])
   @@map("absence_justification_documents")
+}
+
+// Contenu des justificatifs d'absence, stocké en base : les fichiers de uploads/ sont
+// perdus à chaque redémarrage en production et le lien /uploads/... relatif pointait
+// vers le site frontend. Table séparée (1-1) pour ne pas charger les octets avec les
+// listes d'absences ; servi par la route authentifiée /absence-documents/:id.
+model AbsenceJustificationDocumentFile {
+  documentId String   @id @map("document_id")
+  mimeType   String   @map("mime_type")
+  size       Int
+  data       Bytes
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document AbsenceJustificationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("absence_justification_document_files")
 }
 
 enum EnrollmentStatus {

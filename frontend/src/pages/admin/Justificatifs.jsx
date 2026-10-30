@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
-import { FiCheck, FiX, FiSearch, FiDownload, FiFileText } from 'react-icons/fi';
+import { FiCheck, FiX, FiSearch, FiDownload, FiFileText, FiEdit2 } from 'react-icons/fi';
 import { useAuth } from '../../context/AuthContext';
 import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
+import { openAbsenceDocument } from '../../utils/absenceDocument';
 
 const STATUS_OPTIONS = [
   { value: 'PENDING',   label: 'En attente',  badge: 'badge-warning' },
@@ -48,6 +49,9 @@ export default function AdminJustificatifs() {
   const [justifications, setJustifications] = useState([]);
   const [loading, setLoading]               = useState(false);
   const [exporting, setExporting]           = useState('');
+  // Commentaire de refus saisi par ligne (visible par la famille), et ligne refusée en cours d'édition.
+  const [comments, setComments]             = useState({});
+  const [editingCommentId, setEditingCommentId] = useState(null);
 
   // Pôles + niveaux imbriqués, pour le filtre en cascade — utile uniquement pour
   // l'admin (un responsable de pôle est déjà cantonné à son seul pôle côté serveur).
@@ -76,7 +80,11 @@ export default function AdminJustificatifs() {
     setLoading(true);
     try {
       const { data } = await api.get('/admin/absences/justifications', { params: buildParams() });
-      setJustifications(data.justifications || []);
+      // Justificatifs soumis à nouveau après un refus : en tête de liste, pour ne pas
+      // les perdre parmi des absences plus récentes (ordre de date conservé ensuite).
+      const list = data.justifications || [];
+      const isResubmission = (j) => j.justificationStatus === 'PENDING' && j.rejectionCount > 0;
+      setJustifications([...list.filter(isResubmission), ...list.filter((j) => !isResubmission(j))]);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Impossible de charger les justificatifs');
     } finally {
@@ -93,13 +101,28 @@ export default function AdminJustificatifs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studentName]);
 
+  const setComment = (id, value) => setComments((prev) => ({ ...prev, [id]: value }));
+
   const handleDecision = async (evaluationId, status) => {
     try {
-      await api.patch(`/admin/absences/${evaluationId}/justify`, { status });
+      await api.patch(`/admin/absences/${evaluationId}/justify`, { status, comment: status === 'REJECTED' ? (comments[evaluationId] || '') : undefined });
       toast.success(status === 'VALIDATED' ? 'Justificatif validé' : 'Justificatif refusé');
+      setComments((prev) => { const next = { ...prev }; delete next[evaluationId]; return next; });
       load();
     } catch (e) {
       toast.error(e.response?.data?.error || 'Erreur lors de la mise à jour');
+    }
+  };
+
+  // Modification du commentaire d'un justificatif déjà refusé (statut inchangé).
+  const handleSaveRejectionComment = async (evaluationId) => {
+    try {
+      await api.patch(`/admin/absences/${evaluationId}/justify`, { status: 'REJECTED', comment: comments[evaluationId] || '' });
+      toast.success('Commentaire enregistré');
+      setEditingCommentId(null);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Erreur lors de l\'enregistrement');
     }
   };
 
@@ -221,6 +244,7 @@ export default function AdminJustificatifs() {
                   <th>Documents</th>
                   <th>Note professeur</th>
                   <th>Statut</th>
+                  {filter !== 'VALIDATED' && <th>Commentaire</th>}
                   {filter === 'PENDING' && <th>Actions</th>}
                 </tr>
               </thead>
@@ -233,6 +257,18 @@ export default function AdminJustificatifs() {
                     <td>{j.classLabel}</td>
                     <td>{REASON_LABELS[j.absenceReason] || '-'}</td>
                     <td style={{ maxWidth: 280 }}>
+                      {j.justificationStatus === 'PENDING' && j.rejectionCount > 0 && (
+                        <div style={{ marginBottom: 6 }}>
+                          <span className="badge badge-warning" style={{ fontSize: 11 }}>
+                            🔁 Nouveau justificatif après {j.rejectionCount > 1 ? `${j.rejectionCount} refus` : 'refus'}
+                          </span>
+                          {j.rejectionComment && (
+                            <div style={{ fontSize: 11, color: '#92400E', marginTop: 4, fontStyle: 'italic' }}>
+                              Refus précédent : {j.rejectionComment}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div style={{ fontSize: 13, color: 'var(--amc-text)', whiteSpace: 'pre-wrap' }}>
                         {j.familyJustification || '-'}
                       </div>
@@ -244,6 +280,7 @@ export default function AdminJustificatifs() {
                             <a
                               key={doc.id}
                               href={doc.fileUrl}
+                              onClick={(e) => openAbsenceDocument(e, doc)}
                               target="_blank"
                               rel="noreferrer"
                               style={{ fontSize: 12, color: 'var(--amc-primary)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}
@@ -258,6 +295,54 @@ export default function AdminJustificatifs() {
                       {j.teacherJustification || '-'}
                     </td>
                     <td><StatusBadge status={j.justificationStatus} /></td>
+                    {filter === 'PENDING' && (
+                      <td style={{ minWidth: 200 }}>
+                        <textarea
+                          className="form-control"
+                          rows={2}
+                          maxLength={1000}
+                          placeholder="Motif du refus (visible par la famille)"
+                          value={comments[j.id] || ''}
+                          onChange={(e) => setComment(j.id, e.target.value)}
+                          style={{ fontSize: 12 }}
+                        />
+                      </td>
+                    )}
+                    {filter === 'REJECTED' && (
+                      <td style={{ minWidth: 200, maxWidth: 280 }}>
+                        {editingCommentId === j.id ? (
+                          <div style={{ display: 'grid', gap: 6 }}>
+                            <textarea
+                              className="form-control"
+                              rows={2}
+                              maxLength={1000}
+                              value={comments[j.id] ?? ''}
+                              onChange={(e) => setComment(j.id, e.target.value)}
+                              style={{ fontSize: 12 }}
+                            />
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button type="button" className="btn btn-primary btn-sm" onClick={() => handleSaveRejectionComment(j.id)}>Enregistrer</button>
+                              <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditingCommentId(null)}>Annuler</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                            <div style={{ flex: 1, fontSize: 12, whiteSpace: 'pre-wrap', color: j.rejectionComment ? 'var(--amc-text)' : '#9CA3AF' }}>
+                              {j.rejectionComment || 'Aucun commentaire'}
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              title="Modifier le commentaire"
+                              onClick={() => { setComment(j.id, j.rejectionComment || ''); setEditingCommentId(j.id); }}
+                              style={{ padding: '2px 6px' }}
+                            >
+                              <FiEdit2 size={12} />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    )}
                     {filter === 'PENDING' && (
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>

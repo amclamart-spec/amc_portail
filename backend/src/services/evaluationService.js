@@ -155,9 +155,15 @@ async function updateJustificationDecision({ teacherUserId, evaluationId, decisi
     throw new Error('Vous n\'avez pas accès à cette classe');
   }
 
+  // Mêmes règles que le Suivi des absences (absenceController.updateJustificationStatus) :
+  // un nouveau refus incrémente rejectionCount, une validation efface le commentaire de refus.
   return prisma.evaluation.update({
     where: { id: evaluationId },
-    data: { justificationStatus: decision },
+    data: {
+      justificationStatus: decision,
+      ...(decision === 'REJECTED' && evaluation.justificationStatus !== 'REJECTED' ? { rejectionCount: { increment: 1 } } : {}),
+      ...(decision === 'VALIDATED' ? { rejectionComment: null } : {}),
+    },
   });
 }
 
