@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/axios';
+import { downloadHomeworkAttachment } from '../../utils/homeworkAttachment';
 import { useAuth } from '../../context/AuthContext';
 import { FiUsers, FiBookOpen, FiPlus, FiDollarSign } from 'react-icons/fi';
 
@@ -117,8 +118,12 @@ export default function FamilyDashboard() {
                       <span>{new Date(message.date).toLocaleDateString()}</span>
                     </div>
                     <p style={{ whiteSpace: 'pre-wrap', marginBottom: 12 }}>{message.body}</p>
-                    {message.attachmentUrl && (
-                      <a href={message.attachmentUrl} target="_blank" rel="noreferrer" className="btn btn-outline-secondary btn-sm">
+                    {message.hasAttachment && (
+                      <a
+                        href="#"
+                        onClick={(e) => downloadHomeworkAttachment(e, `/family/pedagogy/homework/${message.id}/attachment`, message.attachmentFilename)}
+                        className="btn btn-outline-secondary btn-sm"
+                      >
                         Voir la pièce jointe{message.attachmentFilename ? ` (${message.attachmentFilename})` : ''}
                       </a>
                     )}

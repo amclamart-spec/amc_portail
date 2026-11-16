@@ -167,8 +167,12 @@ model HomeworkMessage {
   teacherId          String   @map("teacher_id")
   date               DateTime
   body               String
+  // Ancien stockage (fichier dans uploads/, perdu aux redémarrages) ; les nouvelles
+  // pièces jointes sont en base (attachmentData) et servies par l'API.
   attachmentUrl      String?  @map("attachment_url")
   attachmentFilename String?  @map("attachment_filename")
+  attachmentMimeType String?  @map("attachment_mime_type")
+  attachmentData     Bytes?   @map("attachment_data")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 

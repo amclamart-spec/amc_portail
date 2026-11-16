@@ -5,6 +5,59 @@ const { classAccessWhere } = require('../utils/classAccessUtils');
 
 const prisma = new PrismaClient();
 
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+const MIME_BY_EXTENSION = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.odt': 'application/vnd.oasis.opendocument.text',
+  '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
+  '.txt': 'text/plain',
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+};
+
+// Tous les champs d'un devoir sauf le contenu binaire de la pièce jointe, qui n'est
+// chargé que par la route de téléchargement.
+const HOMEWORK_SELECT = {
+  id: true,
+  classId: true,
+  teacherId: true,
+  date: true,
+  body: true,
+  attachmentUrl: true,
+  attachmentFilename: true,
+  attachmentMimeType: true,
+  createdAt: true,
+  updatedAt: true,
+};
+
+function httpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+// Pièce jointe en base (attachmentMimeType renseigné) ou ancien fichier de uploads/.
+function hasHomeworkAttachment(homework) {
+  return Boolean(homework.attachmentMimeType || homework.attachmentUrl);
+}
+
+function serializeHomework(homework) {
+  const { attachmentMimeType, ...rest } = homework;
+  return { ...rest, hasAttachment: hasHomeworkAttachment(homework) };
+}
+
 async function getTeacherProfile(userId) {
   return prisma.teacher.findUnique({ where: { userId } });
 }
@@ -17,35 +70,20 @@ async function saveHomeworkMessage({ teacherUserId, classId, date, message, atta
   if (!classRecord) throw new Error('Vous n’avez pas accès à cette classe');
   if (!date || !message) throw new Error('date et message sont requis');
 
-  let attachmentUrl = null;
-  let persistedFilename = null;
-
-  const targetDate = new Date(date);
-  targetDate.setHours(0, 0, 0, 0);
-  const nextDate = new Date(targetDate);
-  nextDate.setDate(nextDate.getDate() + 1);
-
-  const existingHomework = await prisma.homeworkMessage.findFirst({
-    where: {
-      classId,
-      date: { gte: targetDate, lt: nextDate },
-    },
-  });
-
+  // Sans nouveau fichier, la pièce jointe existante (s'il y en a une) est conservée.
+  let attachmentData = {};
   if (attachmentBase64 && attachmentFilename) {
-    const uploadsDir = path.resolve(__dirname, '../../uploads/homeworks');
-    fs.mkdirSync(uploadsDir, { recursive: true });
-
-    const safeName = `${Date.now()}-${attachmentFilename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const filePath = path.join(uploadsDir, safeName);
+    const fileName = String(attachmentFilename).trim().slice(0, 200);
     const buffer = Buffer.from(attachmentBase64, 'base64');
-    fs.writeFileSync(filePath, buffer);
-
-    attachmentUrl = `/uploads/homeworks/${safeName}`;
-    persistedFilename = attachmentFilename;
-  } else if (existingHomework) {
-    attachmentUrl = existingHomework.attachmentUrl;
-    persistedFilename = existingHomework.attachmentFilename;
+    if (buffer.length > MAX_ATTACHMENT_BYTES) {
+      throw httpError(400, 'La pièce jointe ne doit pas dépasser 5 Mo');
+    }
+    attachmentData = {
+      attachmentFilename: fileName,
+      attachmentMimeType: MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] || 'application/octet-stream',
+      attachmentData: buffer,
+      attachmentUrl: null,
+    };
   }
 
   const homework = await prisma.homeworkMessage.upsert({
@@ -60,18 +98,17 @@ async function saveHomeworkMessage({ teacherUserId, classId, date, message, atta
       teacherId: teacherProfile.id,
       date: new Date(date),
       body: message,
-      attachmentUrl,
-      attachmentFilename: persistedFilename,
+      ...attachmentData,
     },
     update: {
       body: message,
-      attachmentUrl,
-      attachmentFilename: persistedFilename,
       date: new Date(date),
+      ...attachmentData,
     },
+    select: HOMEWORK_SELECT,
   });
 
-  return homework;
+  return serializeHomework(homework);
 }
 
 async function fetchHomeworkMessage({ teacherUserId, classId, date }) {
@@ -87,13 +124,15 @@ async function fetchHomeworkMessage({ teacherUserId, classId, date }) {
   const nextDate = new Date(targetDate);
   nextDate.setDate(nextDate.getDate() + 1);
 
-  return prisma.homeworkMessage.findFirst({
+  const homework = await prisma.homeworkMessage.findFirst({
     where: {
       classId,
       date: { gte: targetDate, lt: nextDate },
     },
     orderBy: { updatedAt: 'desc' },
+    select: HOMEWORK_SELECT,
   });
+  return homework ? serializeHomework(homework) : null;
 }
 
 async function fetchHomeworkMessagesForFamily({ familyUserId }) {
@@ -111,10 +150,12 @@ async function fetchHomeworkMessagesForFamily({ familyUserId }) {
 
   const uniqueClassIds = [...new Set(classIds.map((item) => item.classId))];
 
-  return prisma.homeworkMessage.findMany({
+  const homeworks = await prisma.homeworkMessage.findMany({
     where: { classId: { in: uniqueClassIds } },
     orderBy: { date: 'desc' },
+    select: HOMEWORK_SELECT,
   });
+  return homeworks.map(serializeHomework);
 }
 
 async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
@@ -135,7 +176,8 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
   // — même bug que celui corrigé sur le classement des absences.
   const homeworks = await prisma.homeworkMessage.findMany({
     where: { classId },
-    include: {
+    select: {
+      ...HOMEWORK_SELECT,
       completions: {
         include: { student: true },
         orderBy: { completedAt: 'asc' },
@@ -145,7 +187,7 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
   });
 
   return homeworks.map((homework) => ({
-    ...homework,
+    ...serializeHomework(homework),
     completions: homework.completions.map((completion) => ({
       studentId: completion.studentId,
       studentName: `${completion.student.firstName} ${completion.student.lastName}`,
@@ -155,11 +197,75 @@ async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
   }));
 }
 
+// Contenu de la pièce jointe d'un devoir : en base, ou ancien fichier de uploads/
+// tant qu'il existe encore sur le disque du serveur.
+async function readHomeworkAttachment(homeworkId) {
+  const homework = await prisma.homeworkMessage.findUnique({
+    where: { id: homeworkId },
+    select: { classId: true, attachmentFilename: true, attachmentMimeType: true, attachmentData: true, attachmentUrl: true },
+  });
+  if (!homework) throw httpError(404, 'Devoir introuvable');
+
+  const fileName = homework.attachmentFilename || 'piece-jointe';
+  if (homework.attachmentData) {
+    return {
+      classId: homework.classId,
+      fileName,
+      mimeType: homework.attachmentMimeType || 'application/octet-stream',
+      data: Buffer.from(homework.attachmentData),
+    };
+  }
+  if (homework.attachmentUrl && homework.attachmentUrl.startsWith('/uploads/homeworks/')) {
+    const filePath = path.resolve(__dirname, '../../', homework.attachmentUrl.replace(/^\//, ''));
+    if (fs.existsSync(filePath)) {
+      return {
+        classId: homework.classId,
+        fileName,
+        mimeType: MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] || 'application/octet-stream',
+        data: fs.readFileSync(filePath),
+      };
+    }
+  }
+  return { classId: homework.classId, missing: true };
+}
+
+function ensureAttachmentAvailable(attachment) {
+  if (attachment.missing) {
+    throw httpError(404, 'Ce fichier n’est plus disponible sur le serveur. Le professeur doit republier la pièce jointe.');
+  }
+  return attachment;
+}
+
+async function getHomeworkAttachmentForStaff({ teacherUserId, homeworkId }) {
+  const teacherProfile = await getTeacherProfile(teacherUserId);
+  if (!teacherProfile) throw httpError(403, 'Profil professeur introuvable');
+
+  const attachment = await readHomeworkAttachment(homeworkId);
+  const classRecord = await prisma.class.findFirst({ where: { id: attachment.classId, ...classAccessWhere(teacherProfile.id) } });
+  if (!classRecord) throw httpError(403, 'Vous n’avez pas accès à ce devoir');
+  return ensureAttachmentAvailable(attachment);
+}
+
+// Une famille n'accède qu'aux pièces jointes des classes où l'un de ses enfants est inscrit.
+async function getHomeworkAttachmentForFamily({ familyUserId, homeworkId }) {
+  const attachment = await readHomeworkAttachment(homeworkId);
+  const enrollment = await prisma.enrollment.findFirst({
+    where: {
+      classId: attachment.classId,
+      status: { in: ['PENDING', 'CONFIRMED'] },
+      student: { family: { userId: familyUserId } },
+    },
+    select: { id: true },
+  });
+  if (!enrollment) throw httpError(403, 'Vous n’avez pas accès à ce devoir');
+  return ensureAttachmentAvailable(attachment);
+}
+
 async function deleteHomeworkMessage({ teacherUserId, homeworkId }) {
   const teacherProfile = await getTeacherProfile(teacherUserId);
   if (!teacherProfile) throw new Error('Profil professeur introuvable');
 
-  const homework = await prisma.homeworkMessage.findUnique({ where: { id: homeworkId } });
+  const homework = await prisma.homeworkMessage.findUnique({ where: { id: homeworkId }, select: HOMEWORK_SELECT });
   if (!homework) throw new Error('Devoir introuvable');
 
   const classRecord = await prisma.class.findFirst({ where: { id: homework.classId, ...classAccessWhere(teacherProfile.id) } });
@@ -172,7 +278,7 @@ async function deleteHomeworkMessage({ teacherUserId, homeworkId }) {
     }
   }
 
-  return prisma.homeworkMessage.delete({ where: { id: homeworkId } });
+  return prisma.homeworkMessage.delete({ where: { id: homeworkId }, select: { id: true } });
 }
 
 module.exports = {
@@ -180,5 +286,8 @@ module.exports = {
   fetchHomeworkMessage,
   fetchHomeworkMessagesByClass,
   fetchHomeworkMessagesForFamily,
+  getHomeworkAttachmentForStaff,
+  getHomeworkAttachmentForFamily,
   deleteHomeworkMessage,
+  hasHomeworkAttachment,
 };
