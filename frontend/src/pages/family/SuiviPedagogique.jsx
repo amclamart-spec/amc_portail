@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { openAbsenceDocument } from '../../utils/absenceDocument';
+import { downloadHomeworkAttachment } from '../../utils/homeworkAttachment';
 import toast from 'react-hot-toast';
 import CoranFamilyPanel from '../../components/coran/CoranFamilyPanel';
 import FamilyAppreciationsPanel from '../../components/appreciations/FamilyAppreciationsPanel';
@@ -1032,8 +1033,13 @@ export default function FamilyPedagogy() {
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                             {hw.done && <span className="badge badge-success">✓ Fait</span>}
-                            {hw.attachmentUrl && (
-                              <a href={hw.attachmentUrl} download={hw.attachmentFilename || 'piece-jointe'} className="btn btn-outline btn-sm">
+                            {hw.hasAttachment && (
+                              <a
+                                href="#"
+                                onClick={(e) => downloadHomeworkAttachment(e, `/family/pedagogy/homework/${hw.id}/attachment`, hw.attachmentFilename)}
+                                title={hw.attachmentFilename || undefined}
+                                className="btn btn-outline btn-sm"
+                              >
                                 📥 Pièce jointe
                               </a>
                             )}

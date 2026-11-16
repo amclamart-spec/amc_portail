@@ -3,6 +3,7 @@ import { FiLoader, FiPrinter, FiDownload, FiCheck, FiX, FiSave, FiEdit2, FiTrash
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { openAbsenceDocument } from '../../utils/absenceDocument';
+import { downloadHomeworkAttachment } from '../../utils/homeworkAttachment';
 import useEvaluations from '../../hooks/useEvaluations';
 import CoranTeacherPanel from '../../components/coran/CoranTeacherPanel';
 import AppreciationsPanel from '../../components/appreciations/AppreciationsPanel';
@@ -285,8 +286,8 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
       .filter((hw) => {
         if (hwDateFrom && new Date(hw.date) < new Date(hwDateFrom)) return false;
         if (hwDateTo && new Date(hw.date) > new Date(hwDateTo)) return false;
-        if (hwAttachmentFilter === 'WITH' && !hw.attachmentUrl) return false;
-        if (hwAttachmentFilter === 'WITHOUT' && hw.attachmentUrl) return false;
+        if (hwAttachmentFilter === 'WITH' && !hw.hasAttachment) return false;
+        if (hwAttachmentFilter === 'WITHOUT' && hw.hasAttachment) return false;
         if (hwStatusFilter !== 'ALL') {
           const done = (hw.completions || []).length;
           const total = hw.totalStudents ?? 0;
@@ -416,7 +417,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
       if (!dateFilter) { setRows([]); setHomeworkBody(''); setHomeworkAttachmentUrl(null); fetchStats({ classId: selectedClassId, module: 'devoirs' }); return; }
       fetchHomeworkMessage({ classId: selectedClassId, date: dateFilter }).then((hw) => {
         setHomeworkBody(hw?.body || '');
-        setHomeworkAttachmentUrl(hw?.attachmentUrl || null);
+        setHomeworkAttachmentUrl(hw?.hasAttachment ? `/homework/${hw.id}/attachment?classId=${selectedClassId}` : null);
       });
       fetchStats({ classId: selectedClassId, module: 'devoirs' });
       return;
@@ -744,7 +745,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                     <div key={hw.id} className="ep-hw-card">
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
                         <strong style={{ fontSize: 12, color: T.primary }}>{fmtDate(hw.date, { day: '2-digit', month: 'short' })}</strong>
-                        {hw.attachmentUrl && <span className="badge badge-info" style={{ fontSize: 10 }}>📎</span>}
+                        {hw.hasAttachment && <span className="badge badge-info" style={{ fontSize: 10 }}>📎</span>}
                       </div>
                       <p style={{ margin: 0, fontSize: 12, color: 'var(--amc-text)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                         {hw.body}
@@ -874,6 +875,28 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                                 ✗ Refuser
                               </button>
                             </div>
+                          ) : d.justificationStatus === 'VALIDATED' ? (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              style={{ padding: '3px 8px', color: '#991B1B' }}
+                              title="Passer cette déclaration en refusée"
+                              disabled={decidingJustificationId === d.evaluationId}
+                              onClick={() => window.confirm('Passer cette déclaration de « Validée » à « Refusée » ?') && handleJustificationDecision(d.evaluationId, 'REJECTED')}
+                            >
+                              ✗ Refuser
+                            </button>
+                          ) : d.justificationStatus === 'REJECTED' ? (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              style={{ padding: '3px 8px', color: '#166534' }}
+                              title="Passer cette déclaration en validée"
+                              disabled={decidingJustificationId === d.evaluationId}
+                              onClick={() => window.confirm('Passer cette déclaration de « Refusée » à « Validée » ?') && handleJustificationDecision(d.evaluationId, 'VALIDATED')}
+                            >
+                              ✓ Valider
+                            </button>
                           ) : (
                             <span style={{ fontSize: 11, color: '#6B7280' }}>—</span>
                           )}
@@ -1247,8 +1270,8 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                             {hw.body}
                           </p>
                         )}
-                        {hw.attachmentUrl && !editing && (
-                          <a href={hw.attachmentUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: T.primary, marginTop: 6, display: 'inline-block' }}>
+                        {hw.hasAttachment && !editing && (
+                          <a href="#" onClick={(e) => downloadHomeworkAttachment(e, `/homework/${hw.id}/attachment?classId=${selectedClassId}`, hw.attachmentFilename)} title={hw.attachmentFilename || undefined} style={{ fontSize: 11, color: T.primary, marginTop: 6, display: 'inline-block' }}>
                             📎 Pièce jointe
                           </a>
                         )}

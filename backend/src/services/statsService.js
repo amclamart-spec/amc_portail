@@ -60,11 +60,9 @@ async function computeModuleStats({ teacherUserId, classId, module }) {
 
   // Module Devoirs: submission rate + homework posts
   if (module === 'devoirs') {
-    const homeworkMessages = await prisma.homeworkMessage.findMany({
+    const homeworkMessagesCount = await prisma.homeworkMessage.count({
       where: { classId },
     });
-
-    const homeworkMessagesCount = homeworkMessages.length;
     const submissionRate = homeworkMessagesCount > 0 ? 100 : 0;
 
     return {
