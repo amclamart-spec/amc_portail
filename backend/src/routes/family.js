@@ -21,6 +21,7 @@ const {
   postFamilyRead,
   getFamilyAttachment,
 } = require('../controllers/liaisonController');
+const { getFamilyHomeworkAttachment } = require('../controllers/homeworkController');
 
 const router = Router();
 
@@ -33,6 +34,7 @@ router.get('/profile', getProfile);
 router.get('/pedagogy/students', getPedagogyStudents);
 router.get('/pedagogy/absences', getPedagogyAbsences);
 router.get('/pedagogy/homework', getPedagogyHomework);
+router.get('/pedagogy/homework/:homeworkId/attachment', getFamilyHomeworkAttachment);
 router.put('/pedagogy/homework/:homeworkId/completion', putHomeworkCompletion);
 router.get('/pedagogy/notes', getPedagogyNotes);
 router.post('/pedagogy/absences/declare', postDeclareAbsence);

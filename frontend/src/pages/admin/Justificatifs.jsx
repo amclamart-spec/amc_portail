@@ -108,6 +108,7 @@ export default function AdminJustificatifs() {
       await api.patch(`/admin/absences/${evaluationId}/justify`, { status, comment: status === 'REJECTED' ? (comments[evaluationId] || '') : undefined });
       toast.success(status === 'VALIDATED' ? 'Justificatif validé' : 'Justificatif refusé');
       setComments((prev) => { const next = { ...prev }; delete next[evaluationId]; return next; });
+      setEditingCommentId(null);
       load();
     } catch (e) {
       toast.error(e.response?.data?.error || 'Erreur lors de la mise à jour');
@@ -245,7 +246,7 @@ export default function AdminJustificatifs() {
                   <th>Note professeur</th>
                   <th>Statut</th>
                   {filter !== 'VALIDATED' && <th>Commentaire</th>}
-                  {filter === 'PENDING' && <th>Actions</th>}
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -365,6 +366,51 @@ export default function AdminJustificatifs() {
                             <FiX size={14} /> Refuser
                           </button>
                         </div>
+                      </td>
+                    )}
+                    {/* Revenir sur une décision : validé → refusé (avec motif) ou refusé → validé. */}
+                    {filter === 'VALIDATED' && (
+                      <td style={{ minWidth: 200 }}>
+                        {editingCommentId === j.id ? (
+                          <div style={{ display: 'grid', gap: 6 }}>
+                            <textarea
+                              className="form-control"
+                              rows={2}
+                              maxLength={1000}
+                              placeholder="Motif du refus (visible par la famille)"
+                              value={comments[j.id] || ''}
+                              onChange={(e) => setComment(j.id, e.target.value)}
+                              style={{ fontSize: 12 }}
+                            />
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button type="button" className="btn btn-danger btn-sm" onClick={() => handleDecision(j.id, 'REJECTED')}>Confirmer le refus</button>
+                              <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditingCommentId(null)}>Annuler</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-sm"
+                            title="Passer en refusé"
+                            onClick={() => { setComment(j.id, ''); setEditingCommentId(j.id); }}
+                            style={{ padding: '4px 10px', color: '#991B1B' }}
+                          >
+                            <FiX size={14} /> Refuser
+                          </button>
+                        )}
+                      </td>
+                    )}
+                    {filter === 'REJECTED' && (
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          title="Passer en validé"
+                          onClick={() => window.confirm('Passer ce justificatif de « Refusé » à « Validé » ? Le commentaire de refus sera effacé.') && handleDecision(j.id, 'VALIDATED')}
+                          style={{ padding: '4px 10px', color: '#166534' }}
+                        >
+                          <FiCheck size={14} /> Valider
+                        </button>
                       </td>
                     )}
                   </tr>

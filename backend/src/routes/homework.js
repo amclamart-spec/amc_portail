@@ -7,6 +7,7 @@ const {
   getHomeworkHistory,
   deleteHomeworkMessage,
   getFamilyHomeworkMessages,
+  getStaffHomeworkAttachment,
 } = require('../controllers/homeworkController');
 
 const router = Router();
@@ -15,6 +16,7 @@ router.use(authenticate);
 router.post('/', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, postHomeworkMessage);
 router.get('/history', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, getHomeworkHistory);
 router.get('/', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, getHomeworkMessage);
+router.get('/:id/attachment', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, getStaffHomeworkAttachment);
 router.delete('/:id', authorize('PROFESSEUR', 'ADMIN', ...POLE_MANAGER_ROLES), actAsClassTeacher, deleteHomeworkMessage);
 router.get('/family', authorize('FAMILLE'), getFamilyHomeworkMessages);
 

@@ -3,8 +3,19 @@ const {
   fetchHomeworkMessage,
   fetchHomeworkMessagesByClass,
   fetchHomeworkMessagesForFamily,
+  getHomeworkAttachmentForStaff,
+  getHomeworkAttachmentForFamily,
   deleteHomeworkMessage: deleteHomeworkMessageService,
 } = require('../services/homeworkService');
+
+function sendAttachment(res, attachment) {
+  const asciiName = attachment.fileName.replace(/[^ -~]/g, '_').replace(/"/g, '');
+  res.setHeader('Content-Type', attachment.mimeType);
+  res.setHeader('Content-Length', attachment.data.length);
+  res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(attachment.data);
+}
 
 async function postHomeworkMessage(req, res) {
   try {
@@ -25,7 +36,7 @@ async function postHomeworkMessage(req, res) {
     return res.json({ homework });
   } catch (error) {
     console.error('Erreur postHomeworkMessage:', error);
-    return res.status(500).json({ error: error.message || 'Erreur serveur' });
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Erreur serveur' });
   }
 }
 
@@ -78,6 +89,26 @@ async function getFamilyHomeworkMessages(req, res) {
   }
 }
 
+async function getStaffHomeworkAttachment(req, res) {
+  try {
+    const attachment = await getHomeworkAttachmentForStaff({ teacherUserId: req.user.id, homeworkId: req.params.id });
+    return sendAttachment(res, attachment);
+  } catch (error) {
+    console.error('Erreur getStaffHomeworkAttachment:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
+async function getFamilyHomeworkAttachment(req, res) {
+  try {
+    const attachment = await getHomeworkAttachmentForFamily({ familyUserId: req.user.id, homeworkId: req.params.homeworkId });
+    return sendAttachment(res, attachment);
+  } catch (error) {
+    console.error('Erreur getFamilyHomeworkAttachment:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Erreur serveur' });
+  }
+}
+
 async function deleteHomeworkMessage(req, res) {
   try {
     const { id } = req.params;
@@ -99,4 +130,6 @@ module.exports = {
   getHomeworkHistory,
   deleteHomeworkMessage,
   getFamilyHomeworkMessages,
+  getStaffHomeworkAttachment,
+  getFamilyHomeworkAttachment,
 };

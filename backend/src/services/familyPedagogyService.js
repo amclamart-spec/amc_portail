@@ -3,6 +3,7 @@ const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 const { randomUUID } = require('crypto');
 const { parseBase64DataUri } = require('../utils/fileUtils');
+const { hasHomeworkAttachment } = require('./homeworkService');
 
 const prisma = new PrismaClient();
 const MAX_JUSTIFICATION_DOCUMENTS = 5;
@@ -427,7 +428,14 @@ async function fetchStudentHomework({ familyUserId, studentId }) {
 
   const homeworks = await prisma.homeworkMessage.findMany({
     where: { classId: { in: classIds } },
-    include: {
+    // Sans attachmentData : le fichier n'est chargé que par la route de téléchargement.
+    select: {
+      id: true,
+      date: true,
+      body: true,
+      attachmentUrl: true,
+      attachmentFilename: true,
+      attachmentMimeType: true,
       class: {
         include: {
           level: { include: { pole: true } },
@@ -444,7 +452,7 @@ async function fetchStudentHomework({ familyUserId, studentId }) {
     id: homework.id,
     date: homework.date,
     body: homework.body,
-    attachmentUrl: homework.attachmentUrl,
+    hasAttachment: hasHomeworkAttachment(homework),
     attachmentFilename: homework.attachmentFilename,
     classLabel: formatClassLabel(homework.class),
     poleName: homework.class?.level?.pole?.name || null,
@@ -468,7 +476,7 @@ async function setHomeworkCompletion({ familyUserId, studentId, homeworkId, done
   if (!student) throw new Error('Élève introuvable pour cette famille');
 
   const classIds = student.enrollments.map((enrollment) => enrollment.classId);
-  const homework = await prisma.homeworkMessage.findUnique({ where: { id: homeworkId } });
+  const homework = await prisma.homeworkMessage.findUnique({ where: { id: homeworkId }, select: { classId: true } });
   if (!homework || !classIds.includes(homework.classId)) {
     const err = new Error('Devoir introuvable');
     err.statusCode = 404;
