@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { FiDownload, FiEdit2, FiTrash2, FiFileText, FiCreditCard, FiCheckCircle, FiXCircle } from 'react-icons/fi';
 import AdminEnrollmentWizard from './AdminEnrollmentWizard';
+import FamilyDocuments from '../../components/FamilyDocuments';
 import { downloadRib } from '../../utils/ribDownload';
 import { useAuth } from '../../context/AuthContext';
 import { RESPONSABLE_POLE_ROLES } from '../../utils/roles';
@@ -877,7 +878,7 @@ export default function AdminEnrollments() {
       date: payment.processedAt ? new Date(payment.processedAt).toISOString().slice(0, 10) : (payment.createdAt ? new Date(payment.createdAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)),
       method: payment.method === 'PRELEVEMENT_BANCAIRE' ? 'VIREMENT' : (payment.method || 'CHEQUE'),
       status: payment.status === 'SUCCEEDED' ? 'validé' : payment.status === 'CANCELLED' ? 'annulé' : 'non validé',
-      comment: payment.description || '',
+      comment: payment.comment || '',
       amount: payment.amount || '',
       bankDebitIban: metadata.bankDebitIban || '',
       bankDebitSwift: metadata.bankDebitSwift || '',
@@ -2042,6 +2043,13 @@ export default function AdminEnrollments() {
               </div>
             </div>
 
+            {editingEnrollment?.student?.family?.id && (
+              <div className="form-section">
+                <h4>Documents de la famille</h4>
+                <FamilyDocuments familyId={editingEnrollment.student.family.id} />
+              </div>
+            )}
+
             <div className="form-section">
               <h4>Informations élève</h4>
               <div className="form-grid-2">
@@ -2662,6 +2670,7 @@ export default function AdminEnrollments() {
                       <th>Moyen</th>
                       <th>Montant</th>
                       <th>Statut</th>
+                      <th>Commentaire</th>
                       <th>Description</th>
                       <th>Actions</th>
                     </tr>
@@ -2675,8 +2684,9 @@ export default function AdminEnrollments() {
                           <td>{formatPaymentMethodLabel(payment)}</td>
                           <td>{Number(payment.amount).toFixed(2)} €</td>
                           <td>{paymentStatusLabel(payment.status)}</td>
+                          <td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{payment.comment ? decodeText(payment.comment) : '—'}</td>
                           <td>
-                            <div>{decodeText(payment.description)}</div>
+                            {payment.description !== payment.comment && <div>{decodeText(payment.description)}</div>}
                             {(() => {
                               const rowMetadata = payment.metadata || {};
                               const parentMetadata = payment.paymentMetadata || {};
@@ -2785,7 +2795,7 @@ export default function AdminEnrollments() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="7" style={{ textAlign: 'center', color: '#6B7280', padding: '18px 0' }}>
+                        <td colSpan="8" style={{ textAlign: 'center', color: '#6B7280', padding: '18px 0' }}>
                           Aucun paiement enregistré pour cette inscription.
                         </td>
                       </tr>

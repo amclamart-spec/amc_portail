@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { FiMail, FiLock, FiEye, FiEyeOff } from 'react-icons/fi';
 import { FcGoogle } from 'react-icons/fc';
+import { isNativeApp, openExternalUrl } from '../../utils/native';
 import { version as appVersion } from '../../../package.json';
 
 export default function Login() {
@@ -63,6 +64,12 @@ export default function Login() {
   };
 
   const handleGoogleLogin = () => {
+    // Application mobile : Google refuse la connexion dans une WebView, elle se fait
+    // dans le navigateur système puis revient dans l'app (voir utils/native.js).
+    if (isNativeApp()) {
+      openExternalUrl(`${new URL(googleAuthUrl, window.location.origin).toString()}?client=mobile`);
+      return;
+    }
     window.location.href = googleAuthUrl;
   };
 

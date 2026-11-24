@@ -27,8 +27,33 @@ function buildFrontendRedirect(pathname = '/login') {
   return new URL(pathname, config.frontendUrl);
 }
 
-function redirectWithError(res, message) {
-  const url = buildFrontendRedirect('/auth/google/callback');
+// Connexion Google lancée depuis l'application mobile : Google refuse l'OAuth dans une
+// WebView, l'app l'ouvre donc dans le navigateur système (state préfixé par
+// MOBILE_STATE_PREFIX) et le retour se fait par le schéma d'URL de l'app. Les tokens
+// ne transitent pas dans cette URL (une autre app pourrait déclarer le même schéma) :
+// seul un code à usage unique, de courte durée, échangé ensuite par l'app via l'API.
+const MOBILE_STATE_PREFIX = 'm_';
+const MOBILE_CODE_TTL_MS = 2 * 60 * 1000;
+const mobileLoginCodes = new Map();
+
+function createMobileLoginCode(tokens) {
+  const now = Date.now();
+  mobileLoginCodes.forEach((entry, key) => {
+    if (entry.expiresAt < now) mobileLoginCodes.delete(key);
+  });
+  const code = crypto.randomBytes(32).toString('hex');
+  mobileLoginCodes.set(code, { ...tokens, expiresAt: now + MOBILE_CODE_TTL_MS });
+  return code;
+}
+
+function buildCallbackRedirect(isMobile) {
+  return isMobile
+    ? new URL(`${config.mobileAppScheme}://auth/google/callback`)
+    : buildFrontendRedirect('/auth/google/callback');
+}
+
+function redirectWithError(res, message, isMobile = false) {
+  const url = buildCallbackRedirect(isMobile);
   url.searchParams.set('error', message);
   return res.redirect(url.toString());
 }
@@ -254,7 +279,8 @@ function googleAuth(req, res, next) {
     });
   }
 
-  const state = crypto.randomBytes(24).toString('hex');
+  const randomState = crypto.randomBytes(24).toString('hex');
+  const state = req.query?.client === 'mobile' ? `${MOBILE_STATE_PREFIX}${randomState}` : randomState;
   res.cookie(OAUTH_STATE_COOKIE, state, getCookieOptions());
 
   return passport.authenticate('google', {
@@ -272,37 +298,56 @@ function googleAuth(req, res, next) {
 function googleCallback(req, res, next) {
   const expectedState = req.cookies?.[OAUTH_STATE_COOKIE];
   const receivedState = req.query?.state;
+  const isMobile = typeof receivedState === 'string' && receivedState.startsWith(MOBILE_STATE_PREFIX);
 
   res.clearCookie(OAUTH_STATE_COOKIE, getCookieOptions());
 
   if (!expectedState || !receivedState || expectedState !== receivedState) {
     console.warn('OAuth state validation failed', { expectedState, receivedState });
-    return redirectWithError(res, 'Échec de vérification de sécurité OAuth. Vérifiez que les cookies sont activés et réessayez.');
+    return redirectWithError(res, 'Échec de vérification de sécurité OAuth. Vérifiez que les cookies sont activés et réessayez.', isMobile);
   }
 
   return passport.authenticate('google', { session: false }, async (error, user, info) => {
     if (error) {
       console.error('Erreur OAuth Google:', error);
       const message = error?.message || 'Erreur lors de l’authentification Google.';
-      return redirectWithError(res, message);
+      return redirectWithError(res, message, isMobile);
     }
 
     if (!user) {
       const reason = info?.message || 'Connexion Google refusée.';
-      return redirectWithError(res, reason);
+      return redirectWithError(res, reason, isMobile);
     }
 
     try {
       const { accessToken, refreshToken } = await issueTokensForUser(user);
-      const url = buildFrontendRedirect('/auth/google/callback');
-      url.searchParams.set('accessToken', accessToken);
-      url.searchParams.set('refreshToken', refreshToken);
+      const url = buildCallbackRedirect(isMobile);
+      if (isMobile) {
+        url.searchParams.set('mobileCode', createMobileLoginCode({ accessToken, refreshToken }));
+      } else {
+        url.searchParams.set('accessToken', accessToken);
+        url.searchParams.set('refreshToken', refreshToken);
+      }
       return res.redirect(url.toString());
     } catch (tokenError) {
       console.error('Erreur génération token OAuth:', tokenError);
-      return redirectWithError(res, 'Impossible de finaliser la connexion Google.');
+      return redirectWithError(res, 'Impossible de finaliser la connexion Google.', isMobile);
     }
   })(req, res, next);
+}
+
+/**
+ * POST /api/auth/google/mobile-exchange
+ * Échange le code à usage unique reçu par l'application mobile contre les tokens.
+ */
+function googleMobileExchange(req, res) {
+  const code = String(req.body?.code || '');
+  const entry = mobileLoginCodes.get(code);
+  mobileLoginCodes.delete(code);
+  if (!entry || entry.expiresAt < Date.now()) {
+    return res.status(400).json({ error: 'Code de connexion invalide ou expiré. Veuillez réessayer.' });
+  }
+  return res.json({ accessToken: entry.accessToken, refreshToken: entry.refreshToken });
 }
 
 /**
@@ -672,6 +717,7 @@ module.exports = {
   login,
   googleAuth,
   googleCallback,
+  googleMobileExchange,
   refreshToken,
   verifyEmail,
   getMe,

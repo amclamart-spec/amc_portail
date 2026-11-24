@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import api from '../api/axios';
+import { saveFile } from '../utils/native';
 import toast from 'react-hot-toast';
 import { FiDownload, FiLock, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
 
@@ -133,14 +134,7 @@ export default function RefundsManager({ title = 'Remboursements', canGenerateCo
     }
     try {
       const response = await api.get(`/finance/payments/${paymentId}/receipt/download`, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `recu-${paymentId.substring(0, 8)}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await saveFile(new Blob([response.data]), `recu-${paymentId.substring(0, 8)}.pdf`);
     } catch (error) {
       console.error('Erreur téléchargement reçu', error);
       toast.error('Impossible de télécharger le reçu');

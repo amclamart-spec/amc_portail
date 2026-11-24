@@ -533,3 +533,70 @@ table tbody tr:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================
+   Application mobile (Capacitor) — classe ajoutée par utils/native.js
+   ============================================ */
+
+/* Fonctions sans équivalent dans l'app (ex. impression navigateur). */
+html.native-app .web-only {
+  display: none !important;
+}
+
+/* Tableaux en cartes sur téléphone — data-label posé par utils/responsiveTables.js.
+   !important : beaucoup de cellules ont des largeurs/paddings en style inline. */
+@media (max-width: 640px) {
+  table.rt-cards,
+  table.rt-cards tbody,
+  table.rt-cards tr,
+  table.rt-cards td {
+    display: block;
+    width: 100% !important;
+  }
+  table.rt-cards thead {
+    display: none;
+  }
+  table.rt-cards tr {
+    background: var(--amc-white, #fff);
+    border: 1px solid var(--amc-border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    padding: 4px 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+  table.rt-cards td {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 12px;
+    min-width: 0 !important;
+    max-width: none !important;
+    padding: 7px 12px !important;
+    border-bottom: 1px solid #F1F5F9 !important;
+    white-space: normal !important;
+    text-align: right !important;
+    box-sizing: border-box;
+  }
+  table.rt-cards td:last-child {
+    border-bottom: none !important;
+  }
+  table.rt-cards td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    max-width: 45%;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 700;
+    color: #6B7280;
+    text-transform: none;
+  }
+  table.rt-cards td[data-label='']::before,
+  table.rt-cards td[colspan]::before {
+    display: none;
+  }
+  table.rt-cards td[colspan] {
+    justify-content: center;
+    text-align: center !important;
+  }
+}

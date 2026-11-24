@@ -72,6 +72,7 @@ model User {
   purchases                    Purchase[]                    @relation("PurchaseOperator")
   socialBudgets                SocialBudget[]                @relation("BudgetManager")
   beneficiaryDocuments         SocialBeneficiaryDocument[]   @relation("BeneficiaryDocumentUploader")
+  familyDocumentsUploaded      FamilyDocument[]              @relation("FamilyDocumentUploader")
   volunteerEventsCreated       VolunteerEvent[]              @relation("VolunteerEventCreator")
   volunteerGroupsCreated       VolunteerGroup[]              @relation("VolunteerGroupCreator")
   volunteerGroupMemberships    VolunteerGroupMember[]        @relation("VolunteerGroupMembership")
@@ -157,8 +158,28 @@ model Family {
   payments           Payment[]
   enrollmentConsents EnrollmentConsent[]
   paymentPlans       PaymentPlan[]
+  documents          FamilyDocument[]
 
   @@map("families")
+}
+
+// Pièces jointes de la fiche famille (déposées par l'administration), stockées en base
+// car le dossier uploads/ est perdu à chaque redémarrage en production.
+model FamilyDocument {
+  id           String   @id @default(uuid())
+  familyId     String   @map("family_id")
+  fileName     String   @map("file_name")
+  mimeType     String   @map("mime_type")
+  size         Int
+  data         Bytes
+  uploadedById String?  @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  family     Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  uploadedBy User?  @relation("FamilyDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([familyId])
+  @@map("family_documents")
 }
 
 model HomeworkMessage {

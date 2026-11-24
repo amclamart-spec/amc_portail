@@ -391,7 +391,7 @@ export default function Layout({ children }) {
         <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 999 }} />
       )}
 
-      <div style={{ flex: 1, marginLeft: 0 }} className="main-content-area">
+      <div style={{ flex: 1, marginLeft: 0, minWidth: 0 }} className="main-content-area">
         <header
           style={{
             background: 'var(--amc-white)',
@@ -412,10 +412,13 @@ export default function Layout({ children }) {
           <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.55)' }}>Version {appVersion}</div>
         </header>
 
-        <main style={{ padding: '24px' }}>{children}</main>
+        <main className="main-content" style={{ padding: '24px' }}>{children}</main>
       </div>
 
       <style>{`
+        @media (max-width: 640px) {
+          .main-content { padding: 14px 12px !important; }
+        }
         @media (min-width: 769px) {
           .sidebar-desktop { left: 0 !important; }
           .main-content-area { margin-left: 260px !important; }

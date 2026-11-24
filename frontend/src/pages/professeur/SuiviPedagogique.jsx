@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { openAbsenceDocument } from '../../utils/absenceDocument';
 import { downloadHomeworkAttachment } from '../../utils/homeworkAttachment';
+import { saveFile } from '../../utils/native';
 import useEvaluations from '../../hooks/useEvaluations';
 import CoranTeacherPanel from '../../components/coran/CoranTeacherPanel';
 import AppreciationsPanel from '../../components/appreciations/AppreciationsPanel';
@@ -87,10 +88,18 @@ const STYLES = `
     .ep-no-print { display:none !important; }
   }
 
+  .ep-class-select { display:none; }
+
   @media (max-width: 640px) {
-    .ep-tab-label { display:none; }
-    .ep-header    { flex-direction:column; align-items:flex-start; }
+    .ep-header    { flex-direction:column; align-items:stretch; }
     .ep-note-input { width:48px; }
+    /* Téléphone : liste déroulante à la place des pastilles de classes, et onglets
+       défilant horizontalement en gardant leurs libellés. */
+    .ep-pills { display:none; }
+    .ep-class-select { display:block; width:100%; font-weight:600; }
+    .ep-tabs { display:flex; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+    .ep-tabs::-webkit-scrollbar { display:none; }
+    .ep-tab { flex:0 0 auto; min-width:78px; padding:9px 8px; }
   }
 
   @media (max-width: 480px) {
@@ -484,14 +493,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
         responseType: 'blob',
       });
       const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `classement-absences-${new Date().toISOString().slice(0, 10)}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.parentNode.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      await saveFile(blob, `classement-absences-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch (error) {
       toast.error(error.response?.data?.error || 'Impossible d\'exporter le classement');
     } finally {
@@ -589,17 +591,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
   const exportLessonPdf = async (lessonId, lessonTitle) => {
     try {
       const response = await api.get(`/absences/history/${lessonId}/export`, { responseType: 'blob' });
-      const href = URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-      // Le titre d'une leçon peut contenir des "/" (ex. "Absences 10/09/2026" pour
-      // une saisie hors cours) — invalide dans un nom de fichier téléchargé.
-      const safeName = (lessonTitle || lessonId).replace(/[\\/:*?"<>|]+/g, '-').trim() || lessonId;
-      const a = document.createElement('a');
-      a.href = href;
-      a.download = `presence-${safeName}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(href);
+      await saveFile(new Blob([response.data], { type: 'application/pdf' }), `presence-${safeName}.pdf`);
     } catch { toast.error('Impossible de télécharger le PDF'); }
   };
 
@@ -632,6 +624,20 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
           Suivi pédagogique
           {loading && <FiLoader className="spin" style={{ marginLeft: 10, fontSize: 16 }} />}
         </h2>
+        {!hideClassPicker && (
+          <select
+            className="form-control ep-class-select"
+            value={selectedClassId}
+            onChange={(e) => setSelectedClassId(e.target.value)}
+            aria-label="Classe"
+          >
+            {classes.map((cls) => (
+              <option key={cls.id} value={String(cls.id)}>
+                {[cls.level?.pole?.name, cls.level?.name || 'Classe'].filter(Boolean).join(' · ')} — {cls.dayOfWeek?.slice(0, 3)} {cls.startTime}
+              </option>
+            ))}
+          </select>
+        )}
         {!hideClassPicker && (
           <div className="ep-pills">
             {classes.map((cls) => {
@@ -1462,7 +1468,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
                   <button
-                    className="btn ep-no-print"
+                    className="btn ep-no-print web-only"
                     style={{ background: T.primary, color: '#fff' }}
                     disabled={!bulletinStudentId}
                     onClick={() => window.print()}
@@ -1487,14 +1493,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                           },
                           { responseType: 'blob' },
                         );
-                        const url = window.URL.createObjectURL(new Blob([response.data]));
-                        const link = document.createElement('a');
-                        link.href = url;
-                        link.setAttribute('download', `bulletin-coran-${studentName.replace(/\s+/g, '-')}.pdf`);
-                        document.body.appendChild(link);
-                        link.click();
-                        link.remove();
-                        window.URL.revokeObjectURL(url);
+                        await saveFile(new Blob([response.data]), `bulletin-coran-${studentName.replace(/\s+/g, '-')}.pdf`);
                       } catch (e) {
                         console.error('Erreur téléchargement bulletin Coran', e);
                         toast.error('Impossible de générer le bulletin PDF');
@@ -1585,7 +1584,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
                   <button
-                    className="btn ep-no-print"
+                    className="btn ep-no-print web-only"
                     style={{ background: T.primary, color: '#fff' }}
                     disabled={!bulletinStudentId}
                     onClick={() => window.print()}
@@ -1605,14 +1604,7 @@ export default function SuiviPedagogique({ initialClasses, hideClassPicker } = {
                           { responseType: 'blob' },
                         );
                         const studentName = noteRows.find((r) => String(r.id) === bulletinStudentId)?.studentName || bulletinStudentId;
-                        const url = window.URL.createObjectURL(new Blob([response.data]));
-                        const link = document.createElement('a');
-                        link.href = url;
-                        link.setAttribute('download', `bulletin-${studentName.replace(/\s+/g, '-')}-${selectedPeriod}.pdf`);
-                        document.body.appendChild(link);
-                        link.click();
-                        link.remove();
-                        window.URL.revokeObjectURL(url);
+                        await saveFile(new Blob([response.data]), `bulletin-${studentName.replace(/\s+/g, '-')}-${selectedPeriod}.pdf`);
                       } catch (e) {
                         console.error('Erreur téléchargement bulletin', e);
                         toast.error('Impossible de générer le bulletin PDF');
