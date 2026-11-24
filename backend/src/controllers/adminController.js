@@ -1063,6 +1063,17 @@ async function recalculatePaymentAggregate(paymentId) {
   });
 }
 
+const DEFAULT_ADMIN_PAYMENT_DESCRIPTION = 'Paiement ajouté par admin';
+
+// Commentaire saisi par l'admin sur une transaction : metadata.comment, ou pour les
+// transactions plus anciennes la description d'un paiement ajouté à la main.
+function getTransactionComment(tx) {
+  const metadata = tx.metadata || {};
+  if (typeof metadata.comment === 'string') return metadata.comment || null;
+  if (tx.recordedById && tx.description && tx.description !== DEFAULT_ADMIN_PAYMENT_DESCRIPTION) return tx.description;
+  return null;
+}
+
 async function getEnrollmentPayments(req, res) {
   try {
     const { payments } = await findEnrollmentAndPayment(req.params.id);
@@ -1092,6 +1103,7 @@ async function getEnrollmentPayments(req, res) {
         // parent ne sert que de repli si la transaction n'a pas encore sa propre metadata.
         paymentMetadata: { ...(tx.payment?.metadata || {}), ...(tx.metadata || {}) },
         description: tx.description,
+        comment: getTransactionComment(tx),
         amount: String(tx.amount),
         status: tx.status,
         provider: tx.provider,
@@ -1200,6 +1212,10 @@ async function updateEnrollmentPayment(req, res) {
 
     if (hasMetadataUpdate) {
       updateData.metadata = { ...(transaction.metadata || {}), ...paymentMetadataUpdate };
+    }
+    // Le commentaire reste propre à la transaction (pas recopié sur le Payment parent).
+    if (comment !== undefined) {
+      updateData.metadata = { ...(updateData.metadata || transaction.metadata || {}), comment: String(comment || '').trim() };
     }
 
     if (Object.keys(updateData).length === 0) {
@@ -1576,11 +1592,11 @@ async function createEnrollmentPayment(req, res) {
         amount: parsedAmount,
         status: transactionStatus,
         payerName: normalizedPayerName || 'Non spécifié',
-        description: comment || 'Paiement ajouté par admin',
+        description: comment || DEFAULT_ADMIN_PAYMENT_DESCRIPTION,
         recordedById: req.user.id,
         processedAt: txDate,
         createdAt: txDate,
-        metadata: Object.keys(paymentMetadata).length > 0 ? paymentMetadata : undefined,
+        metadata: { ...paymentMetadata, comment: String(comment || '').trim() },
       },
     });
 

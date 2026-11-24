@@ -114,7 +114,7 @@ export default function FamilyDashboard() {
                 homeworkMessages.map((message) => (
                   <div key={message.id} className="card" style={{ padding: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <strong>Classe ID : {message.classId}</strong>
+                      <strong>{message.classLabel || 'Classe'}</strong>
                       <span>{new Date(message.date).toLocaleDateString()}</span>
                     </div>
                     <p style={{ whiteSpace: 'pre-wrap', marginBottom: 12 }}>{message.body}</p>

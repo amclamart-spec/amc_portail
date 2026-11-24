@@ -1,0 +1,21 @@
+{
+  "appId": "fr.musulmansdeclamart.portail",
+  "appName": "AMC Portail",
+  "webDir": "dist",
+  "appendUserAgent": "AMCPortailApp",
+  "server": {
+    "url": "https://amc-portail.onrender.com",
+    "errorPath": "offline.html",
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#213B88",
+      "showSpinner": false
+    }
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}

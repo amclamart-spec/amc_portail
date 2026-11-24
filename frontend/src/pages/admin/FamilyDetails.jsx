@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { FiDownload } from 'react-icons/fi';
 import api from '../../api/axios';
+import FamilyDocuments from '../../components/FamilyDocuments';
 
 const EMPTY_PARENT = { civility: 'M', firstName: '', lastName: '', email: '', phone: '', link: 'PERE', isLegalGuardian: false };
 
@@ -170,6 +171,11 @@ export default function AdminFamilyDetails() {
         <p><strong>Responsable :</strong> {family.user?.firstName} {family.user?.lastName} — {family.user?.email}</p>
         <p><strong>Adresse :</strong> {family.addressLine1}, {family.postalCode} {family.city}</p>
         <p><strong>Téléphone principal :</strong> {family.phonePrimary}</p>
+      </div>
+
+      <div className="card mb-2">
+        <div className="card-header"><h3>Documents</h3></div>
+        <FamilyDocuments familyId={family.id} />
       </div>
 
       <div className="card mb-2">

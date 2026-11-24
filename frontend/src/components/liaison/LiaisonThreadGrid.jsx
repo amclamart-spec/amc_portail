@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
+import { saveFile, openExternalUrl } from '../../utils/native';
 import api from '../../api/axios';
 
 /* ─── Cahier de liaison : éléments partagés espace famille / espace professeur ── */
@@ -109,18 +110,11 @@ export async function downloadAttachment(message, fetchById) {
   try {
     if (message.attachmentId) {
       const { data } = await fetchById(message.attachmentId);
-      const objectUrl = window.URL.createObjectURL(data);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = message.attachmentFilename || 'piece-jointe';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(objectUrl);
+      await saveFile(data, message.attachmentFilename || 'piece-jointe');
       return;
     }
     const apiOrigin = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-    window.open(`${apiOrigin}${message.attachmentUrl}`, '_blank', 'noopener');
+    openExternalUrl(`${apiOrigin}${message.attachmentUrl}`);
   } catch {
     toast.error('Impossible de télécharger la pièce jointe');
   }

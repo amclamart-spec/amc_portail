@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const multer = require('multer');
-const { authenticate, authorizePermission } = require('../middleware/auth');
+const { authenticate, authorizePermission, authorizeAnyPermission } = require('../middleware/auth');
 const { PERMISSIONS } = require('../config/permissions');
 const {
   getPendingUsers,
@@ -74,6 +74,10 @@ const {
 const {
   getFamilies,
   getFamilyDetails,
+  listFamilyDocuments,
+  uploadFamilyDocument,
+  downloadFamilyDocument,
+  deleteFamilyDocument,
   generateFamilySecondaryPassword,
   adminEnrollForFamily,
   adminEnrollNewFamily,
@@ -244,6 +248,12 @@ router.get('/mailing/sent/:id', authorizePermission(PERMISSIONS.CLASSES_MANAGE),
 // Familles
 router.get('/families', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilies);
 router.get('/families/:id', authorizePermission(PERMISSIONS.PAYMENTS_MANAGE), getFamilyDetails);
+// Documents de la fiche famille : visibles aussi depuis le détail d'inscription.
+const canManageFamilyDocuments = authorizeAnyPermission(PERMISSIONS.ENROLLMENTS_MANAGE, PERMISSIONS.PAYMENTS_MANAGE);
+router.get('/families/:id/documents', canManageFamilyDocuments, listFamilyDocuments);
+router.post('/families/:id/documents', canManageFamilyDocuments, uploadFamilyDocument);
+router.get('/families/:id/documents/:documentId', canManageFamilyDocuments, downloadFamilyDocument);
+router.delete('/families/:id/documents/:documentId', canManageFamilyDocuments, deleteFamilyDocument);
 router.post('/families/enroll-new', authorizePermission(PERMISSIONS.CLASSES_MANAGE), adminEnrollNewFamily);
 router.post('/families/:id/enroll', authorizePermission(PERMISSIONS.CLASSES_MANAGE), adminEnrollForFamily);
 router.post('/families/:id/secondary-password', authorizePermission(PERMISSIONS.ENROLLMENTS_MANAGE), generateFamilySecondaryPassword);

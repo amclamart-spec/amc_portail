@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import api from "../../api/axios";
+import { saveFile } from '../../utils/native';
 import { FiDownload } from "react-icons/fi";
 
 const formatPaymentMethod = (payment) => {
@@ -56,14 +57,7 @@ export default function FamilyPayments() {
         responseType: "blob",
       });
       
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `recu-${paymentId.substring(0, 8)}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.parentNode.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      await saveFile(new Blob([response.data]), `recu-${paymentId.substring(0, 8)}.pdf`);
     } catch (error) {
       console.error("Erreur téléchargement reçu:", error);
       const errorMessage = error.response?.data?.error || "Erreur lors du téléchargement du reçu";
@@ -80,14 +74,7 @@ export default function FamilyPayments() {
         responseType: "blob",
       });
 
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `mandat-sepa-${paymentId.substring(0, 8)}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.parentNode.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      await saveFile(new Blob([response.data]), `mandat-sepa-${paymentId.substring(0, 8)}.pdf`);
     } catch (error) {
       console.error("Erreur téléchargement mandat SEPA:", error);
       const errorMessage = error.response?.data?.error || "Erreur lors du téléchargement du mandat SEPA";
