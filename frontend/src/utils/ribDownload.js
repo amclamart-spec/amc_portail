@@ -1,5 +1,6 @@
 import toast from 'react-hot-toast';
 import api from '../api/axios';
+import { saveFile } from './native';
 
 const resolveUploadUrl = (url) => {
   if (/^https?:\/\//i.test(url)) return url;
@@ -7,18 +8,6 @@ const resolveUploadUrl = (url) => {
   const prefix = base.endsWith('/') ? base.slice(0, -1) : base;
   return `${prefix}${url.startsWith('/') ? '' : '/'}${url}`;
 };
-
-function saveBlob(blob, filename) {
-  const objectUrl = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = objectUrl;
-  a.download = filename || 'rib.pdf';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  window.URL.revokeObjectURL(objectUrl);
-}
 
 // RIB d'un paiement par prélèvement/virement. Les RIB récents sont stockés en base
 // (metadata.bankDebitRibFileId, route authentifiée /rib-files/:id) ; les anciens
@@ -28,7 +17,7 @@ export async function downloadRib({ ribFileId, ribUrl, filename }) {
   try {
     if (ribFileId) {
       const { data } = await api.get(`/rib-files/${ribFileId}`, { responseType: 'blob' });
-      saveBlob(data, filename);
+      await saveFile(data, filename || 'rib.pdf');
     } else {
       if (!ribUrl) throw new Error('URL RIB invalide');
       const response = await fetch(resolveUploadUrl(ribUrl), { method: 'GET' });
@@ -37,7 +26,7 @@ export async function downloadRib({ ribFileId, ribUrl, filename }) {
         return;
       }
       if (!response.ok) throw new Error(`Erreur HTTP ${response.status}`);
-      saveBlob(await response.blob(), filename);
+      await saveFile(await response.blob(), filename || 'rib.pdf');
     }
     toast.success('Téléchargement du RIB en cours...');
   } catch (err) {

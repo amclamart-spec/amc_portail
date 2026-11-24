@@ -2,30 +2,11 @@ const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
 const path = require('path');
 const { classAccessWhere } = require('../utils/classAccessUtils');
+const { mimeTypeFromFileName } = require('../utils/fileDownload');
 
 const prisma = new PrismaClient();
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-
-const MIME_BY_EXTENSION = {
-  '.pdf': 'application/pdf',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.doc': 'application/msword',
-  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  '.xls': 'application/vnd.ms-excel',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  '.ppt': 'application/vnd.ms-powerpoint',
-  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  '.odt': 'application/vnd.oasis.opendocument.text',
-  '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
-  '.txt': 'text/plain',
-  '.mp3': 'audio/mpeg',
-  '.mp4': 'video/mp4',
-};
 
 // Tous les champs d'un devoir sauf le contenu binaire de la pièce jointe, qui n'est
 // chargé que par la route de téléchargement.
@@ -80,7 +61,7 @@ async function saveHomeworkMessage({ teacherUserId, classId, date, message, atta
     }
     attachmentData = {
       attachmentFilename: fileName,
-      attachmentMimeType: MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] || 'application/octet-stream',
+      attachmentMimeType: mimeTypeFromFileName(fileName),
       attachmentData: buffer,
       attachmentUrl: null,
     };
@@ -153,9 +134,15 @@ async function fetchHomeworkMessagesForFamily({ familyUserId }) {
   const homeworks = await prisma.homeworkMessage.findMany({
     where: { classId: { in: uniqueClassIds } },
     orderBy: { date: 'desc' },
-    select: HOMEWORK_SELECT,
+    select: {
+      ...HOMEWORK_SELECT,
+      class: { select: { level: { select: { name: true, pole: { select: { name: true } } } } } },
+    },
   });
-  return homeworks.map(serializeHomework);
+  return homeworks.map(({ class: cls, ...homework }) => ({
+    ...serializeHomework(homework),
+    classLabel: [cls?.level?.pole?.name, cls?.level?.name].filter(Boolean).join(' — ') || 'Classe',
+  }));
 }
 
 async function fetchHomeworkMessagesByClass({ teacherUserId, classId }) {
@@ -221,7 +208,7 @@ async function readHomeworkAttachment(homeworkId) {
       return {
         classId: homework.classId,
         fileName,
-        mimeType: MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] || 'application/octet-stream',
+        mimeType: mimeTypeFromFileName(fileName),
         data: fs.readFileSync(filePath),
       };
     }

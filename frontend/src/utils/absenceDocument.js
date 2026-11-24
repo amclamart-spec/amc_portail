@@ -1,5 +1,6 @@
 import toast from 'react-hot-toast';
 import api from '../api/axios';
+import { saveFile, openExternalUrl } from './native';
 
 // Justificatif d'absence : les documents récents sont stockés en base et servis par
 // l'API (/absence-documents/:id, avec la session) ; les anciens pointent vers un
@@ -10,19 +11,12 @@ export async function openAbsenceDocument(event, doc) {
   const fileUrl = doc.fileUrl || '';
   if (!fileUrl.startsWith('/absence-documents/')) {
     const apiOrigin = String(api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-    window.open(/^https?:\/\//i.test(fileUrl) ? fileUrl : `${apiOrigin}${fileUrl}`, '_blank', 'noopener');
+    openExternalUrl(/^https?:\/\//i.test(fileUrl) ? fileUrl : `${apiOrigin}${fileUrl}`);
     return;
   }
   try {
     const { data } = await api.get(fileUrl, { responseType: 'blob' });
-    const objectUrl = window.URL.createObjectURL(data);
-    const a = document.createElement('a');
-    a.href = objectUrl;
-    a.download = doc.fileName || 'justificatif';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(objectUrl);
+    await saveFile(data, doc.fileName || 'justificatif');
   } catch {
     toast.error('Impossible d\'ouvrir ce document');
   }

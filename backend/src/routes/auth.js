@@ -5,6 +5,7 @@ const {
   login,
   googleAuth,
   googleCallback,
+  googleMobileExchange,
   refreshToken,
   verifyEmail,
   forgotPassword,
@@ -96,6 +97,7 @@ router.post('/login', loginValidation, validate, login);
 
 router.get('/google', googleAuth);
 router.get('/google/callback', googleCallback);
+router.post('/google/mobile-exchange', googleMobileExchange);
 
 router.post('/refresh', refreshToken);
 router.post('/forgot-password', forgotPasswordValidation, validate, forgotPassword);

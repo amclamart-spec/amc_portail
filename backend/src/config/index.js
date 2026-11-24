@@ -10,6 +10,9 @@ module.exports = {
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+  // Schéma d'URL de l'application mobile (Capacitor, frontend/capacitor.config.json → appId),
+  // utilisé pour revenir dans l'app après la connexion Google.
+  mobileAppScheme: process.env.MOBILE_APP_SCHEME || 'fr.musulmansdeclamart.portail',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
 
   email: {

@@ -4,8 +4,21 @@ const { applyNameCasing } = require('../lib/prismaNameMiddleware');
 const bcrypt = require('bcryptjs');
 const { createActivityLog } = require('../services/activityLogService');
 const { sendMail } = require('../services/emailService');
+const { mimeTypeFromFileName, sendFileBuffer } = require('../utils/fileDownload');
 
 const prisma = applyNameCasing(new PrismaClient());
+
+const MAX_FAMILY_DOCUMENT_BYTES = 5 * 1024 * 1024;
+
+// Champs d'un document de la fiche famille, sans son contenu binaire.
+const FAMILY_DOCUMENT_SELECT = {
+  id: true,
+  fileName: true,
+  mimeType: true,
+  size: true,
+  createdAt: true,
+  uploadedBy: { select: { firstName: true, lastName: true } },
+};
 
 function buildFamilySearchWhere({ search, accountStatus }) {
   const where = {};
@@ -541,9 +554,114 @@ async function adminEnrollNewFamily(req, res) {
   }
 }
 
+async function listFamilyDocuments(req, res) {
+  try {
+    const documents = await prisma.familyDocument.findMany({
+      where: { familyId: req.params.id },
+      select: FAMILY_DOCUMENT_SELECT,
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ documents });
+  } catch (error) {
+    console.error('Erreur listFamilyDocuments:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+// Un fichier par requête (contenu en base64) : le front envoie les fichiers
+// sélectionnés l'un après l'autre.
+async function uploadFamilyDocument(req, res) {
+  try {
+    const { id } = req.params;
+    const { fileName, contentBase64 } = req.body || {};
+    const cleanName = String(fileName || '').trim().slice(0, 200);
+    if (!cleanName || !contentBase64) {
+      return res.status(400).json({ error: 'Fichier manquant' });
+    }
+
+    const data = Buffer.from(String(contentBase64), 'base64');
+    if (!data.length) return res.status(400).json({ error: 'Le fichier est vide' });
+    if (data.length > MAX_FAMILY_DOCUMENT_BYTES) {
+      return res.status(400).json({ error: `« ${cleanName} » dépasse 5 Mo` });
+    }
+
+    const family = await prisma.family.findUnique({ where: { id }, select: { id: true, familyName: true } });
+    if (!family) return res.status(404).json({ error: 'Famille introuvable' });
+
+    const document = await prisma.familyDocument.create({
+      data: {
+        familyId: id,
+        fileName: cleanName,
+        mimeType: mimeTypeFromFileName(cleanName),
+        size: data.length,
+        data,
+        uploadedById: req.user?.id || null,
+      },
+      select: FAMILY_DOCUMENT_SELECT,
+    });
+
+    await createActivityLog({
+      userId: req.user?.id,
+      action: 'ADMIN_FAMILY_DOCUMENT_ADDED',
+      entityType: 'Family',
+      entityId: id,
+      details: { familyName: family.familyName, fileName: cleanName },
+    });
+
+    res.status(201).json({ document });
+  } catch (error) {
+    console.error('Erreur uploadFamilyDocument:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function downloadFamilyDocument(req, res) {
+  try {
+    const { id, documentId } = req.params;
+    const document = await prisma.familyDocument.findFirst({
+      where: { id: documentId, familyId: id },
+      select: { fileName: true, mimeType: true, data: true },
+    });
+    if (!document) return res.status(404).json({ error: 'Document introuvable' });
+    return sendFileBuffer(res, { ...document, data: Buffer.from(document.data) });
+  } catch (error) {
+    console.error('Erreur downloadFamilyDocument:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
+async function deleteFamilyDocument(req, res) {
+  try {
+    const { id, documentId } = req.params;
+    const document = await prisma.familyDocument.findFirst({
+      where: { id: documentId, familyId: id },
+      select: { id: true, fileName: true },
+    });
+    if (!document) return res.status(404).json({ error: 'Document introuvable' });
+
+    await prisma.familyDocument.delete({ where: { id: documentId } });
+    await createActivityLog({
+      userId: req.user?.id,
+      action: 'ADMIN_FAMILY_DOCUMENT_DELETED',
+      entityType: 'Family',
+      entityId: id,
+      details: { fileName: document.fileName },
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Erreur deleteFamilyDocument:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+}
+
 module.exports = {
   getFamilies,
   getFamilyDetails,
+  listFamilyDocuments,
+  uploadFamilyDocument,
+  downloadFamilyDocument,
+  deleteFamilyDocument,
   generateFamilySecondaryPassword,
   createFamilyParent,
   updateFamilyParent,
